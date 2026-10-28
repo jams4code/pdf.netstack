@@ -268,8 +268,8 @@ internal ref struct JpegReader
         if (count is < 1 or > 4 || s.Length != 4 + 2 * count) throw new JpegFormatException("Invalid scan header.");
 
         var components = new JpegComponent[count];
-        var dc = new JpegHuffmanTable[count];
-        var ac = new JpegHuffmanTable[count];
+        var dc = new JpegHuffmanTable?[count];
+        var ac = new JpegHuffmanTable?[count];
         int start = s[1 + 2 * count];
         int end = s[2 + 2 * count];
         int high = s[3 + 2 * count] >> 4;
@@ -308,15 +308,15 @@ internal ref struct JpegReader
             if (dcIndex > 3 || acIndex > 3) throw new JpegFormatException("Invalid Huffman table selector.");
             bool needsDc = mode is ScanMode.Sequential or ScanMode.DcFirst;
             bool needsAc = mode is ScanMode.Sequential or ScanMode.AcFirst or ScanMode.AcRefine;
-            dc[j] = (needsDc ? _dc[dcIndex] ?? throw new JpegFormatException("Scan uses an undefined DC table.") : null)!;
-            ac[j] = (needsAc ? _ac[acIndex] ?? throw new JpegFormatException("Scan uses an undefined AC table.") : null)!;
+            if (needsDc) dc[j] = _dc[dcIndex] ?? throw new JpegFormatException("Scan uses an undefined DC table.");
+            if (needsAc) ac[j] = _ac[acIndex] ?? throw new JpegFormatException("Scan uses an undefined AC table.");
         }
 
         if (count > 1 && blocksPerMcu > 10) throw new JpegFormatException("Interleaved scan has more than 10 blocks per MCU.");
         DecodeScan(image, components, dc, ac, mode, start, end, low);
     }
 
-    private void DecodeScan(JpegImage image, JpegComponent[] components, JpegHuffmanTable[] dc, JpegHuffmanTable[] ac, ScanMode mode, int start, int end, int low)
+    private void DecodeScan(JpegImage image, JpegComponent[] components, JpegHuffmanTable?[] dc, JpegHuffmanTable?[] ac, ScanMode mode, int start, int end, int low)
     {
         _bits = 0;
         _bitCount = 0;
@@ -363,26 +363,27 @@ internal ref struct JpegReader
         if (!_atMarker) SkipToMarker();
     }
 
-    private void DecodeBlock(Span<short> block, JpegHuffmanTable dc, JpegHuffmanTable ac, ref int predictor, ScanMode mode, int start, int end, int low)
+    // ReadScan guarantees the tables each mode needs are present.
+    private void DecodeBlock(Span<short> block, JpegHuffmanTable? dc, JpegHuffmanTable? ac, ref int predictor, ScanMode mode, int start, int end, int low)
     {
         switch (mode)
         {
             case ScanMode.Sequential:
-                DecodeDc(block, dc, ref predictor, 0);
-                DecodeAcFirst(block, ac, 1, 63, 0);
+                DecodeDc(block, dc!, ref predictor, 0);
+                DecodeAcFirst(block, ac!, 1, 63, 0, progressive: false);
                 break;
             case ScanMode.DcFirst:
-                DecodeDc(block, dc, ref predictor, low);
+                DecodeDc(block, dc!, ref predictor, low);
                 break;
             case ScanMode.DcRefine:
-                if (ReadBit()) block[0] = (short)(block[0] | (1 << low));
+                if (ReadBit()) block[0] = (short)((ushort)block[0] | (1 << low));
                 break;
             case ScanMode.AcFirst:
                 if (_eobRun > 0) _eobRun--;
-                else DecodeAcFirst(block, ac, start, end, low);
+                else DecodeAcFirst(block, ac!, start, end, low, progressive: true);
                 break;
             default:
-                DecodeAcRefine(block, ac, start, end, low);
+                DecodeAcRefine(block, ac!, start, end, low);
                 break;
         }
     }
@@ -397,7 +398,7 @@ internal ref struct JpegReader
     }
 
     /// <summary>Sequential AC decoding, and the first pass of a progressive AC band.</summary>
-    private void DecodeAcFirst(Span<short> block, JpegHuffmanTable table, int start, int end, int low)
+    private void DecodeAcFirst(Span<short> block, JpegHuffmanTable table, int start, int end, int low, bool progressive)
     {
         for (int k = start; k <= end;)
         {
@@ -411,12 +412,9 @@ internal ref struct JpegReader
                     continue;
                 }
 
-                // End of band. Sequential scans never carry a run; progressive ones may.
-                if (start > 1 || end < 63 || low > 0 || run > 0)
-                {
-                    _eobRun = (1 << run) - 1 + (run > 0 ? Receive(run) : 0);
-                }
-
+                // End of block. Only progressive bands may extend it into a run over later blocks;
+                // a sequential decoder treats every other zero size symbol as a plain EOB.
+                if (progressive) _eobRun = (1 << run) - 1 + (run > 0 ? Receive(run) : 0);
                 return;
             }
 
@@ -520,7 +518,7 @@ internal ref struct JpegReader
                 _phantomBits += 8;
             }
 
-            _bits = (_bits << 8) | (uint)b;
+            _bits = (_bits << 8) | (byte)b;
             _bitCount += 8;
         }
     }
