@@ -99,12 +99,24 @@ public static class PdfEquivalence
 {
     /// <summary>
     /// Returns null when both PDFs describe the same document object for object, with stream
-    /// content compared after decoding. Otherwise returns the first difference found.
+    /// content compared after decoding and JPEG images compared by DCT coefficients. Otherwise
+    /// returns the first difference found.
     /// </summary>
-    public static string? FindDifference(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, long maxDecodedStreamBytes = 256L << 20)
+    /// <param name="original">The source PDF.</param>
+    /// <param name="candidate">The PDF to check against it.</param>
+    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
+    /// <param name="allowJpegRequantization">
+    /// Also accept JPEG images whose coefficients are exactly the source's requantized to coarser
+    /// tables, as <see cref="PdfOptimizerOptions.JpegQuality"/> produces.
+    /// </param>
+    public static string? FindDifference(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        long maxDecodedStreamBytes = 256L << 20,
+        bool allowJpegRequantization = false)
     {
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, Environment.ProcessorCount, CancellationToken.None, out _);
+        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowJpegRequantization, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 }

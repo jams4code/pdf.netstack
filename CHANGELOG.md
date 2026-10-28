@@ -2,6 +2,15 @@
 
 ## 0.2.0 (unreleased)
 
+- JPEG images: lossless re-encoding on by default (`OptimizeJpegImages`). Huffman tables are
+  rebuilt for each image, progressive and restart marked JPEGs become baseline, and segments PDF
+  readers ignore are dropped. Coefficients are untouched and verification compares them one by one.
+- Opt-in JPEG requantization (`JpegQuality`, CLI `--jpeg-quality`): coarser tables at a libjpeg
+  quality, never finer than the image's own, applied in the coefficient domain so the color model
+  cannot change. Soft masks stay lossless. Verification checks each coefficient is exactly the
+  requantized source value. `OptimizationStatistics.JpegImagesRecompressed` and
+  `JpegImagesRequantized`; the Azure sidecar records the quality, and lossy blobs carry
+  `jpegquality` metadata.
 - Document editing API: `PdfDocument.Open`, `Create`, `Save`, `Merge`, `Split`; pages can be
   added, inserted, removed, moved, rotated and imported from other documents with shared
   resources copied once; `Info` for metadata with Unicode and date support; `Outlines` for

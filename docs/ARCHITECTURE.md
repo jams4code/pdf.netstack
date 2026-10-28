@@ -41,6 +41,7 @@ output = verified rewrite, or input bytes
 | `Objects/` | Object model. Numbers keep canonical text so reals never pass through floating point. Dictionaries keep insertion order for deterministic output. |
 | `Parsing/` | Tokenizer, object parser, `PdfFile` (xref loading, lazy object resolution, object streams, reconstruction). |
 | `Filters/` | Flate, LZW, ASCIIHex, ASCII85, RunLength decoders; PNG and TIFF predictors; pooled, size capped buffers. |
+| `Imaging/` | JPEG at the coefficient level: marker parser, Huffman decoder for baseline, extended and progressive frames, Huffman code optimizer, baseline writer, requantization, and the coefficient equivalence check. No inverse DCT. |
 | `Optimization/` | Reachability, recompression, deduplication, verification. |
 | `Writing/` | Token serializer with minimal separators; document writer for compact and classic layouts. |
 | `PdfOptimizer.cs` | Public entry point and orchestration. Every exception path returns the input. |
@@ -59,6 +60,13 @@ the shortest form.
 new Flate layer, so a predicted image or xref stream is recompressed without reimplementing the
 predictor on the encode side. Candidate encodings are compared by total cost, data plus the
 `/Filter` and `/DecodeParms` entries they need.
+
+**JPEG stays in the frequency domain.** A JPEG is quantized DCT coefficients plus Huffman
+coding. Re-encoding the coding alone is lossless by definition, and requantizing the coefficients
+is the same loss a JPEG encoder applies at a lower quality, applied once instead of after a
+decode and a re-encode. Skipping pixels also means color conversion, chroma upsampling and the
+color model never enter the picture, so CMYK, YCCK, untransformed RGB and gray images keep
+their meaning without special cases, and the result is integer exact on every platform.
 
 **Fast trial, slow winner.** For images, plain and PNG predicted data are both compressed at the
 fastest zlib level, and only the smaller one is compressed at the configured level. Streams are

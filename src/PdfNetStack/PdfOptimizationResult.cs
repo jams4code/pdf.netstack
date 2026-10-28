@@ -37,6 +37,12 @@ public sealed record OptimizationStatistics(
     /// <summary>Objects dropped because nothing referenced them.</summary>
     public int UnreachableRemoved => Math.Max(0, ObjectsInFile - ReachableObjects);
 
+    /// <summary>JPEG images re-encoded, counted in <see cref="StreamsRecompressed"/> as well.</summary>
+    public int JpegImagesRecompressed { get; init; }
+
+    /// <summary>JPEG images among <see cref="JpegImagesRecompressed"/> that were requantized, and so changed lossily.</summary>
+    public int JpegImagesRequantized { get; init; }
+
     internal static OptimizationStatistics Empty(TimeSpan elapsed) => new(0, 0, 0, 0, 0, 0, 0, elapsed, new PhaseTimings());
 }
 

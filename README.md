@@ -89,6 +89,7 @@ var options = new PdfOptimizerOptions
     Compression = CompressionEffort.Balanced,   // faster, slightly larger
     AllowIncrementalUpdates = true,             // flatten edit history into one revision
     MaxDegreeOfParallelism = 2,                 // cap CPU and memory per document
+    JpegQuality = 60,                           // opt-in, lossy: requantize JPEG images
 };
 ```
 
@@ -149,6 +150,7 @@ its permissions allow copying.
 pdfnetstack optimize in.pdf out.pdf
 pdfnetstack batch ./incoming ./optimized --report report.csv
 pdfnetstack batch ./corpus                  # measure only, writes nothing
+pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
 pdfnetstack inspect in.pdf                  # where the bytes go
 pdfnetstack verify original.pdf other.pdf   # check any tool's output for equivalence
 
@@ -184,11 +186,15 @@ engine version and timings.
 | Xref stream | Replaces the text xref table with a predictor encoded, compressed stream | Yes |
 | Stream recompression | Removes ASCIIHex/ASCII85 layers, turns LZW and RunLength into Flate, recompresses Flate at zlib level 9, keeps a result only when smaller | Yes |
 | Image prediction | Tries PNG predictors on raw images of 8 bits or less per component | Yes |
+| JPEG re-encoding | Rebuilds each JPEG's Huffman tables for that image, writes progressive and restart-marked JPEGs as plain baseline, drops segments PDF readers ignore (Exif, XMP, embedded ICC, comments). Works on the DCT coefficients, which stay identical | Yes |
 | Deduplication | Merges byte identical fonts, images, ICC profiles, resource dictionaries and arrays, iterating until merges stop | Yes |
 | Compact syntax | Minimal separators, canonical numbers, null entries dropped | Yes |
 | Thumbnails, PieceInfo | Optional removal of page thumbnails and application private data | No, opt-in |
+| JPEG requantization | `JpegQuality`: coarser quantization at a libjpeg quality, never finer than the image's own; soft masks stay lossless | No, opt-in |
 
-JPEG, JPEG 2000, JBIG2 and CCITT data is never decoded or touched.
+JPEG data is decoded to DCT coefficients and never to pixels, so components, chroma sampling and
+color model pass through untouched: a CMYK image stays CMYK. JPEG 2000, JBIG2 and CCITT data is
+never decoded or touched.
 
 ## Safety model
 
@@ -210,8 +216,11 @@ wrong stream lengths are recovered from `endstream`, and unreadable objects neve
 
 The verifier walks the source and output graphs in lockstep from the trailer. Dictionaries
 must have the same keys and values, arrays the same items, references must line up, and every
-stream must decode to identical bytes with identical remaining filters. Encoding keys
-(`/Length`, `/Filter`, `/DecodeParms`) are the only differences it accepts.
+stream must decode to identical bytes with identical remaining filters. JPEG images are
+compared by DCT coefficient, so a re-encoded image passes only if every coefficient is the
+same. Encoding keys (`/Length`, `/Filter`, `/DecodeParms`) are the only other differences it
+accepts. With `JpegQuality` set, a JPEG image may also differ by exactly the requantization the
+optimizer applies, checked coefficient by coefficient, and by nothing else.
 See [docs/FIDELITY.md](docs/FIDELITY.md) for the full method and its limits.
 
 ## Results
@@ -258,6 +267,8 @@ object streams have little left to gain losslessly.
 | `DeduplicateObjects` | true | |
 | `RecompressStreams` | true | |
 | `UseImagePredictors` | true | |
+| `OptimizeJpegImages` | true | Lossless JPEG re-encoding |
+| `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
 | `Verify` | true | Disable only for inputs you already trust |
 | `AllowIncrementalUpdates` | false | Flattens edit history into one revision |
 | `AllowRepairedFiles` | false | Rewrites damaged files into clean ones |
@@ -282,8 +293,11 @@ test and corpus discipline as the optimizer:
 
 ## Limits
 
-- Lossy image recompression is not implemented. It needs an MIT licensed JPEG encoder and a
-  visual quality gate, and it is the next major item on the [roadmap](docs/ROADMAP.md).
+- Lossy compression covers JPEG images only and works on their coefficients: it does not
+  downsample, does not convert raw images to JPEG, and has no perceptual quality gate yet. See the
+  [roadmap](docs/ROADMAP.md).
+- Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, and damaged JPEG data, are carried
+  over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
 - Linearized (fast web view) output is not produced; linearization is dropped.
 - The whole document is held in memory. Peak memory depends on decoded image sizes and on

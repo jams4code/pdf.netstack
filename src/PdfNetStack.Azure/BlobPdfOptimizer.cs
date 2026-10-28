@@ -29,7 +29,9 @@ public sealed record OptimizationSidecar(
     double SavingPercent,
     double ElapsedMilliseconds,
     string Engine,
-    DateTimeOffset ProcessedAt);
+    DateTimeOffset ProcessedAt,
+    int? JpegQuality = null,
+    int JpegImagesRequantized = 0);
 
 /// <summary>
 /// Optimizes PDFs between two Blob Storage containers. The source blob is read at a pinned ETag
@@ -109,15 +111,25 @@ public sealed class BlobPdfOptimizer
             Math.Round(result.SavingPercent, 3),
             Math.Round(result.Statistics.Elapsed.TotalMilliseconds, 1),
             "PdfNetStack/" + typeof(PdfOptimizer).Assembly.GetName().Version,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            _options.JpegQuality,
+            result.Statistics.JpegImagesRequantized);
 
-        output.Position = 0;
-        bool existed = !await UploadOnceAsync(target.GetBlobClient(outputName), output, "application/pdf", new Dictionary<string, string>
+        var metadata = new Dictionary<string, string>
         {
             ["sha256"] = sha,
             ["sourcesha256"] = result.SourceSha256,
             ["disposition"] = result.Disposition.ToString().ToLowerInvariant(),
-        }, cancellationToken).ConfigureAwait(false);
+        };
+
+        // A lossy output must be recognizable from the blob alone, without reading the sidecar.
+        if (result.Statistics.JpegImagesRequantized > 0)
+        {
+            metadata["jpegquality"] = _options.JpegQuality!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        output.Position = 0;
+        bool existed = !await UploadOnceAsync(target.GetBlobClient(outputName), output, "application/pdf", metadata, cancellationToken).ConfigureAwait(false);
 
         using var json = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(sidecar, SidecarJson.Default.OptimizationSidecar));
         await UploadOnceAsync(target.GetBlobClient(sidecarName), json, "application/json", null, cancellationToken).ConfigureAwait(false);

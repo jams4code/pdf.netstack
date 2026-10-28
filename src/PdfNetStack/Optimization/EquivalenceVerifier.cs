@@ -1,4 +1,5 @@
 using PdfNetStack.Filters;
+using PdfNetStack.Imaging;
 using PdfNetStack.Objects;
 using PdfNetStack.Parsing;
 
@@ -8,7 +9,8 @@ namespace PdfNetStack.Optimization;
 /// Proves that two PDFs describe the same document: walks both object graphs in lockstep from
 /// the trailer and compares every reachable value. Streams are compared by decoded content, so
 /// a different compression of the same bytes is equal, while any change to page content, fonts,
-/// images, annotations, metadata or structure is reported with its path.
+/// images, annotations, metadata or structure is reported with its path. JPEG data is compared
+/// by DCT coefficients, so a re-encoding of the same image is equal too.
 /// </summary>
 internal sealed class EquivalenceVerifier
 {
@@ -18,18 +20,20 @@ internal sealed class EquivalenceVerifier
     private readonly PdfFile _b;
     private readonly HashSet<string> _ignoredSourceKeys;
     private readonly long _decodeLimit;
+    private readonly bool _allowJpegRequantization;
     private readonly HashSet<(int, int)> _visited = new();
     private readonly Dictionary<int, int> _aToB = new();
     private readonly Dictionary<int, int> _bToA = new();
     private readonly Queue<(int A, int B, string Path)> _pending = new();
     private readonly List<(PdfStream A, PdfStream B, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB)> _streams = new();
 
-    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit)
+    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, bool allowJpegRequantization)
     {
         _a = a;
         _b = b;
         _ignoredSourceKeys = new HashSet<string>(ignoredSourceKeys, StringComparer.Ordinal);
         _decodeLimit = decodeLimit;
+        _allowJpegRequantization = allowJpegRequantization;
     }
 
     public int ObjectsCompared { get; private set; }
@@ -37,10 +41,14 @@ internal sealed class EquivalenceVerifier
     public int StreamsCompared { get; private set; }
 
     /// <param name="ignoredSourceKeys">Keys allowed to exist only in the source, for opt-in stripping.</param>
+    /// <param name="allowJpegRequantization">
+    /// Accept JPEG images whose coefficients are exactly the source's requantized to coarser tables.
+    /// Everything else about them must still match.
+    /// </param>
     /// <returns>Null when equivalent, otherwise a description of the first difference found.</returns>
-    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, int parallelism, CancellationToken ct, out int objectsCompared)
+    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, bool allowJpegRequantization, int parallelism, CancellationToken ct, out int objectsCompared)
     {
-        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit);
+        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, allowJpegRequantization);
         string? difference = v.Run(parallelism, ct);
         objectsCompared = v.ObjectsCompared;
         return difference;
@@ -249,9 +257,17 @@ internal sealed class EquivalenceVerifier
         }
 
         if (da.PendingPredictor != db.PendingPredictor) return path + ": predictor differs";
-        if (!da.Data.Span.SequenceEqual(db.Data.Span)) return path + ": decoded stream content differs";
         if (!SameFilterChain(da.Remaining, db.Remaining)) return path + ": remaining filters differ";
-        return null;
+        if (da.Data.Span.SequenceEqual(db.Data.Span)) return null;
+
+        // Re-encoded JPEG data differs in bytes; equality is decided on its coefficients.
+        if (da.PendingPredictor is null && da.Remaining is [{ Name: "DCTDecode" }])
+        {
+            string? difference = JpegEquivalence.FindDifference(da.Data.Span, db.Data.Span, _allowJpegRequantization, _decodeLimit);
+            return difference is null ? null : path + ": " + difference;
+        }
+
+        return path + ": decoded stream content differs";
     }
 
     private DecodedStream? TryDecode(PdfStream s, List<FilterSpec>? filters)

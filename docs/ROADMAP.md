@@ -18,12 +18,13 @@ behind an explicit option that is off by default.
 
 ## Optimizer, next
 
-**Lossy image profile (opt-in).** Recompress continuous tone photographs only. Classify images
-first: bilevel, indexed, line art and screenshot-like images are left alone. Respect every
-placement of a reused image when computing effective resolution. Preserve masks, soft masks,
-ICC profiles, spot colors and decode arrays. Gate each image on a perceptual metric (SSIM or
-butteraugli class) and keep the original when it fails. Blocker: an MIT licensed JPEG encoder,
-either written here or vetted from the ecosystem.
+**Lossy image profile, continued.** JPEG requantization shipped in 0.2 (`JpegQuality`), with
+lossless Huffman optimization on by default. Next: a perceptual gate (SSIM on luminance, which
+needs an inverse DCT on top of the existing coefficient decoder) that keeps the original image
+when it fails; effective resolution per placement, then downsampling of oversampled photographs;
+progressive output where it is smaller than optimized baseline; and conversion of raw continuous
+tone images to JPEG, which needs a forward DCT and a classifier that leaves bilevel, indexed,
+line art and screenshot-like images alone.
 
 **Unused resource pruning.** Drop fonts, XObjects and graphics states listed in a resource
 dictionary but never named by the content that uses it. Needs a content stream tokenizer and

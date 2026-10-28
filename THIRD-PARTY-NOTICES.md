@@ -33,4 +33,6 @@ version is pinned. `eng/check-licenses.ps1` enforces this list in CI.
 ## Development only
 
 Not shipped in any package: MSTest (MIT) for tests, and `pypdfium2` (Apache-2.0 and BSD-3-Clause)
-plus NumPy (BSD-3-Clause) for the optional render comparison script in `tools/`.
+plus NumPy (BSD-3-Clause) for the optional render comparison script in `tools/`. The JPEG test
+fixtures are synthetic images written by Pillow (MIT-CMU) with libjpeg-turbo (IJG, BSD-3-Clause
+and zlib licenses) through `tools/make_jpeg_fixtures.py`; no code from either is used.

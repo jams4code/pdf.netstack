@@ -55,6 +55,23 @@ public sealed record PdfOptimizerOptions
     public bool UseImagePredictors { get; init; } = true;
 
     /// <summary>
+    /// Re-encode JPEG images (DCTDecode) with Huffman tables built for each image, and without the
+    /// segments a PDF reader ignores (Exif, XMP, embedded ICC profiles, comments; the image's color
+    /// space comes from the PDF). The DCT coefficients, and so the decoded pixels, stay the same.
+    /// Part of stream recompression. Default true.
+    /// </summary>
+    public bool OptimizeJpegImages { get; init; } = true;
+
+    /// <summary>
+    /// Requantize JPEG images to this quality, 1 to 100, on the scale libjpeg and most image tools
+    /// use. Not lossless: fine detail is traded for size. A table is never made finer than the
+    /// image's own, so images already at or below this quality only get the lossless pass, and
+    /// images used as soft masks always stay lossless. Null, the default, keeps every image lossless.
+    /// Requires <see cref="RecompressStreams"/> and <see cref="OptimizeJpegImages"/>.
+    /// </summary>
+    public int? JpegQuality { get; init; }
+
+    /// <summary>
     /// Re-read the candidate and prove it equivalent to the source before returning it.
     /// Disable only for trusted, already validated pipelines. Default true.
     /// </summary>
@@ -98,5 +115,10 @@ public sealed record PdfOptimizerOptions
         if (MaxDecodedStreamBytes <= 0) throw new ArgumentOutOfRangeException(nameof(MaxDecodedStreamBytes));
         if (ObjectsPerStream is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(ObjectsPerStream));
         if (MaxDegreeOfParallelism < 1) throw new ArgumentOutOfRangeException(nameof(MaxDegreeOfParallelism));
+        if (JpegQuality is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(JpegQuality));
+        if (JpegQuality is not null && !(RecompressStreams && OptimizeJpegImages))
+        {
+            throw new ArgumentException("JpegQuality needs RecompressStreams and OptimizeJpegImages enabled.", nameof(JpegQuality));
+        }
     }
 }

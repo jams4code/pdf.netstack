@@ -40,6 +40,9 @@ namespace PdfNetStack.Cli
               --no-dedup                Do not merge identical objects
               --no-recompress           Do not re-encode streams
               --no-image-predictors     Do not try PNG prediction on raw images
+              --no-jpeg                 Do not re-encode JPEG images
+              --jpeg-quality <1-100>    Requantize JPEG images to this quality (lossy);
+                                        verify: accept images requantized this way
               --no-verify               Skip the equivalence proof (not recommended)
               --allow-incremental       Flatten files with incremental updates
               --allow-repaired          Rewrite damaged files that needed repair
@@ -139,7 +142,8 @@ namespace PdfNetStack.Cli
                 {
                     Console.WriteLine($"pages {result.PageCount}, objects {s.ObjectsInFile} -> {s.ObjectsWritten} " +
                                       $"(unreachable {s.UnreachableRemoved}, merged {s.ObjectsDeduplicated}), " +
-                                      $"streams re-encoded {s.StreamsRecompressed}, objects verified {s.ObjectsVerified}");
+                                      $"streams re-encoded {s.StreamsRecompressed} (JPEG {s.JpegImagesRecompressed}, requantized {s.JpegImagesRequantized}), " +
+                                      $"objects verified {s.ObjectsVerified}");
                     PhaseTimings p = s.Phases;
                     Console.WriteLine($"analyze {p.Analyze.TotalMilliseconds:F0} ms, recompress {p.Recompress.TotalMilliseconds:F0} ms, " +
                                       $"dedup {p.Deduplicate.TotalMilliseconds:F0} ms, write {p.Write.TotalMilliseconds:F0} ms, verify {p.Verify.TotalMilliseconds:F0} ms");
@@ -283,7 +287,8 @@ namespace PdfNetStack.Cli
 
         private static int Verify(Arguments a)
         {
-            string? difference = PdfEquivalence.FindDifference(File.ReadAllBytes(a.Positional[0]), File.ReadAllBytes(a.Positional[1]));
+            string? difference = PdfEquivalence.FindDifference(File.ReadAllBytes(a.Positional[0]), File.ReadAllBytes(a.Positional[1]),
+                a.Options.MaxDecodedStreamBytes, allowJpegRequantization: a.Options.JpegQuality is not null);
             Console.WriteLine(difference is null ? "Equivalent." : "Different: " + difference);
             return difference is null ? 0 : 1;
         }
@@ -534,6 +539,8 @@ namespace PdfNetStack.Cli
                     case "--no-dedup": o = o with { DeduplicateObjects = false }; break;
                     case "--no-recompress": o = o with { RecompressStreams = false }; break;
                     case "--no-image-predictors": o = o with { UseImagePredictors = false }; break;
+                    case "--no-jpeg": o = o with { OptimizeJpegImages = false }; break;
+                    case "--jpeg-quality": o = o with { JpegQuality = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--no-verify": o = o with { Verify = false }; break;
                     case "--allow-incremental": o = o with { AllowIncrementalUpdates = true }; break;
                     case "--allow-repaired": o = o with { AllowRepairedFiles = true }; break;

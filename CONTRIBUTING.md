@@ -40,7 +40,10 @@ Out of scope: rendering PDFs to images, OCR, and wrappers around native or exter
    `eng/license-allowlist.json` in the same pull request with the license you verified.
 4. **No native code and no external processes** in shipped packages.
 5. **No real world documents in the repository.** Build test fixtures in code with `PdfBuilder`,
-   so their content and license are clear. Never commit customer or personal files.
+   so their content and license are clear. Never commit customer or personal files. The one
+   exception is `tests/PdfNetStack.Tests/Fixtures/Jpeg`: synthetic test cards written by
+   libjpeg-turbo, because an encoder other than ours is the point of those tests. Regenerate them
+   with `python tools/make_jpeg_fixtures.py`; never add photographs.
 6. **Every target framework stays green.** Code in `src/PdfNetStack` must compile for
    `netstandard2.0`. Use the helpers in `src/PdfNetStack/Compat` instead of APIs that only exist
    on modern .NET.
