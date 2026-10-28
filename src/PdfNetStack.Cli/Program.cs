@@ -21,6 +21,13 @@ namespace PdfNetStack.Cli
               pdfnetstack inspect <input.pdf> [--json]
               pdfnetstack verify <original.pdf> <candidate.pdf>
 
+            Editing:
+              pdfnetstack merge <output.pdf> <input.pdf>...
+              pdfnetstack split <input.pdf> <output-dir>
+              pdfnetstack extract <input.pdf> <output.pdf> <pages>      e.g. 1-3,7,9-  (order kept, repeats allowed)
+              pdfnetstack rotate <input.pdf> <output.pdf> <degrees> [pages]
+              pdfnetstack meta <input.pdf> [output.pdf] [--title t] [--author a] [--subject s] [--keywords k]
+
             Options:
               --fast | --balanced       Faster Flate levels (default: maximum)
               --no-object-streams       Write a classic xref table, no object streams
@@ -37,6 +44,7 @@ namespace PdfNetStack.Cli
               --jobs <n>                Documents processed in parallel by batch (default: all cores)
               --report <file.csv>       Batch: write one row per document
               --json                    Machine readable output
+              --no-optimize             Editing: save without the optimizer pass
             """;
 
         public static async Task<int> RunAsync(string[] args)
@@ -56,6 +64,11 @@ namespace PdfNetStack.Cli
                     "batch" when parsed.Positional.Count is 1 or 2 => await BatchAsync(parsed),
                     "inspect" when parsed.Positional.Count == 1 => Inspect(parsed),
                     "verify" when parsed.Positional.Count == 2 => Verify(parsed),
+                    "merge" when parsed.Positional.Count >= 2 => Merge(parsed),
+                    "split" when parsed.Positional.Count == 2 => Split(parsed),
+                    "extract" when parsed.Positional.Count == 3 => Extract(parsed),
+                    "rotate" when parsed.Positional.Count is 3 or 4 => Rotate(parsed),
+                    "meta" when parsed.Positional.Count is 1 or 2 => Meta(parsed),
                     _ => Fail("Unknown command or wrong number of arguments.\n\n" + Usage),
                 };
             }
@@ -68,6 +81,18 @@ namespace PdfNetStack.Cli
                 return Fail(ex.Message);
             }
             catch (UnauthorizedAccessException ex)
+            {
+                return Fail(ex.Message);
+            }
+            catch (PdfFormatException ex)
+            {
+                return Fail("Not a readable PDF: " + ex.Message);
+            }
+            catch (NotSupportedException ex)
+            {
+                return Fail(ex.Message);
+            }
+            catch (FormatException ex)
             {
                 return Fail(ex.Message);
             }
@@ -138,6 +163,70 @@ namespace PdfNetStack.Cli
                 Console.WriteLine($"  {f,-32} {count,7}");
             }
 
+            return 0;
+        }
+
+        private static PdfSaveOptions SaveOptions(Arguments a) => new() { Optimize = !a.NoOptimize, Compression = a.Options.Compression };
+
+        private static int Saved(PdfDocument doc, string path, Arguments a)
+        {
+            doc.Save(path, SaveOptions(a));
+            Console.WriteLine($"{path}: {doc.Pages.Count} page(s), {Size(new FileInfo(path).Length)}");
+            return 0;
+        }
+
+        private static int Merge(Arguments a)
+        {
+            var inputs = a.Positional.Skip(1).Select(PdfDocument.Open).ToList();
+            return Saved(PdfDocument.Merge(inputs), a.Positional[0], a);
+        }
+
+        private static int Split(Arguments a)
+        {
+            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            string name = Path.GetFileNameWithoutExtension(a.Positional[0]);
+            int width = doc.Pages.Count.ToString(CultureInfo.InvariantCulture).Length;
+            int i = 0;
+            foreach (PdfDocument page in doc.Split())
+            {
+                i++;
+                page.Save(Path.Combine(a.Positional[1], $"{name}-{i.ToString(CultureInfo.InvariantCulture).PadLeft(width, '0')}.pdf"), SaveOptions(a));
+            }
+
+            Console.WriteLine($"{i} file(s) written to {a.Positional[1]}");
+            return 0;
+        }
+
+        private static int Extract(Arguments a)
+        {
+            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            List<int> pages = Editing.ParseRanges(a.Positional[2], doc.Pages.Count);
+            PdfDocument result = PdfDocument.Create();
+            result.Pages.Import(pages.Select(i => doc.Pages[i]));
+            return Saved(result, a.Positional[1], a);
+        }
+
+        private static int Rotate(Arguments a)
+        {
+            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            int degrees = int.Parse(a.Positional[2], CultureInfo.InvariantCulture);
+            IEnumerable<int> pages = a.Positional.Count == 4
+                ? Editing.ParseRanges(a.Positional[3], doc.Pages.Count).Distinct()
+                : Enumerable.Range(0, doc.Pages.Count);
+            foreach (int i in pages) doc.Pages[i].Rotate(degrees);
+            return Saved(doc, a.Positional[1], a);
+        }
+
+        private static int Meta(Arguments a)
+        {
+            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            foreach ((string key, string value) in a.Metadata) doc.Info[key] = value;
+            if (a.Positional.Count == 2) return Saved(doc, a.Positional[1], a);
+            if (a.Metadata.Count > 0) return Fail("Give an output file to write metadata changes.");
+
+            Console.WriteLine($"Pages         {doc.Pages.Count}");
+            foreach (string key in doc.Info.Keys) Console.WriteLine($"{key,-13} {doc.Info[key]}");
+            if (doc.Outlines.Count > 0) Console.WriteLine($"Bookmarks     {doc.Outlines.Count} top level");
             return 0;
         }
 
@@ -262,7 +351,13 @@ namespace PdfNetStack.Cli
             File.WriteAllText(path, sb.ToString());
         }
 
-        private static string Csv(string s) => "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+        // Reasons and file names come from untrusted documents. A leading formula character is
+        // neutralized so spreadsheet apps never evaluate a cell.
+        private static string Csv(string s)
+        {
+            if (s.Length > 0 && s[0] is '=' or '+' or '-' or '@' or '\t' or '\r') s = "'" + s;
+            return "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+        }
 
         internal static string Size(long bytes) => bytes switch
         {
@@ -271,6 +366,37 @@ namespace PdfNetStack.Cli
             >= 1L << 10 => $"{bytes / 1024.0:F1} KiB",
             _ => $"{bytes} B",
         };
+    }
+
+    internal static class Editing
+    {
+        /// <summary>Parses 1-based page ranges such as "1-3,7,9-" against a page count.</summary>
+        public static List<int> ParseRanges(string spec, int pageCount)
+        {
+            var result = new List<int>();
+            foreach (string raw in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string[] bounds = raw.Split('-');
+                if (bounds.Length > 2) throw new FormatException($"Invalid page range '{raw}'.");
+                int from = bounds[0].Length == 0 ? 1 : Page(bounds[0], pageCount);
+                int to = bounds.Length == 1 ? from : bounds[1].Length == 0 ? pageCount : Page(bounds[1], pageCount);
+                int step = from <= to ? 1 : -1;
+                for (int p = from; p != to + step; p += step) result.Add(p - 1);
+            }
+
+            if (result.Count == 0) throw new FormatException("No pages selected.");
+            return result;
+        }
+
+        private static int Page(string text, int pageCount)
+        {
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int page) || page < 1 || page > pageCount)
+            {
+                throw new FormatException($"Page '{text}' is outside 1-{pageCount}.");
+            }
+
+            return page;
+        }
     }
 
     internal sealed record BatchRow(string File, string Disposition, long OriginalBytes, long OutputBytes, int PageCount, double Milliseconds, string Reason);
@@ -304,6 +430,10 @@ namespace PdfNetStack.Cli
 
         public string? ReportPath { get; private set; }
 
+        public bool NoOptimize { get; private set; }
+
+        public List<(string Key, string Value)> Metadata { get; } = [];
+
         public static Arguments Parse(string[] args)
         {
             var a = new Arguments();
@@ -332,6 +462,11 @@ namespace PdfNetStack.Cli
                         break;
                     case "--jobs": a.Jobs = Math.Max(1, int.Parse(Value(args, ref i), CultureInfo.InvariantCulture)); break;
                     case "--report": a.ReportPath = Value(args, ref i); break;
+                    case "--no-optimize": a.NoOptimize = true; break;
+                    case "--title": a.Metadata.Add(("Title", Value(args, ref i))); break;
+                    case "--author": a.Metadata.Add(("Author", Value(args, ref i))); break;
+                    case "--subject": a.Metadata.Add(("Subject", Value(args, ref i))); break;
+                    case "--keywords": a.Metadata.Add(("Keywords", Value(args, ref i))); break;
                     default:
                         if (arg.StartsWith("--", StringComparison.Ordinal)) throw new ArgumentException("Unknown option " + arg);
                         a.Positional.Add(arg);

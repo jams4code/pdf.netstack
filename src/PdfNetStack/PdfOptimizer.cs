@@ -68,15 +68,28 @@ public static partial class PdfOptimizer
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(output);
         options ??= PdfOptimizerOptions.Default;
+        // Buffer at most MaxInputBytes. Anything larger is streamed through untouched without
+        // ever being held in memory, as the in-memory path would return it unchanged anyway.
         using var buffer = new MemoryStream();
-        await input.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
-        if (buffer.Length > options.MaxInputBytes)
+        byte[] chunk = new byte[81920];
+        int read;
+        while ((read = await input.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
         {
-            // Too large to optimize: pass the input through untouched, as the in-memory path would.
-            buffer.Position = 0;
-            await buffer.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-            return new PdfOptimizationResult(OptimizationDisposition.UnsupportedRetained, buffer.Length, buffer.Length, "", "", 0,
-                "Input exceeds the configured size limit.", OptimizationStatistics.Empty(TimeSpan.Zero));
+            buffer.Write(chunk, 0, read);
+            if (buffer.Length > options.MaxInputBytes)
+            {
+                long total = buffer.Length;
+                buffer.Position = 0;
+                await buffer.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                while ((read = await input.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+                {
+                    await output.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    total += read;
+                }
+
+                return new PdfOptimizationResult(OptimizationDisposition.UnsupportedRetained, total, total, "", "", 0,
+                    "Input exceeds the configured size limit.", OptimizationStatistics.Empty(TimeSpan.Zero));
+            }
         }
 
         using var result = new MemoryStream();

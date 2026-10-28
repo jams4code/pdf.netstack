@@ -1,6 +1,6 @@
 # PdfNetStack
 
-Lossless PDF optimizer for .NET. Pure C#, zero runtime dependencies, MIT licensed.
+Lossless PDF optimizer and editing library for .NET. Pure C#, zero runtime dependencies, MIT licensed.
 
 [![CI](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml/badge.svg)](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/PdfNetStack.svg)](https://www.nuget.org/packages/PdfNetStack)
@@ -77,6 +77,35 @@ var options = new PdfOptimizerOptions
 `PdfOptimizationResult` tells you what was written and why: `Disposition`, sizes, SHA-256 of
 input and output, page count, a human readable `Reason`, and per pass statistics and timings.
 
+### Editing
+
+```csharp
+using var input = File.OpenRead("contract.pdf");
+PdfDocument doc = PdfDocument.Open(input);
+
+doc.Pages.RemoveAt(0);                         // drop the cover
+doc.Pages.Move(2, 0);                          // reorder
+doc.Pages[0].Rotate(90);                       // rotate clockwise
+doc.Pages.Add(PdfRectangle.A4);                // blank page
+
+PdfDocument annex = PdfDocument.Open("annex.pdf");
+doc.Pages.Import(annex.Pages);                 // fonts and images shared between pages are copied once
+
+doc.Info.Title = "Signed contract";
+doc.Outlines.Add("Annex", doc.Pages[^1]);      // bookmarks, read and written
+
+doc.Save("contract-final.pdf");                // optimized and verified by default
+
+PdfDocument merged = PdfDocument.Merge([PdfDocument.Open("a.pdf"), PdfDocument.Open("b.pdf")]);
+foreach (PdfDocument single in merged.Split()) { /* one document per page */ }
+```
+
+Inherited page attributes (resources, media box, rotation) are materialized on each page, so
+pages survive reordering and moving between documents. Annotations travel with their page and
+are copied fresh for every import; links to pages imported in the same call are remapped, links
+to pages left behind become empty. Editing a signed document invalidates its signatures, and
+encrypted documents are not supported yet.
+
 ### Command line
 
 ```bash
@@ -85,6 +114,12 @@ pdfnetstack batch ./incoming ./optimized --report report.csv
 pdfnetstack batch ./corpus                  # measure only, writes nothing
 pdfnetstack inspect in.pdf                  # where the bytes go
 pdfnetstack verify original.pdf other.pdf   # check any tool's output for equivalence
+
+pdfnetstack merge out.pdf a.pdf b.pdf c.pdf
+pdfnetstack split in.pdf ./pages
+pdfnetstack extract in.pdf out.pdf 1-3,7,9-  # page ranges, any order, repeats allowed
+pdfnetstack rotate in.pdf out.pdf 90 2-4
+pdfnetstack meta in.pdf out.pdf --title "Annual report" --author "Finance"
 ```
 
 ### Azure Blob Storage
@@ -161,6 +196,10 @@ The 631 page catalogue, 72.6 MiB of CAD drawings already Flate compressed: 6,075
 objects merged, 3.1% saved, about 5 seconds with all cores, peak working set about 690 MB.
 Image heavy files gain the most, often 20 to 40%, mostly from PNG prediction on raw images.
 
+Editing path: every document in the corpus was rebuilt by importing all of its pages into a new
+document and saving it. 1,152 documents, 2,233 pages, zero differing pixels against the
+originals at 150 DPI.
+
 Your mileage depends on what produced the PDF. Files from well tuned producers that already use
 object streams have little left to gain losslessly.
 
@@ -183,6 +222,19 @@ object streams have little left to gain losslessly.
 | `MaxInputBytes` | 1 GiB | |
 | `MaxDecodedStreamBytes` | 256 MiB | Per stream decode ceiling |
 | `MaxDegreeOfParallelism` | CPU count | Lower it to cap memory on image heavy files |
+
+## Toward PdfSharp feature parity
+
+PdfNetStack is growing into a full MIT alternative to PdfSharp, in phases, each with the same
+test and corpus discipline as the optimizer:
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | Document editing: open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | Done |
+| 2 | Encryption: open password protected files, AES-128/256 output, permissions | Next |
+| 3 | Creation: drawing canvas, TrueType embedding and subsetting, JPEG and PNG images, text | Planned |
+| 4 | Forms and annotations: read and fill AcroForm fields, links, notes, stamps | Planned |
+| 5 | Digital signatures and PDF/A output | Planned |
 
 ## Limits
 

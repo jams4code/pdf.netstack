@@ -36,6 +36,7 @@ internal sealed class PdfFile
     // object's start, which keeps hostile files (unterminated strings, missing endstream) linear.
     private long[] _objectStarts = [];
     private long _objectStreamCacheBytes;
+    private long _objectStreamDecodedTotal;
 
     // Indirect /Length, /Filter or /N values can chain through other streams. Each link costs
     // stack frames, so the chain is cut off well before the stack is at risk.
@@ -696,6 +697,14 @@ internal sealed class PdfFile
         }
 
         var index = new ObjectStreamIndex(content, first, numbers, offsets);
+
+        // Every object stream decode counts against a per-document budget, so a file that forces
+        // repeated decodes (many large streams, cache churn) fails instead of burning CPU.
+        _objectStreamDecodedTotal += content.Length;
+        if (_objectStreamDecodedTotal > 4 * _decodeLimit)
+        {
+            throw new PdfFormatException("Object streams exceed the decode budget for one document.");
+        }
 
         // Decoded object streams are cached, but never more than one decode limit's worth;
         // past that the cache starts over and streams are decoded again on demand.

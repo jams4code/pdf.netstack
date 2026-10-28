@@ -3,7 +3,20 @@
 Ordered by value per unit of risk. Each item ships behind tests and, where it is not lossless,
 behind an explicit option that is off by default.
 
-## Next
+## PdfSharp parity
+
+1. Document editing. Done in 0.2: `PdfDocument`, pages, import, merge, split, info, outlines.
+2. Encryption: Standard security handler revisions 2 to 6 for reading (RC4 and AES), AES-256
+   (revision 6) for writing, user and owner passwords, permission flags.
+3. Creation API: an XGraphics style canvas (paths, transforms, colors, line styles, clipping),
+   TrueType and OpenType parsing with glyph subsetting and ToUnicode maps, JPEG passthrough and PNG
+   decoding into image XObjects, text layout with line breaking.
+4. AcroForm: field tree, reading and setting values, appearance generation for text, check box
+   and choice fields, flattening. Annotation API for links, text notes and stamps. Import of form
+   fields together with their pages.
+5. Signatures (PAdES baseline, incremental save) and PDF/A-2b and 3b output with XMP sync.
+
+## Optimizer, next
 
 **Lossy image profile (opt-in).** Recompress continuous tone photographs only. Classify images
 first: bilevel, indexed, line art and screenshot-like images are left alone. Respect every

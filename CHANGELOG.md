@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+- Document editing API: `PdfDocument.Open`, `Create`, `Save`, `Merge`, `Split`; pages can be
+  added, inserted, removed, moved, rotated and imported from other documents with shared
+  resources copied once; `Info` for metadata with Unicode and date support; `Outlines` for
+  reading, editing and writing bookmarks while keeping their original styling and actions.
+- CLI: `merge`, `split`, `extract`, `rotate`, `meta`.
+- Hardening from review: bounded resolution depth, bounded object regions, predictor row
+  clamping, identity checks in deduplication and verification, per document decode budget.
+
+## 0.1.0
 
 First public version.
 
