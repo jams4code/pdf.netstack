@@ -42,8 +42,28 @@ internal sealed class ByteSink
     public void WriteInteger(long value)
     {
         if (Length + 20 > _buffer.Length) Grow(20);
-        value.TryFormat(_buffer.AsSpan(Length), out int written, default, System.Globalization.CultureInfo.InvariantCulture);
-        Length += written;
+        if (value < 0)
+        {
+            _buffer[Length++] = (byte)'-';
+            if (value == long.MinValue)
+            {
+                WriteAscii("9223372036854775808");
+                return;
+            }
+
+            value = -value;
+        }
+
+        // Digits are produced right to left into a small scratch area, then copied.
+        Span<byte> digits = stackalloc byte[20];
+        int n = 0;
+        do
+        {
+            digits[n++] = (byte)('0' + (int)(value % 10));
+            value /= 10;
+        }
+        while (value != 0);
+        while (n > 0) _buffer[Length++] = digits[--n];
     }
 
     public byte LastByte => Length == 0 ? (byte)' ' : _buffer[Length - 1];
@@ -53,7 +73,7 @@ internal sealed class ByteSink
     private void Grow(int needed)
     {
         long next = Math.Max((long)Length + needed, (long)_buffer.Length * 2);
-        if (next > Array.MaxLength) next = Math.Max((long)Length + needed, Array.MaxLength);
+        if (next > Compat.MaxArrayLength) next = Math.Max((long)Length + needed, Compat.MaxArrayLength);
         Array.Resize(ref _buffer, (int)next);
     }
 }
@@ -72,6 +92,9 @@ internal sealed class PdfSerializer
     /// </param>
     public PdfSerializer(Func<PdfReference, int> mapReference) => _mapReference = mapReference;
 
+    /// <summary>Applied to every string before it is written; used for encryption of in-file objects.</summary>
+    public Func<byte[], byte[]>? StringTransform { get; set; }
+
     public void Write(ByteSink sink, PdfObject obj)
     {
         switch (obj)
@@ -89,7 +112,7 @@ internal sealed class PdfSerializer
                 WriteName(sink, name.Value);
                 break;
             case PdfString str:
-                WriteString(sink, str.Value);
+                WriteString(sink, StringTransform is null ? str.Value : StringTransform(str.Value));
                 break;
             case PdfArray array:
                 sink.Write((byte)'[');

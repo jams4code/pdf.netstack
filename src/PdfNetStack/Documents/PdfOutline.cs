@@ -80,6 +80,7 @@ public sealed class PdfOutlineCollection : Collection<PdfOutline>
         var result = new PdfOutlineCollection();
         if (doc.ResolveDictionary(doc.Catalog["Outlines"]) is not { } root) return result;
         var pageByNumber = doc.Pages.ToDictionary(p => p.Number);
+        var names = new NamedDestinations(doc);
         var seen = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
         int budget = MaxItems;
 
@@ -90,7 +91,7 @@ public sealed class PdfOutlineCollection : Collection<PdfOutline>
             {
                 string title = PdfText.GetString(item, "Title", doc.Resolve) ?? "";
                 bool open = doc.Resolve(item["Count"]) is PdfNumber { IsInteger: true, IntegerValue: > 0 };
-                var outline = new PdfOutline(title, FindPage(doc, item, pageByNumber), item, open);
+                var outline = new PdfOutline(title, FindPage(doc, item, pageByNumber, names), item, open);
                 into.Add(outline);
                 LoadLevel(item, outline.Children, depth + 1);
                 item = doc.ResolveDictionary(item["Next"]);
@@ -101,47 +102,66 @@ public sealed class PdfOutlineCollection : Collection<PdfOutline>
         return result;
     }
 
-    private static PdfPage? FindPage(PdfDocument doc, PdfDictionary item, Dictionary<int, PdfPage> pages)
+    private static PdfPage? FindPage(PdfDocument doc, PdfDictionary item, Dictionary<int, PdfPage> pages, NamedDestinations names)
     {
         PdfObject? dest = item["Dest"];
         if (dest is null && doc.ResolveDictionary(item["A"]) is { } action && action.GetName("S") == "GoTo") dest = action["D"];
         dest = doc.Resolve(dest);
-        if (dest is PdfName or PdfString) dest = LookupNamedDestination(doc, dest);
+        if (dest is PdfName or PdfString) dest = names.Lookup(dest);
         if (dest is PdfDictionary withD) dest = doc.Resolve(withD["D"]);
         return dest is PdfArray { Count: > 0 } array && array[0] is PdfReference page && pages.TryGetValue(page.Number, out PdfPage? found)
             ? found
             : null;
     }
 
-    private static PdfObject? LookupNamedDestination(PdfDocument doc, PdfObject name)
+    /// <summary>
+    /// Named destinations, indexed once per load. The name tree walk is capped, so a hostile tree
+    /// costs a bounded amount of work no matter how many bookmarks refer into it.
+    /// </summary>
+    private sealed class NamedDestinations(PdfDocument doc)
     {
-        if (name is PdfName n && doc.ResolveDictionary(doc.Catalog["Dests"]) is { } dests) return doc.Resolve(dests[n.Value]);
-        if (name is not PdfString s) return null;
-        PdfDictionary? tree = doc.ResolveDictionary(doc.ResolveDictionary(doc.Catalog["Names"])?["Dests"]);
-        var visited = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
-        return SearchNameTree(doc, tree, s.Value, visited, 0);
-    }
+        private const int MaxEntries = 200_000;
+        private Dictionary<string, PdfObject>? _byString;
 
-    private static PdfObject? SearchNameTree(PdfDocument doc, PdfDictionary? node, byte[] key, HashSet<PdfDictionary> visited, int depth)
-    {
-        if (node is null || depth > 32 || !visited.Add(node)) return null;
-        if (doc.Resolve(node["Names"]) is PdfArray names)
+        public PdfObject? Lookup(PdfObject name)
         {
-            for (int i = 0; i + 1 < names.Count; i += 2)
-            {
-                if (doc.Resolve(names[i]) is PdfString k && k.Value.AsSpan().SequenceEqual(key)) return doc.Resolve(names[i + 1]);
-            }
+            if (name is PdfName n) return doc.ResolveDictionary(doc.Catalog["Dests"]) is { } dests ? doc.Resolve(dests[n.Value]) : null;
+            if (name is not PdfString s) return null;
+            _byString ??= Build();
+            return _byString.TryGetValue(Compat.Latin1.GetString(s.Value), out PdfObject? found) ? found : null;
         }
 
-        if (doc.Resolve(node["Kids"]) is PdfArray kids)
+        private Dictionary<string, PdfObject> Build()
         {
-            foreach (PdfObject kid in kids.Items)
+            var map = new Dictionary<string, PdfObject>(StringComparer.Ordinal);
+            var visited = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
+            var stack = new Stack<(PdfDictionary Node, int Depth)>();
+            if (doc.ResolveDictionary(doc.ResolveDictionary(doc.Catalog["Names"])?["Dests"]) is { } root) stack.Push((root, 0));
+            int budget = MaxEntries;
+            while (stack.Count > 0 && budget > 0)
             {
-                if (SearchNameTree(doc, doc.ResolveDictionary(kid), key, visited, depth + 1) is { } found) return found;
-            }
-        }
+                (PdfDictionary node, int depth) = stack.Pop();
+                if (depth > 32 || !visited.Add(node)) continue;
+                budget--;
+                if (doc.Resolve(node["Names"]) is PdfArray names)
+                {
+                    for (int i = 0; i + 1 < names.Count && budget > 0; i += 2, budget--)
+                    {
+                        if (doc.Resolve(names[i]) is PdfString key) map.TryAdd(Compat.Latin1.GetString(key.Value), doc.Resolve(names[i + 1])!);
+                    }
+                }
 
-        return null;
+                if (doc.Resolve(node["Kids"]) is PdfArray kids)
+                {
+                    foreach (PdfObject kid in kids.Items)
+                    {
+                        if (doc.ResolveDictionary(kid) is { } child) stack.Push((child, depth + 1));
+                    }
+                }
+            }
+
+            return map;
+        }
     }
 
     /// <summary>Writes the tree into the document, replacing the catalog's /Outlines.</summary>

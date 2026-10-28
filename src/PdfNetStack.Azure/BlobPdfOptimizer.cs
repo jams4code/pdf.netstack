@@ -67,9 +67,9 @@ public sealed class BlobPdfOptimizer
         string targetContainer,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(sourceContainer);
-        ArgumentException.ThrowIfNullOrEmpty(sourceBlobName);
-        ArgumentException.ThrowIfNullOrEmpty(targetContainer);
+        Compat.ThrowIfNullOrEmpty(sourceContainer, nameof(sourceContainer));
+        Compat.ThrowIfNullOrEmpty(sourceBlobName, nameof(sourceBlobName));
+        Compat.ThrowIfNullOrEmpty(targetContainer, nameof(targetContainer));
         if (string.Equals(sourceContainer, targetContainer, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Write optimized PDFs to a separate container so originals stay immutable.", nameof(targetContainer));

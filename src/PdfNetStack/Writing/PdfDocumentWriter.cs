@@ -8,7 +8,14 @@ internal sealed record WriterSettings(
     bool UseObjectStreams,
     int ObjectsPerStream,
     string Version,
-    CompressionLevel CompressionLevel);
+    CompressionLevel CompressionLevel)
+{
+    /// <summary>Encrypts every in-file object except the encryption dictionary and the xref stream.</summary>
+    public Security.StandardSecurity? Encryption { get; init; }
+
+    /// <summary>Output number of the encryption dictionary, which stays unencrypted and outside object streams.</summary>
+    public int EncryptionDictionaryNumber { get; init; } = -1;
+}
 
 /// <summary>
 /// Serializes a renumbered object set as a fresh, single revision PDF. Non-stream objects are
@@ -37,22 +44,22 @@ internal static class PdfDocumentWriter
             else estimate += 48;
         }
 
-        var sink = new ByteSink((int)Math.Min(estimate, Array.MaxLength));
+        var sink = new ByteSink((int)Math.Min(estimate, Compat.MaxArrayLength));
         sink.WriteAscii("%PDF-" + settings.Version + "\n");
         sink.Write(BinaryMarker);
 
         return settings.UseObjectStreams
             ? WriteCompact(sink, objects, trailer, serializer, settings)
-            : WriteClassic(sink, objects, trailer, serializer);
+            : WriteClassic(sink, objects, trailer, serializer, settings);
     }
 
-    private static ReadOnlyMemory<byte> WriteClassic(ByteSink sink, IReadOnlyList<PdfObject> objects, PdfDictionary trailer, PdfSerializer serializer)
+    private static ReadOnlyMemory<byte> WriteClassic(ByteSink sink, IReadOnlyList<PdfObject> objects, PdfDictionary trailer, PdfSerializer serializer, WriterSettings settings)
     {
         var offsets = new long[objects.Count + 1];
         for (int i = 0; i < objects.Count; i++)
         {
             offsets[i + 1] = sink.Length;
-            WriteIndirect(sink, serializer, i + 1, objects[i]);
+            WriteIndirect(sink, serializer, i + 1, objects[i], settings);
         }
 
         long xref = sink.Length;
@@ -74,7 +81,7 @@ internal static class PdfDocumentWriter
         var packed = new List<int>();
         for (int i = 0; i < count; i++)
         {
-            if (objects[i] is not PdfStream) packed.Add(i + 1);
+            if (objects[i] is not PdfStream && i + 1 != settings.EncryptionDictionaryNumber) packed.Add(i + 1);
         }
 
         int streamCount = (packed.Count + settings.ObjectsPerStream - 1) / settings.ObjectsPerStream;
@@ -90,11 +97,11 @@ internal static class PdfDocumentWriter
 
         for (int i = 0; i < count; i++)
         {
-            if (objects[i] is not PdfStream) continue;
             int number = i + 1;
+            if (objects[i] is not PdfStream && number != settings.EncryptionDictionaryNumber) continue;
             types[number] = 1;
             field2[number] = sink.Length;
-            WriteIndirect(sink, serializer, number, objects[i]);
+            WriteIndirect(sink, serializer, number, objects[i], settings);
         }
 
         var header = new ByteSink(1024);
@@ -123,6 +130,9 @@ internal static class PdfDocumentWriter
             int firstOffset = header.Length;
             header.Write(body.WrittenSpan);
             byte[] compressed = StreamCodec.Deflate(header.WrittenSpan, settings.CompressionLevel);
+
+            // Objects inside an object stream are protected by encrypting the stream as a whole.
+            if (settings.Encryption is { } encryption) compressed = encryption.Encrypt(streamNumber, 0, compressed, isString: false);
 
             types[streamNumber] = 1;
             field2[streamNumber] = sink.Length;
@@ -182,7 +192,7 @@ internal static class PdfDocumentWriter
 
     private static void CopyTrailerEntries(PdfDictionary source, PdfDictionary target)
     {
-        foreach (string key in new[] { "Root", "Info", "ID" })
+        foreach (string key in new[] { "Root", "Info", "ID", "Encrypt" })
         {
             if (source[key] is { } value) target.Set(key, value);
         }
@@ -195,21 +205,34 @@ internal static class PdfDocumentWriter
         return n;
     }
 
-    private static void WriteIndirect(ByteSink sink, PdfSerializer serializer, int number, PdfObject obj)
+    private static void WriteIndirect(ByteSink sink, PdfSerializer serializer, int number, PdfObject obj, WriterSettings settings)
     {
-        sink.WriteInteger(number);
-        sink.Write(" 0 obj\n"u8);
-        if (obj is PdfStream stream)
+        Security.StandardSecurity? encryption = number == settings.EncryptionDictionaryNumber ? null : settings.Encryption;
+        serializer.StringTransform = encryption is null ? null : value => encryption.Encrypt(number, 0, value, isString: true);
+        try
         {
-            WriteStreamDictionary(sink, serializer, stream.Dictionary, stream.Data.Length);
-            sink.Write("stream\n"u8);
-            sink.Write(stream.Data.Span);
-            sink.Write("\nendstream\nendobj\n"u8);
+            sink.WriteInteger(number);
+            sink.Write(" 0 obj\n"u8);
+            if (obj is PdfStream stream)
+            {
+                ReadOnlySpan<byte> data = stream.Data.Span;
+                bool clearMetadata = encryption is { EncryptMetadata: false } && stream.Dictionary.GetName("Type") == "Metadata";
+                byte[]? encrypted = encryption is null || clearMetadata ? null : encryption.Encrypt(number, 0, data, isString: false);
+                if (encrypted is not null) data = encrypted;
+                WriteStreamDictionary(sink, serializer, stream.Dictionary, data.Length);
+                sink.Write("stream\n"u8);
+                sink.Write(data);
+                sink.Write("\nendstream\nendobj\n"u8);
+            }
+            else
+            {
+                serializer.Write(sink, obj);
+                sink.Write("\nendobj\n"u8);
+            }
         }
-        else
+        finally
         {
-            serializer.Write(sink, obj);
-            sink.Write("\nendobj\n"u8);
+            serializer.StringTransform = null;
         }
     }
 

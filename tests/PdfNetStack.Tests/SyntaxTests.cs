@@ -8,7 +8,7 @@ namespace PdfNetStack.Tests;
 [TestClass]
 public sealed class SyntaxTests
 {
-    private static PdfObject Parse(string text) => new PdfParser(Encoding.Latin1.GetBytes(text)).ParseObject();
+    private static PdfObject Parse(string text) => new PdfParser(Compat.Latin1.GetBytes(text)).ParseObject();
 
     [TestMethod]
     [DataRow(@"(abc)", "abc")]
@@ -25,7 +25,7 @@ public sealed class SyntaxTests
     public void LiteralStrings(string syntax, string expected)
     {
         var s = (PdfString)Parse(syntax);
-        Assert.AreEqual(expected, Encoding.Latin1.GetString(s.Value));
+        Assert.AreEqual(expected, Compat.Latin1.GetString(s.Value));
     }
 
     [TestMethod]
@@ -36,7 +36,7 @@ public sealed class SyntaxTests
     public void HexStrings(string syntax, string expected)
     {
         var s = (PdfString)Parse(syntax);
-        Assert.AreEqual(expected, Encoding.Latin1.GetString(s.Value));
+        Assert.AreEqual(expected, Compat.Latin1.GetString(s.Value));
     }
 
     [TestMethod]
@@ -105,14 +105,14 @@ public sealed class SyntaxTests
         {
             var bytes = new byte[random.Next(0, 40)];
             random.NextBytes(bytes);
-            string name = Encoding.Latin1.GetString(bytes).Replace("\0", "", StringComparison.Ordinal);
+            string name = Compat.Latin1.GetString(bytes).Replace("\0", "");
 
             var array = new PdfArray([new PdfString(bytes), new PdfName(name), PdfNumber.FromInteger(i), new PdfName(""), PdfNumber.FromInteger(7)]);
             var sink = new ByteSink();
             serializer.Write(sink, array);
             var parsed = (PdfArray)new PdfParser(sink.ToArray()).ParseObject();
 
-            Assert.AreEqual(5, parsed.Count, Encoding.Latin1.GetString(sink.WrittenSpan));
+            Assert.AreEqual(5, parsed.Count, Compat.Latin1.GetString(sink.WrittenSpan));
             CollectionAssert.AreEqual(bytes, ((PdfString)parsed[0]).Value);
             Assert.AreEqual(name, ((PdfName)parsed[1]).Value);
             Assert.AreEqual(i.ToString(System.Globalization.CultureInfo.InvariantCulture), parsed[2].ToString());
@@ -127,6 +127,6 @@ public sealed class SyntaxTests
         var d = (PdfDictionary)Parse("<< /Type /Page /Kids [ 1 0 R 2 0 R ] /N 5 /S (x) /Null null >>");
         var sink = new ByteSink();
         new PdfSerializer(r => r.Number).Write(sink, d);
-        Assert.AreEqual("<</Type/Page/Kids[1 0 R 2 0 R]/N 5/S(x)>>", Encoding.Latin1.GetString(sink.WrittenSpan));
+        Assert.AreEqual("<</Type/Page/Kids[1 0 R 2 0 R]/N 5/S(x)>>", Compat.Latin1.GetString(sink.WrittenSpan));
     }
 }

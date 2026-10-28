@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <RootNamespace>PdfNetStack</RootNamespace>
-    <IsAotCompatible>true</IsAotCompatible>
+    <IsAotCompatible Condition="'$(TargetFramework)' != 'netstandard2.0'">true</IsAotCompatible>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Internal helpers document only the non-obvious parameters. -->
     <NoWarn>$(NoWarn);CS1573</NoWarn>
@@ -12,9 +12,16 @@
     <PackageTags>pdf;optimize;optimizer;compress;compression;lossless;object-streams;deduplication</PackageTags>
   </PropertyGroup>
 
+  <!-- .NET Standard 2.0 (.NET Framework 4.6.2+, Mono, Unity) needs Microsoft's MIT licensed span
+       polyfill. Modern targets have no dependencies at all. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Memory" Version="4.6.3" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="PdfNetStack.Tests" />
     <InternalsVisibleTo Include="PdfNetStack.Cli" />
+    <InternalsVisibleTo Include="PdfNetStack.Azure" />
   </ItemGroup>
 
 </Project>

@@ -18,13 +18,34 @@
     "Microsoft.Identity.Client.Extensions.Msal": "MIT",
     "Microsoft.IdentityModel.Abstractions": "MIT",
     "Microsoft.NET.ILLink.Tasks": "MIT (build time only)",
+    "Microsoft.NETCore.Platforms": "Microsoft .NET Library license; contains only runtime.json platform metadata, no code. Implicit dependency of NETStandard.Library 2.0.3.",
+    "NETStandard.Library": "MIT (implicit for .NET Standard 2.0 targets)",
+    "System.Buffers": "MIT",
     "System.ClientModel": "MIT",
+    "System.ComponentModel.Annotations": "MIT",
     "System.Diagnostics.DiagnosticSource": "MIT",
+    "System.Formats.Asn1": "MIT",
+    "System.IO.FileSystem.AccessControl": "MIT",
     "System.IO.Hashing": "MIT",
     "System.IO.Pipelines": "MIT",
+    "System.Memory": "MIT",
     "System.Memory.Data": "MIT",
+    "System.Numerics.Vectors": "MIT",
+    "System.Runtime.CompilerServices.Unsafe": "MIT",
+    "System.Security.AccessControl": "MIT",
+    "System.Security.Cryptography.Cng": "MIT",
     "System.Security.Cryptography.ProtectedData": "MIT",
+    "System.Security.Principal.Windows": "MIT",
     "System.Text.Encodings.Web": "MIT",
-    "System.Text.Json": "MIT"
-  }
+    "System.Text.Json": "MIT",
+    "System.Threading.Tasks.Extensions": "MIT"
+  },
+  "coreNetStandardOnly": [
+    "System.Memory",
+    "System.Buffers",
+    "System.Numerics.Vectors",
+    "System.Runtime.CompilerServices.Unsafe",
+    "NETStandard.Library",
+    "Microsoft.NETCore.Platforms"
+  ]
 }

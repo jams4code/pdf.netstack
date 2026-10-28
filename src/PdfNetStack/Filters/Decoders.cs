@@ -82,7 +82,7 @@ internal sealed class BoundedBuffer : IDisposable
         long required = (long)_length + needed;
         if (required > _limit) throw new StreamDecodeException("Decoded stream exceeds the configured size limit.");
         long next = Math.Max(required, Math.Min(_limit, (long)_buffer.Length * 2));
-        if (next > Array.MaxLength) throw new StreamDecodeException("Decoded stream is too large.");
+        if (next > Compat.MaxArrayLength) throw new StreamDecodeException("Decoded stream is too large.");
         byte[] grown = System.Buffers.ArrayPool<byte>.Shared.Rent((int)next);
         Buffer.BlockCopy(_buffer, 0, grown, 0, _length);
         System.Buffers.ArrayPool<byte>.Shared.Return(_buffer);
@@ -101,20 +101,24 @@ internal static class Decoders
 
     private static BoundedBuffer InflateWith(ReadOnlyMemory<byte> data, long limit, bool raw)
     {
-        using var input = new ReadOnlyMemoryStream(data);
-        using Stream inflater = raw
-            ? new DeflateStream(input, CompressionMode.Decompress)
-            : new ZLibStream(input, CompressionMode.Decompress);
         var output = new BoundedBuffer(data.Length * 4, limit);
         byte[] chunk = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
         try
         {
+            using var input = new ReadOnlyMemoryStream(data);
+            using Stream inflater = raw
+                ? new DeflateStream(input, CompressionMode.Decompress)
+                : Compat.ZlibDecompress(input);
             int read;
             while ((read = inflater.Read(chunk, 0, chunk.Length)) > 0)
             {
                 output.Write(chunk.AsSpan(0, read));
             }
 
+#if !NET8_0_OR_GREATER
+            // .NET Standard's DeflateStream ignores the zlib trailer; check it as modern .NET does.
+            if (!raw && !Compat.AdlerMatches(data.Span, output.Span)) throw new InvalidDataException("zlib checksum mismatch.");
+#endif
             return output;
         }
         catch (InvalidDataException ex)
@@ -381,12 +385,16 @@ internal sealed class ReadOnlyMemoryStream : Stream
     public override long Position
     {
         get => _position;
-        set => _position = (int)Math.Clamp(value, 0, _data.Length);
+        set => _position = (int)Math.Min(Math.Max(value, 0), _data.Length);
     }
 
     public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
 
+#if NET8_0_OR_GREATER
     public override int Read(Span<byte> buffer)
+#else
+    public int Read(Span<byte> buffer)
+#endif
     {
         int n = Math.Min(buffer.Length, _data.Length - _position);
         if (n <= 0) return 0;

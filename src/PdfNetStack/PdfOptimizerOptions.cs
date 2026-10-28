@@ -88,7 +88,7 @@ public sealed record PdfOptimizerOptions
     {
         CompressionEffort.Fast => CompressionLevel.Fastest,
         CompressionEffort.Balanced => CompressionLevel.Optimal,
-        _ => CompressionLevel.SmallestSize,
+        _ => Compat.MaximumCompression,
     };
 
     internal void Validate()

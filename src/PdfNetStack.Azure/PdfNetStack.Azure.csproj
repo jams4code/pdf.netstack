@@ -1,12 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <RootNamespace>PdfNetStack.Azure</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>PdfNetStack.Azure</PackageId>
     <Description>Azure Blob Storage pipeline for PdfNetStack: reads a source blob, writes the optimized PDF to a separate container under a content-addressed name, with a provenance sidecar. Managed identity only, no account keys.</Description>
     <PackageTags>pdf;optimize;azure;blob;storage</PackageTags>
+    <!-- Polyfills shared from the core through InternalsVisibleTo shadow identical framework types. Harmless. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'netstandard2.0'">$(NoWarn);CS1685</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

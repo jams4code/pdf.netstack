@@ -91,10 +91,14 @@ public sealed class HostileInputTests
         b.Set(1, $"<</Type/Catalog/Pages 2 0 R/X {s} 0 R>>");
         byte[] input = b.Build();
 
+#if NET8_0_OR_GREATER
         long before = GC.GetTotalAllocatedBytes(precise: true);
+#endif
         AssertSafe(input, PdfOptimizer.Optimize(input, Permissive with { MaxDegreeOfParallelism = 1 }));
+#if NET8_0_OR_GREATER
         long allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
         Assert.IsLessThan(64L << 20, allocated, $"allocated {allocated:N0} bytes");
+#endif
     }
 
     [TestMethod]
@@ -102,7 +106,7 @@ public sealed class HostileInputTests
     {
         var sb = new StringBuilder("%PDF-1.4\n");
         for (int k = 1; sb.Length < 600_000; k++) sb.Append(k).Append(" 0 obj (\n");
-        byte[] input = Encoding.Latin1.GetBytes(sb.ToString());
+        byte[] input = Compat.Latin1.GetBytes(sb.ToString());
 
         var clock = Stopwatch.StartNew();
         AssertSafe(input, PdfOptimizer.Optimize(input, Permissive));

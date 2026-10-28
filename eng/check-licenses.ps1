@@ -1,8 +1,11 @@
 # Fails when a shipping project resolves a package that is not on the license allowlist.
-# The core library must stay dependency free; this also fails if it gains any runtime package.
+# The core library must stay dependency free on modern .NET; on .NET Standard 2.0 it may use only
+# Microsoft's span polyfill packages listed under coreNetStandardOnly.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$allow = (Get-Content (Join-Path $PSScriptRoot 'license-allowlist.json') -Raw | ConvertFrom-Json).packages
+$config = Get-Content (Join-Path $PSScriptRoot 'license-allowlist.json') -Raw | ConvertFrom-Json
+$allow = $config.packages
+$coreNetStandard = @($config.coreNetStandardOnly)
 $projects = @(
     'src/PdfNetStack/PdfNetStack.csproj',
     'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
@@ -17,7 +20,9 @@ foreach ($project in $projects) {
         foreach ($f in $p.frameworks) {
             $packages = @($f.topLevelPackages) + @($f.transitivePackages) | Where-Object { $_ }
             foreach ($pkg in $packages) {
-                if ($project -like '*PdfNetStack/PdfNetStack.csproj' -and $buildOnly -notcontains $pkg.id) {
+                $isCore = $project -like '*PdfNetStack/PdfNetStack.csproj'
+                $coreOk = $buildOnly -contains $pkg.id -or (($f.framework -like 'netstandard*' -or $f.framework -like '.NETStandard*') -and $coreNetStandard -contains $pkg.id)
+                if ($isCore -and -not $coreOk) {
                     Write-Host "FAIL $project ($($f.framework)): core library must have no runtime dependencies, found $($pkg.id)"
                     $failed = $true
                 }

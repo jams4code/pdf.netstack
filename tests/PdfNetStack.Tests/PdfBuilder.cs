@@ -19,7 +19,7 @@ internal sealed class PdfBuilder
 
     public int Set(int number, string body)
     {
-        _objects[number] = Encoding.Latin1.GetBytes(body);
+        _objects[number] = Compat.Latin1.GetBytes(body);
         return number;
     }
 
@@ -142,7 +142,7 @@ internal sealed class PdfBuilder
     /// <summary>Appends an incremental update replacing or adding the given objects.</summary>
     public static byte[] AppendUpdate(byte[] original, IReadOnlyDictionary<int, string> objects, int size, int root = 1)
     {
-        string text = Encoding.Latin1.GetString(original);
+        string text = Compat.Latin1.GetString(original);
         int at = text.LastIndexOf("startxref", StringComparison.Ordinal);
         long prev = long.Parse(text[(at + 9)..].Trim().Split('\n')[0].Trim(), System.Globalization.CultureInfo.InvariantCulture);
 
@@ -179,11 +179,11 @@ internal sealed class PdfBuilder
     public static byte[] Deflate(byte[] data)
     {
         var ms = new MemoryStream();
-        using (var z = new ZLibStream(ms, CompressionLevel.Optimal, leaveOpen: true)) z.Write(data);
+        Compat.ZlibCompress(ms, data, CompressionLevel.Optimal);
         return ms.ToArray();
     }
 
-    private static void Put(Stream s, string text) => s.Write(Encoding.Latin1.GetBytes(text));
+    private static void Put(Stream s, string text) => s.Write(Compat.Latin1.GetBytes(text));
 
     /// <summary>A small valid document: catalog 1, pages 2, then one page, content and font per page.</summary>
     public static PdfBuilder Simple(params string[] pageTexts)

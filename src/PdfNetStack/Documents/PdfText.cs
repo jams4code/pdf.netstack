@@ -55,13 +55,15 @@ internal static class PdfText
     public static DateTimeOffset? ParseDate(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        string s = text.Trim();
+        string s = text!.Trim();
         if (s.StartsWith("D:", StringComparison.Ordinal)) s = s[2..];
         int p = 0;
 
         int Field(int width, int fallback)
         {
-            if (p + width > s.Length || !int.TryParse(s.AsSpan(p, width), NumberStyles.None, CultureInfo.InvariantCulture, out int v)) return fallback;
+#pragma warning disable CA1846 // .NET Standard 2.0 has no span overload.
+            if (p + width > s.Length || !int.TryParse(s.Substring(p, width), NumberStyles.None, CultureInfo.InvariantCulture, out int v)) return fallback;
+#pragma warning restore CA1846
             p += width;
             return v;
         }
@@ -82,7 +84,7 @@ internal static class PdfText
 
         try
         {
-            return new DateTimeOffset(year, Math.Clamp(month, 1, 12), Math.Clamp(day, 1, 31), Math.Min(hour, 23), Math.Min(minute, 59), Math.Min(second, 59), offset);
+            return new DateTimeOffset(year, Compat.Clamp(month, 1, 12), Compat.Clamp(day, 1, 31), Math.Min(hour, 23), Math.Min(minute, 59), Math.Min(second, 59), offset);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -96,6 +98,6 @@ internal static class PdfText
         if (value.Offset == TimeSpan.Zero) return "D:" + date + "Z";
         char sign = value.Offset < TimeSpan.Zero ? '-' : '+';
         TimeSpan o = value.Offset.Duration();
-        return string.Create(CultureInfo.InvariantCulture, $"D:{date}{sign}{o.Hours:D2}'{o.Minutes:D2}'");
+        return Compat.Format("D:{0}{1}{2:D2}'{3:D2}'", date, sign, o.Hours, o.Minutes);
     }
 }

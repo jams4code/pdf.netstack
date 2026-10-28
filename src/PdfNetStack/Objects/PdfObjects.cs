@@ -80,8 +80,10 @@ internal sealed class PdfNumber : PdfObject
             return new PdfNumber(raw.ToArray(), false, 0);
         }
 
-        ReadOnlySpan<byte> intDigits = raw[intStart..intEnd].TrimStart((byte)'0');
-        ReadOnlySpan<byte> fracDigits = fracStart >= 0 ? raw[fracStart..fracEnd].TrimEnd((byte)'0') : default;
+        ReadOnlySpan<byte> intDigits = raw[intStart..intEnd];
+        while (!intDigits.IsEmpty && intDigits[0] == (byte)'0') intDigits = intDigits[1..];
+        ReadOnlySpan<byte> fracDigits = fracStart >= 0 ? raw[fracStart..fracEnd] : default;
+        while (!fracDigits.IsEmpty && fracDigits[^1] == (byte)'0') fracDigits = fracDigits[..^1];
 
         if (intDigits.IsEmpty && fracDigits.IsEmpty)
         {

@@ -6,8 +6,8 @@ behind an explicit option that is off by default.
 ## PdfSharp parity
 
 1. Document editing. Done in 0.2: `PdfDocument`, pages, import, merge, split, info, outlines.
-2. Encryption: Standard security handler revisions 2 to 6 for reading (RC4 and AES), AES-256
-   (revision 6) for writing, user and owner passwords, permission flags.
+2. Encryption. Done in 0.2: revisions 2 to 6 for reading, AES-256 and AES-128 for writing,
+   user and owner passwords, permissions, preserved protection on save.
 3. Creation API: an XGraphics style canvas (paths, transforms, colors, line styles, clipping),
    TrueType and OpenType parsing with glyph subsetting and ToUnicode maps, JPEG passthrough and PNG
    decoding into image XObjects, text layout with line breaking.

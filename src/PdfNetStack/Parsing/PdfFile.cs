@@ -1,5 +1,6 @@
 using PdfNetStack.Filters;
 using PdfNetStack.Objects;
+using PdfNetStack.Security;
 
 namespace PdfNetStack.Parsing;
 
@@ -117,7 +118,7 @@ internal sealed class PdfFile
 
     private void IndexObjectStarts()
     {
-        _objectStarts = _xref.Values.Where(e => e.Type == XrefEntryType.InFile).Select(e => e.Field1).Distinct().Order().ToArray();
+        _objectStarts = _xref.Values.Where(e => e.Type == XrefEntryType.InFile).Select(e => e.Field1).Distinct().OrderBy(x => x).ToArray();
     }
 
     /// <summary>End of the region an object starting at <paramref name="offset"/> may occupy.</summary>
@@ -131,6 +132,54 @@ internal sealed class PdfFile
     /// <summary>Generation recorded for an object number; object stream members are generation 0.</summary>
     public int GenerationOf(int number) =>
         _xref.TryGetValue(number, out XrefEntry e) && e.Type == XrefEntryType.InFile ? e.Field2 : 0;
+
+    /// <summary>Security handler after <see cref="Unlock"/>; null for unencrypted or still locked files.</summary>
+    public StandardSecurity? Security { get; private set; }
+
+    private int _encryptNumber = -1;
+
+    /// <summary>
+    /// Authenticates against the /Encrypt dictionary. Every object read afterwards is decrypted.
+    /// </summary>
+    /// <exception cref="PdfPasswordException">The password matches neither user nor owner password.</exception>
+    public void Unlock(string? password)
+    {
+        PdfObject? encrypt = Trailer["Encrypt"];
+        if (encrypt is PdfReference r) _encryptNumber = r.Number;
+        if (Resolve(encrypt) is not PdfDictionary dict) throw new PdfFormatException("Encryption dictionary is missing.");
+        byte[] id0 = Resolve(Trailer["ID"]) is PdfArray { Count: > 0 } id && Resolve(id[0]) is PdfString s0 ? s0.Value : [];
+        Security = StandardSecurity.Open((PdfDictionary)DeepResolve(dict, 0), id0, password, Resolve);
+
+        // Everything read so far was read encrypted. Keep only the encryption dictionary.
+        lock (_cache)
+        {
+            _cache.Clear();
+            _objectStreams.Clear();
+            _objectStreamCacheBytes = 0;
+            if (_encryptNumber >= 0) _cache[_encryptNumber] = dict;
+        }
+    }
+
+    /// <summary>A copy with every indirect reference replaced by its value, for small self-contained dictionaries.</summary>
+    private PdfObject DeepResolve(PdfObject obj, int depth)
+    {
+        PdfObject value = Resolve(obj) ?? PdfNull.Instance;
+        if (depth > 16) return value;
+        switch (value)
+        {
+            case PdfDictionary d:
+            {
+                var copy = new PdfDictionary(d.Count);
+                for (int i = 0; i < d.Count; i++) copy.Set(d.EntryAt(i).Key, DeepResolve(d.ValueAt(i), depth + 1));
+                return copy;
+            }
+
+            case PdfArray a:
+                return new PdfArray(a.Items.Select(item => DeepResolve(item, depth + 1)).ToList());
+            default:
+                return value;
+        }
+    }
 
     public PdfObject? Resolve(PdfObject? obj)
     {
@@ -588,7 +637,7 @@ internal sealed class PdfFile
         if (offset < 0 || offset >= _data.Length) throw new PdfFormatException("Object offset outside the file.");
         ReadOnlyMemory<byte> region = _data[..RegionEnd(offset)];
         var parser = new PdfParser(region, (int)offset);
-        if (!parser.TryReadInteger(out long num) || !parser.TryReadInteger(out _) || !parser.TryReadKeyword("obj"u8))
+        if (!parser.TryReadInteger(out long num) || !parser.TryReadInteger(out long gen) || !parser.TryReadKeyword("obj"u8))
         {
             throw new PdfFormatException($"No object header at offset {offset}.");
         }
@@ -599,16 +648,94 @@ internal sealed class PdfFile
         }
 
         PdfObject obj = parser.ParseObject();
-        if (obj is not PdfDictionary dict) return obj;
-
-        int afterDict = parser.Position;
-        if (!parser.TryReadKeyword("stream"u8))
+        if (obj is PdfDictionary dict)
         {
-            parser.Position = afterDict;
-            return dict;
+            int afterDict = parser.Position;
+            if (parser.TryReadKeyword("stream"u8))
+            {
+                obj = new PdfStream(dict, ReadStreamData(parser, dict, region));
+            }
+            else
+            {
+                parser.Position = afterDict;
+            }
         }
 
-        return new PdfStream(dict, ReadStreamData(parser, dict, region));
+        return Security is null || num == _encryptNumber ? obj : Decrypt(obj, (int)num, (int)gen);
+    }
+
+    /// <summary>Decrypts strings and stream data of one in-file object, in place where possible.</summary>
+    private PdfObject Decrypt(PdfObject obj, int number, int generation)
+    {
+        StandardSecurity security = Security!;
+        if (obj is PdfStream stream)
+        {
+            DecryptStrings(stream.Dictionary, number, generation, 0);
+            string? type = stream.Dictionary.GetName("Type");
+            if (type == "XRef") return stream;
+            if (type == "Metadata" && !security.EncryptMetadata) return stream;
+            if (!RemoveIdentityCryptFilter(stream.Dictionary)) return stream;
+            stream.Data = security.Decrypt(number, generation, stream.Data.Span, isString: false);
+            return stream;
+        }
+
+        return DecryptValue(obj, number, generation, 0);
+    }
+
+    private PdfObject DecryptValue(PdfObject value, int number, int generation, int depth)
+    {
+        switch (value)
+        {
+            case PdfString s:
+                return new PdfString(Security!.Decrypt(number, generation, s.Value, isString: true), s.WasHex);
+            case PdfArray a when depth < PdfParser.MaxNesting:
+                for (int i = 0; i < a.Count; i++) a[i] = DecryptValue(a[i], number, generation, depth + 1);
+                return a;
+            case PdfDictionary d when depth < PdfParser.MaxNesting:
+                DecryptStrings(d, number, generation, depth + 1);
+                return d;
+            default:
+                return value;
+        }
+    }
+
+    private void DecryptStrings(PdfDictionary d, int number, int generation, int depth)
+    {
+        for (int i = 0; i < d.Count; i++) d.SetValueAt(i, DecryptValue(d.ValueAt(i), number, generation, depth));
+    }
+
+    /// <summary>
+    /// A leading /Crypt filter selects the crypt filter for this stream. Identity means the data is
+    /// stored in the clear. Returns false when the data must not be decrypted. The filter entry is
+    /// removed either way, since the data is decrypted now.
+    /// </summary>
+    private bool RemoveIdentityCryptFilter(PdfDictionary dict)
+    {
+        PdfObject? filter = Resolve(dict["Filter"]);
+        PdfObject? parms = Resolve(dict["DecodeParms"]);
+        bool isCrypt = filter is PdfName { Value: "Crypt" } || (filter is PdfArray { Count: > 0 } fa && Resolve(fa[0]) is PdfName { Value: "Crypt" });
+        if (!isCrypt) return true;
+
+        PdfDictionary? cryptParms = parms switch
+        {
+            PdfDictionary pd => pd,
+            PdfArray { Count: > 0 } pa => Resolve(pa[0]) as PdfDictionary,
+            _ => null,
+        };
+        bool identity = (cryptParms?.GetName("Name") ?? "Identity") == "Identity";
+
+        if (filter is PdfArray array && array.Count > 1)
+        {
+            array.Items.RemoveAt(0);
+            if (parms is PdfArray parmArray && parmArray.Count > 0) parmArray.Items.RemoveAt(0);
+        }
+        else
+        {
+            dict.Remove("Filter");
+            dict.Remove("DecodeParms");
+        }
+
+        return !identity;
     }
 
     private ReadOnlyMemory<byte> ReadStreamData(PdfParser parser, PdfDictionary dict, ReadOnlyMemory<byte> region)

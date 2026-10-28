@@ -57,7 +57,7 @@ internal static class Deduplicator
             };
 
             if (dict is not null && HasIdentity(dict)) continue;
-            if (obj is PdfStream st) payloadHash[number] = SHA256.HashData(st.Data.Span);
+            if (obj is PdfStream st) payloadHash[number] = Compat.Sha256(st.Data.Span);
             candidates.Add(number);
         }
 
@@ -100,7 +100,7 @@ internal static class Deduplicator
                     serializer.Write(sink, obj);
                 }
 
-                var key = new HashKey(SHA256.HashData(sink.WrittenSpan));
+                var key = new HashKey(Compat.Sha256(sink.WrittenSpan));
                 if (seen.TryGetValue(key, out int existing))
                 {
                     parent[number] = existing;
@@ -139,6 +139,6 @@ internal static class Deduplicator
 
         public override bool Equals(object? obj) => obj is HashKey k && Equals(k);
 
-        public override int GetHashCode() => HashCode.Combine(_a, _b);
+        public override int GetHashCode() => (int)_a ^ (int)(_a >> 32) ^ (int)_b;
     }
 }

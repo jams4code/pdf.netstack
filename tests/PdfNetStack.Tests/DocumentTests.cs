@@ -67,7 +67,7 @@ public sealed class DocumentTests
         Assert.HasCount(2, back.Pages);
         StringAssert.Contains(Text(back.Pages[0]), "(Alpha)");
         StringAssert.Contains(Text(back.Pages[1]), "(Charlie)");
-        Assert.AreEqual(-1, Encoding.Latin1.GetString(bytes).IndexOf("Bravo", StringComparison.Ordinal));
+        Assert.AreEqual(-1, Compat.Latin1.GetString(bytes).IndexOf("Bravo", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -123,7 +123,7 @@ public sealed class DocumentTests
         PdfDocument back = PdfDocument.Open(bytes);
         Assert.HasCount(4, back.Pages);
         CollectionAssert.AreEqual(new[] { "(A1)", "(A2)", "(A3)", "(B1)" },
-            back.Pages.Select(p => Text(p)[(Text(p).IndexOf('(', StringComparison.Ordinal))..(Text(p).IndexOf(')', StringComparison.Ordinal) + 1)]).ToArray());
+            back.Pages.Select(p => Text(p)[(Text(p).IndexOf('('))..(Text(p).IndexOf(')') + 1)]).ToArray());
 
         // One Helvetica from a (shared by three pages) and one from b.
         Assert.AreEqual(2, CountObjects(bytes, d => d.GetName("Type") == "Font"));
@@ -288,11 +288,11 @@ public sealed class DocumentTests
     }
 
     [TestMethod]
-    public void EncryptedDocumentsAreRejectedClearly()
+    public void MalformedEncryptionIsRejectedClearly()
     {
         PdfBuilder b = PdfBuilder.Simple("secret");
         b.Add("<</Filter/Standard/V 2/R 3/O(x)/U(y)/P -4>>");
         byte[] input = b.Build(trailerExtra: "/Encrypt 6 0 R/ID[<01><01>]");
-        Assert.ThrowsExactly<NotSupportedException>(() => PdfDocument.Open(input));
+        Assert.ThrowsExactly<PdfFormatException>(() => PdfDocument.Open(input));
     }
 }

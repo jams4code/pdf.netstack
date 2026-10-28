@@ -293,7 +293,7 @@ internal sealed class EquivalenceVerifier
             (PdfBoolean x, PdfBoolean y) => x.Value == y.Value,
             (PdfString x, PdfString y) => x.Value.AsSpan().SequenceEqual(y.Value),
             (PdfReference, PdfReference) => true,
-            (PdfArray x, PdfArray y) => x.Count == y.Count && x.Items.Zip(y.Items).All(p => ShallowEqual(p.First, p.Second)),
+            (PdfArray x, PdfArray y) => x.Count == y.Count && x.Items.Zip(y.Items, ShallowEqual).All(equal => equal),
             (PdfDictionary x, PdfDictionary y) => x.Count == y.Count && x.Keys.All(k => ShallowEqual(x[k], y[k])),
             _ => false,
         };

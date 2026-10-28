@@ -63,7 +63,7 @@ public sealed class FilterTests
     public void FlateRoundTripsAndRejectsHeaderlessDeflate()
     {
         byte[] data = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("q 1 0 0 1 0 0 cm Q ", 500)));
-        CollectionAssert.AreEqual(data, D.Flate(StreamCodec.Deflate(data, CompressionLevel.SmallestSize), Limit));
+        CollectionAssert.AreEqual(data, D.Flate(StreamCodec.Deflate(data, Compat.MaximumCompression), Limit));
 
         // Without a zlib header the data is reported undecodable, so it is carried over untouched.
         var raw = new MemoryStream();
@@ -74,7 +74,7 @@ public sealed class FilterTests
     [TestMethod]
     public void FlateBombIsStoppedAtTheLimit()
     {
-        byte[] bomb = StreamCodec.Deflate(new byte[32 << 20], CompressionLevel.SmallestSize);
+        byte[] bomb = StreamCodec.Deflate(new byte[32 << 20], Compat.MaximumCompression);
         Assert.IsLessThan(64 * 1024, bomb.Length);
         Assert.ThrowsExactly<StreamDecodeException>(() => D.Flate(bomb, 1 << 20));
     }

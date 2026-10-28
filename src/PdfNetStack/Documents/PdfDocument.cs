@@ -4,6 +4,7 @@ using PdfNetStack.Documents;
 using PdfNetStack.Objects;
 using PdfNetStack.Optimization;
 using PdfNetStack.Parsing;
+using PdfNetStack.Security;
 using PdfNetStack.Writing;
 
 namespace PdfNetStack;
@@ -44,12 +45,16 @@ public sealed class PdfDocument
     private readonly Dictionary<PdfDocument, PageImporter> _importers = new();
     private PdfOutlineCollection? _outlines;
 
-    private PdfDocument(string version)
+    private PdfDocument(string version, StandardSecurity? security = null)
     {
         Version = version;
         Pages = new PdfPageCollection(this);
         Info = new PdfDocumentInfo(this);
+        Security = new PdfSecurity(this, security);
     }
+
+    /// <summary>Encryption of the opened document and of the saved output.</summary>
+    public PdfSecurity Security { get; }
 
     internal Dictionary<int, PdfObject> Objects { get; } = new();
 
@@ -86,32 +91,31 @@ public sealed class PdfDocument
     }
 
     /// <summary>Opens a document from a file.</summary>
+    /// <param name="path">File to open.</param>
+    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
     /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
-    /// <exception cref="NotSupportedException">The file is encrypted.</exception>
-    public static PdfDocument Open(string path) => Open(File.ReadAllBytes(path));
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    public static PdfDocument Open(string path, string? password = null) => Open(File.ReadAllBytes(path), password);
 
     /// <summary>Opens a document from a stream, read to its end.</summary>
-    public static PdfDocument Open(Stream stream)
+    public static PdfDocument Open(Stream stream, string? password = null)
     {
-        ArgumentNullException.ThrowIfNull(stream);
+        Compat.ThrowIfNull(stream, nameof(stream));
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
-        return Open(buffer.ToArray());
+        return Open(buffer.ToArray(), password);
     }
 
     /// <summary>
     /// Opens a document from memory. Stream data is referenced, not copied, so the buffer must
     /// not change while the document is in use.
     /// </summary>
-    public static PdfDocument Open(ReadOnlyMemory<byte> data, long maxDecodedStreamBytes = 256L << 20)
+    public static PdfDocument Open(ReadOnlyMemory<byte> data, string? password = null, long maxDecodedStreamBytes = 256L << 20)
     {
         PdfFile file = PdfFile.Open(data, maxDecodedStreamBytes);
-        if (file.Trailer["Encrypt"] is not null and not PdfNull)
-        {
-            throw new NotSupportedException("Encrypted documents are not supported yet.");
-        }
+        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
 
-        var doc = new PdfDocument(file.HeaderVersion);
+        var doc = new PdfDocument(file.HeaderVersion, file.Security);
         ObjectGraph graph = ObjectGraph.Collect(file, stripThumbnails: false, stripPieceInfo: false, CancellationToken.None);
         foreach (int number in graph.Order) doc.Objects[number] = file.GetObject(number);
         doc.NextNumber = (doc.Objects.Count == 0 ? 0 : doc.Objects.Keys.Max()) + 1;
@@ -132,7 +136,7 @@ public sealed class PdfDocument
     /// <summary>Creates a document holding all pages of the given documents, in order.</summary>
     public static PdfDocument Merge(IEnumerable<PdfDocument> documents)
     {
-        ArgumentNullException.ThrowIfNull(documents);
+        Compat.ThrowIfNull(documents, nameof(documents));
         PdfDocument result = Create();
         foreach (PdfDocument source in documents) result.Pages.Import(source.Pages);
         return result;
@@ -163,7 +167,7 @@ public sealed class PdfDocument
                 Save(stream, options);
             }
 
-            File.Move(temp, full, overwrite: true);
+            Compat.MoveOverwrite(temp, full);
         }
         finally
         {
@@ -174,7 +178,7 @@ public sealed class PdfDocument
     /// <summary>Saves the document as a new single revision PDF.</summary>
     public void Save(Stream stream, PdfSaveOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(stream);
+        Compat.ThrowIfNull(stream, nameof(stream));
         stream.Write(ToArray(options));
     }
 
@@ -183,12 +187,13 @@ public sealed class PdfDocument
     {
         options ??= PdfSaveOptions.Default;
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
+        Security.RequireOwner();
 
         CompressionLevel level = options.Compression switch
         {
             CompressionEffort.Fast => CompressionLevel.Fastest,
             CompressionEffort.Balanced => CompressionLevel.Optimal,
-            _ => CompressionLevel.SmallestSize,
+            _ => Compat.MaximumCompression,
         };
 
         // Rebuild the page tree as one flat node. Old intermediate nodes and removed pages are
@@ -259,20 +264,82 @@ public sealed class PdfDocument
         byte[] written = PdfDocumentWriter.Write(objects, trailer, Map, new WriterSettings(objectStreams, 200, version, level)).ToArray();
         Objects.Remove(pagesNumber);
 
-        if (!options.Optimize) return written;
-        var optimizerOptions = new PdfOptimizerOptions
+        if (options.Optimize)
         {
-            MinSavingPercent = 0,
-            Compression = options.Compression,
-            UseObjectStreams = objectStreams,
+            var optimizerOptions = new PdfOptimizerOptions
+            {
+                MinSavingPercent = 0,
+                Compression = options.Compression,
+                UseObjectStreams = objectStreams,
+            };
+            (written, _) = PdfOptimizer.Optimize(written, optimizerOptions);
+        }
+
+        return Security.Target is { } encryption ? Encrypted(written, encryption, objectStreams, level) : written;
+    }
+
+    /// <summary>
+    /// Encryption is the last step: the finished, optimized and verified plain file is re-read and
+    /// written once more with every string and stream encrypted.
+    /// </summary>
+    private static byte[] Encrypted(byte[] plain, StandardSecurity encryption, bool objectStreams, CompressionLevel level)
+    {
+        PdfFile file = PdfFile.Open(plain, 1L << 30);
+        ObjectGraph graph = ObjectGraph.Collect(file, stripThumbnails: false, stripPieceInfo: false, CancellationToken.None);
+        var objects = graph.Order.Select(file.GetObject).ToList();
+        var index = new Dictionary<int, int>();
+        for (int i = 0; i < graph.Order.Count; i++) index[graph.Order[i]] = i + 1;
+
+        objects.Add(encryption.Dictionary);
+        int encryptNumber = objects.Count;
+        const int encryptMarker = int.MaxValue;
+        int Map(PdfReference r) => r.Number == encryptMarker ? encryptNumber : index.TryGetValue(r.Number, out int n) ? n : -1;
+
+        string version = file.HeaderVersion;
+        string minimum = encryption.StreamMethod switch
+        {
+            CryptMethod.AesV3 => "1.7",
+            CryptMethod.AesV2 => "1.6",
+            _ => "1.4",
         };
-        (byte[] optimized, _) = PdfOptimizer.Optimize(written, optimizerOptions);
-        return optimized;
+        if (string.CompareOrdinal(version, minimum) < 0) version = minimum;
+        if (objectStreams && string.CompareOrdinal(version, "1.5") < 0) version = "1.5";
+
+        // AES-256 belongs to PDF 2.0; a 1.7 file announces it through Adobe extension level 8.
+        if (encryption.Revision >= 5 && string.CompareOrdinal(version, "2.0") < 0 && file.ResolveDictionary(file.Trailer["Root"]) is { } catalog)
+        {
+            var adbe = new PdfDictionary();
+            adbe.Set("BaseVersion", new PdfName("1.7"));
+            adbe.Set("ExtensionLevel", PdfNumber.FromInteger(8));
+            PdfDictionary extensions = file.ResolveDictionary(catalog["Extensions"]) is { } existing ? Clone(existing) : new PdfDictionary();
+            extensions.Set("ADBE", adbe);
+            catalog.Set("Extensions", extensions);
+        }
+
+        var trailer = new PdfDictionary();
+        if (file.Trailer["Root"] is { } root) trailer.Set("Root", root);
+        if (file.Trailer["Info"] is { } info) trailer.Set("Info", info);
+        if (file.Resolve(file.Trailer["ID"]) is PdfArray id) trailer.Set("ID", id);
+        trailer.Set("Encrypt", new PdfReference(encryptMarker, 0));
+
+        var settings = new WriterSettings(objectStreams, 200, version, level)
+        {
+            Encryption = encryption,
+            EncryptionDictionaryNumber = encryptNumber,
+        };
+        return PdfDocumentWriter.Write(objects, trailer, Map, settings).ToArray();
+    }
+
+    /// <summary>The first /ID entry, creating the ID when the document has none. Key derivation for AES-128 needs it.</summary>
+    internal byte[] EnsureId()
+    {
+        Id ??= NewId();
+        return Id is PdfArray { Count: > 0 } a && a[0] is PdfString s ? s.Value : [];
     }
 
     private static PdfArray NewId()
     {
-        byte[] id = RandomNumberGenerator.GetBytes(16);
+        byte[] id = Compat.RandomBytes(16);
         return new PdfArray([new PdfString(id, wasHex: true), new PdfString(id, wasHex: true)]);
     }
 

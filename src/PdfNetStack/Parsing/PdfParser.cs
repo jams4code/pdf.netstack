@@ -261,7 +261,7 @@ internal sealed class PdfParser
                 if (k.SequenceEqual("true"u8)) return PdfBoolean.True;
                 if (k.SequenceEqual("false"u8)) return PdfBoolean.False;
                 if (k.SequenceEqual("null"u8)) return PdfNull.Instance;
-                throw new PdfFormatException($"Unexpected keyword '{Encoding.Latin1.GetString(k)}' at offset {t.Start}.");
+                throw new PdfFormatException($"Unexpected keyword '{Compat.Latin1.GetString(k)}' at offset {t.Start}.");
             }
 
             case TokenKind.EndOfInput:
@@ -434,7 +434,7 @@ internal sealed class PdfParser
 
     public static string DecodeName(ReadOnlySpan<byte> body)
     {
-        if (body.IndexOf((byte)'#') < 0) return Encoding.Latin1.GetString(body);
+        if (body.IndexOf((byte)'#') < 0) return Compat.Latin1.GetString(body);
 
         Span<byte> buffer = body.Length <= 256 ? stackalloc byte[body.Length] : new byte[body.Length];
         int o = 0;
@@ -455,6 +455,6 @@ internal sealed class PdfParser
             buffer[o++] = body[i];
         }
 
-        return Encoding.Latin1.GetString(buffer[..o]);
+        return Compat.Latin1.GetString(buffer[..o]);
     }
 }

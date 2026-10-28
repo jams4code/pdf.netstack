@@ -19,6 +19,24 @@ var result = await PdfOptimizer.OptimizeFileAsync("manual.pdf", "manual.optimize
 Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
 ```
 
+## Purpose
+
+PdfNetStack exists to give every .NET developer a PDF toolkit that is permissively licensed all
+the way down, safe to run on files from strangers, and honest about what it changes. It optimizes,
+edits, merges, splits and protects PDFs, and is growing toward full PdfSharp parity under MIT.
+It is created and maintained by Jamal Abdelkhalek at JADEV.
+
+## Compatibility
+
+| Target | Runs on | Dependencies |
+|---|---|---|
+| `net8.0`, `net10.0` | .NET 8, 9, 10 and later | None |
+| `netstandard2.0` | .NET Framework 4.6.2 to 4.8.1, Mono, Unity, Xamarin, .NET Core 2.0+ | `System.Memory` (Microsoft, MIT) |
+
+CI runs the full test suite on .NET Framework 4.8, .NET 8 and .NET 10, on Windows, Linux and
+macOS. The whole real world corpus also passes on .NET Framework 4.8. One difference: .NET
+Standard's zlib has no level 9, so `CompressionEffort.Maximum` compresses a little less there.
+
 ## Why another PDF tool
 
 Most PDF compression in the .NET world shells out to Ghostscript, depends on a copyleft or
@@ -103,8 +121,27 @@ foreach (PdfDocument single in merged.Split()) { /* one document per page */ }
 Inherited page attributes (resources, media box, rotation) are materialized on each page, so
 pages survive reordering and moving between documents. Annotations travel with their page and
 are copied fresh for every import; links to pages imported in the same call are remapped, links
-to pages left behind become empty. Editing a signed document invalidates its signatures, and
-encrypted documents are not supported yet.
+to pages left behind become empty. Editing a signed document invalidates its signatures.
+
+### Encryption
+
+```csharp
+PdfDocument doc = PdfDocument.Open("report.pdf");
+doc.Security.Encrypt(userPassword: "read", ownerPassword: "admin",
+    permissions: PdfPermissions.Print | PdfPermissions.CopyContent);   // AES-256 by default
+doc.Save("report-protected.pdf");
+
+PdfDocument opened = PdfDocument.Open("report-protected.pdf", password: "admin");
+opened.Pages.RemoveAt(0);
+opened.Save("trimmed.pdf");          // keeps the original passwords and permissions
+opened.Security.RemoveEncryption();  // or save it unprotected
+```
+
+Opening supports every standard security handler revision: RC4 40 to 128 bit, AES-128 and
+AES-256 (revisions 2 to 6), user and owner passwords, crypt filters and unencrypted metadata.
+New protection is written as AES-256 (revision 6) or AES-128 (revision 4). A document opened with
+only the user password can be read but not saved, and pages can be copied out of it only when
+its permissions allow copying.
 
 ### Command line
 
@@ -120,6 +157,9 @@ pdfnetstack split in.pdf ./pages
 pdfnetstack extract in.pdf out.pdf 1-3,7,9-  # page ranges, any order, repeats allowed
 pdfnetstack rotate in.pdf out.pdf 90 2-4
 pdfnetstack meta in.pdf out.pdf --title "Annual report" --author "Finance"
+
+pdfnetstack encrypt in.pdf out.pdf --user-password u --owner-password o --allow print,copy
+pdfnetstack decrypt in.pdf out.pdf --password o
 ```
 
 ### Azure Blob Storage
@@ -200,6 +240,10 @@ Editing path: every document in the corpus was rebuilt by importing all of its p
 document and saving it. 1,152 documents, 2,233 pages, zero differing pixels against the
 originals at 150 DPI.
 
+Encryption: AES-256 and AES-128 files written by PdfNetStack open in PDFium with either password
+and render identically to their sources; real AES-128 contracts from other producers decrypt to
+pixel identical output; RC4 files written for the legacy read path render identically in PDFium.
+
 Your mileage depends on what produced the PDF. Files from well tuned producers that already use
 object streams have little left to gain losslessly.
 
@@ -231,8 +275,8 @@ test and corpus discipline as the optimizer:
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Document editing: open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | Done |
-| 2 | Encryption: open password protected files, AES-128/256 output, permissions | Next |
-| 3 | Creation: drawing canvas, TrueType embedding and subsetting, JPEG and PNG images, text | Planned |
+| 2 | Encryption: open password protected files (RC4, AES-128, AES-256), write AES-128/256 with permissions | Done |
+| 3 | Creation: drawing canvas, TrueType embedding and subsetting, JPEG and PNG images, text | Next |
 | 4 | Forms and annotations: read and fill AcroForm fields, links, notes, stamps | Planned |
 | 5 | Digital signatures and PDF/A output | Planned |
 

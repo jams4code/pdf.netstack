@@ -179,10 +179,7 @@ internal static class StreamCodec
     public static byte[] Deflate(ReadOnlySpan<byte> data, CompressionLevel level)
     {
         using var output = new PooledWriteStream(Math.Max(256, data.Length / 2));
-        using (var z = new ZLibStream(output, level, leaveOpen: true))
-        {
-            z.Write(data);
-        }
+        Compat.ZlibCompress(output, data, level);
 
         return output.ToArray();
     }
@@ -214,12 +211,16 @@ internal sealed class PooledWriteStream : Stream
 
     public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
 
+#if NET8_0_OR_GREATER
     public override void Write(ReadOnlySpan<byte> data)
+#else
+    public void Write(ReadOnlySpan<byte> data)
+#endif
     {
         if (_length + data.Length > _buffer.Length)
         {
             long next = Math.Max((long)_length + data.Length, (long)_buffer.Length * 2);
-            byte[] grown = System.Buffers.ArrayPool<byte>.Shared.Rent((int)Math.Min(next, Array.MaxLength));
+            byte[] grown = System.Buffers.ArrayPool<byte>.Shared.Rent((int)Math.Min(next, Compat.MaxArrayLength));
             Buffer.BlockCopy(_buffer, 0, grown, 0, _length);
             System.Buffers.ArrayPool<byte>.Shared.Return(_buffer);
             _buffer = grown;

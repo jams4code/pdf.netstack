@@ -2,7 +2,13 @@
 
 ## PdfNetStack and PdfNetStack.Tool
 
-No third party runtime dependencies. They use only the .NET base class library.
+On .NET 8 and later: no third party runtime dependencies, only the .NET base class library.
+
+On .NET Standard 2.0 (.NET Framework, Mono, Unity), PdfNetStack uses Microsoft's span polyfill:
+`System.Memory`, `System.Buffers`, `System.Numerics.Vectors` and
+`System.Runtime.CompilerServices.Unsafe`, all MIT. Every .NET Standard 2.0 library also carries the
+implicit `NETStandard.Library` (MIT) and its `Microsoft.NETCore.Platforms` 1.1.0, which holds only
+platform metadata (`runtime.json`), no code, under the Microsoft .NET Library license.
 
 ## PdfNetStack.Azure
 

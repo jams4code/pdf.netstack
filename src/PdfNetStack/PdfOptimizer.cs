@@ -29,7 +29,7 @@ public static partial class PdfOptimizer
         PdfOptimizerOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(output);
+        Compat.ThrowIfNull(output, nameof(output));
         options ??= PdfOptimizerOptions.Default;
         options.Validate();
 
@@ -52,7 +52,7 @@ public static partial class PdfOptimizer
         PdfOptimizerOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(input);
+        Compat.ThrowIfNull(input, nameof(input));
         using var output = new MemoryStream();
         PdfOptimizationResult result = Optimize(input, output, options, cancellationToken);
         return (output.ToArray(), result);
@@ -65,25 +65,26 @@ public static partial class PdfOptimizer
         PdfOptimizerOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(input);
-        ArgumentNullException.ThrowIfNull(output);
+        Compat.ThrowIfNull(input, nameof(input));
+        Compat.ThrowIfNull(output, nameof(output));
         options ??= PdfOptimizerOptions.Default;
+#pragma warning disable CA1835 // Array overloads keep one code path for .NET Standard 2.0.
         // Buffer at most MaxInputBytes. Anything larger is streamed through untouched without
         // ever being held in memory, as the in-memory path would return it unchanged anyway.
         using var buffer = new MemoryStream();
         byte[] chunk = new byte[81920];
         int read;
-        while ((read = await input.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        while ((read = await input.ReadAsync(chunk, 0, chunk.Length, cancellationToken).ConfigureAwait(false)) > 0)
         {
             buffer.Write(chunk, 0, read);
             if (buffer.Length > options.MaxInputBytes)
             {
                 long total = buffer.Length;
                 buffer.Position = 0;
-                await buffer.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-                while ((read = await input.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+                await buffer.CopyToAsync(output, 81920, cancellationToken).ConfigureAwait(false);
+                while ((read = await input.ReadAsync(chunk, 0, chunk.Length, cancellationToken).ConfigureAwait(false)) > 0)
                 {
-                    await output.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    await output.WriteAsync(chunk, 0, read, cancellationToken).ConfigureAwait(false);
                     total += read;
                 }
 
@@ -92,10 +93,11 @@ public static partial class PdfOptimizer
             }
         }
 
+#pragma warning restore CA1835
         using var result = new MemoryStream();
         PdfOptimizationResult r = Optimize(buffer.GetBuffer().AsMemory(0, (int)buffer.Length), result, options, cancellationToken);
         result.Position = 0;
-        await result.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+        await result.CopyToAsync(output, 81920, cancellationToken).ConfigureAwait(false);
         return r;
     }
 
@@ -116,7 +118,7 @@ public static partial class PdfOptimizer
             throw new ArgumentException("Source and destination must be different files.", nameof(destinationPath));
         }
 
-        byte[] data = await File.ReadAllBytesAsync(source, cancellationToken).ConfigureAwait(false);
+        byte[] data = await Compat.ReadAllBytesAsync(source, cancellationToken).ConfigureAwait(false);
         string? directory = Path.GetDirectoryName(destination);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
@@ -124,13 +126,13 @@ public static partial class PdfOptimizer
         try
         {
             PdfOptimizationResult result;
-            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
             {
                 result = Optimize(data, stream, options, cancellationToken);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(temp, destination, overwrite: true);
+            Compat.MoveOverwrite(temp, destination);
             return result;
         }
         finally
@@ -281,7 +283,7 @@ public static partial class PdfOptimizer
             if (saving < options.MinSavingPercent)
             {
                 return new Outcome(OptimizationDisposition.OriginalRetained, null,
-                    string.Create(CultureInfo.InvariantCulture, $"Rewrite saved {saving:F2}%, below the {options.MinSavingPercent}% threshold."),
+                    Compat.Format("Rewrite saved {0:F2}%, below the {1}% threshold.", saving, options.MinSavingPercent),
                     pageCount, stats);
             }
 
@@ -347,7 +349,7 @@ public static partial class PdfOptimizer
         {
             using DecodedStream decoded = StreamCodec.Decode(metadata.Data, StreamCodec.GetFilters(metadata.Dictionary, file.Resolve),
                 DecodeDepth.Full, decodeLimit, file.Resolve);
-            return PdfAPartOne().IsMatch(Encoding.Latin1.GetString(decoded.Data.Span));
+            return PdfAPartOne().IsMatch(Compat.Latin1.GetString(decoded.Data.Span));
         }
         catch (StreamDecodeException)
         {
@@ -356,8 +358,14 @@ public static partial class PdfOptimizer
         }
     }
 
+#if NET8_0_OR_GREATER
     [GeneratedRegex("""pdfaid:part\s*(=\s*["']\s*1\s*["']|>\s*1\s*<)""")]
     private static partial Regex PdfAPartOne();
+#else
+    private static readonly Regex PdfAPartOneRegex = new("""pdfaid:part\s*(=\s*["']\s*1\s*["']|>\s*1\s*<)""", RegexOptions.CultureInvariant);
 
-    private static string Sha256Hex(ReadOnlySpan<byte> data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+    private static Regex PdfAPartOne() => PdfAPartOneRegex;
+#endif
+
+    private static string Sha256Hex(ReadOnlySpan<byte> data) => Compat.ToHex(Compat.Sha256(data)).ToLowerInvariant();
 }

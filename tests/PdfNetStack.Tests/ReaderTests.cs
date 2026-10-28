@@ -57,10 +57,10 @@ public sealed class ReaderTests
     public void PrevLoopTerminates()
     {
         byte[] v1 = PdfBuilder.Simple("x").Build();
-        string text = Encoding.Latin1.GetString(v1);
+        string text = Compat.Latin1.GetString(v1);
         int startxref = int.Parse(text[(text.LastIndexOf("startxref", StringComparison.Ordinal) + 10)..].Split('\n')[0], System.Globalization.CultureInfo.InvariantCulture);
-        string looped = text.Replace("/Root 1 0 R>>", $"/Root 1 0 R/Prev {startxref}>>", StringComparison.Ordinal);
-        PdfFile file = PdfFile.Open(Encoding.Latin1.GetBytes(looped), Limit);
+        string looped = text.Replace("/Root 1 0 R>>", $"/Root 1 0 R/Prev {startxref}>>");
+        PdfFile file = PdfFile.Open(Compat.Latin1.GetBytes(looped), Limit);
         Assert.IsNotNull(file.ResolveDictionary(file.Trailer["Root"]));
     }
 
@@ -68,13 +68,13 @@ public sealed class ReaderTests
     public void BrokenOffsetsTriggerReconstruction()
     {
         byte[] pdf = PdfBuilder.Simple("Hello").Build();
-        string text = Encoding.Latin1.GetString(pdf);
+        string text = Compat.Latin1.GetString(pdf);
 
         // Shift every object by inserting a comment, so every xref offset is now wrong.
         int firstObject = text.IndexOf("1 0 obj", StringComparison.Ordinal);
         string broken = text[..firstObject] + "% padding that moves every object\n" + text[firstObject..];
 
-        PdfFile file = PdfFile.Open(Encoding.Latin1.GetBytes(broken), Limit);
+        PdfFile file = PdfFile.Open(Compat.Latin1.GetBytes(broken), Limit);
         Assert.IsTrue(file.WasReconstructed);
         StringAssert.Contains(PageText(file, 5), "(Hello)");
     }
@@ -83,9 +83,9 @@ public sealed class ReaderTests
     public void MissingStartxrefTriggersReconstruction()
     {
         byte[] pdf = PdfBuilder.Simple("Hello").Build();
-        string text = Encoding.Latin1.GetString(pdf);
+        string text = Compat.Latin1.GetString(pdf);
         string truncated = text[..text.LastIndexOf("startxref", StringComparison.Ordinal)];
-        PdfFile file = PdfFile.Open(Encoding.Latin1.GetBytes(truncated), Limit);
+        PdfFile file = PdfFile.Open(Compat.Latin1.GetBytes(truncated), Limit);
         Assert.IsTrue(file.WasReconstructed);
         StringAssert.Contains(PageText(file, 5), "(Hello)");
     }
@@ -95,8 +95,8 @@ public sealed class ReaderTests
     {
         var b = PdfBuilder.Simple("Hello");
         byte[] pdf = b.Build();
-        string text = new System.Text.RegularExpressions.Regex(@"/Length \d+>>").Replace(Encoding.Latin1.GetString(pdf), "/Length 99999999>>", 1);
-        PdfFile file = PdfFile.Open(Encoding.Latin1.GetBytes(text), Limit);
+        string text = new System.Text.RegularExpressions.Regex(@"/Length \d+>>").Replace(Compat.Latin1.GetString(pdf), "/Length 99999999>>", 1);
+        PdfFile file = PdfFile.Open(Compat.Latin1.GetBytes(text), Limit);
         StringAssert.Contains(PageText(file, 5), "(Hello)");
         Assert.AreEqual(1, file.LengthsRepaired);
     }

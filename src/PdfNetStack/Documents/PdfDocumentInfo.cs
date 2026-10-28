@@ -44,7 +44,7 @@ public sealed class PdfDocumentInfo
         get => Dictionary(create: false) is { } d ? PdfText.GetString(d, key, _owner.Resolve) : null;
         set
         {
-            ArgumentException.ThrowIfNullOrEmpty(key);
+            Compat.ThrowIfNullOrEmpty(key, nameof(key));
             if (value is null) Dictionary(create: false)?.Remove(key);
             else Dictionary(create: true)!.Set(key, PdfText.Encode(value));
         }

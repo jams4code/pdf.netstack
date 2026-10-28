@@ -37,11 +37,11 @@ public sealed class OptimizerTests
 
         AssertOptimizedAndEquivalent(input, output, result);
         Assert.AreEqual(3, result.PageCount);
-        string text = Encoding.Latin1.GetString(output);
+        string text = Compat.Latin1.GetString(output);
         StringAssert.StartsWith(text, "%PDF-1.5");
         StringAssert.Contains(text, "/Type/ObjStm");
         StringAssert.Contains(text, "/Type/XRef");
-        Assert.AreEqual(result.OutputSha256, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(output)).ToLowerInvariant());
+        Assert.AreEqual(result.OutputSha256, Compat.ToHex(Compat.Sha256(output)).ToLowerInvariant());
     }
 
     [TestMethod]
@@ -56,7 +56,7 @@ public sealed class OptimizerTests
 
         AssertOptimizedAndEquivalent(input, output, result);
         Assert.AreEqual(2, result.Statistics.UnreachableRemoved);
-        Assert.IsFalse(Encoding.Latin1.GetString(output).Contains("Orphan", StringComparison.Ordinal));
+        Assert.AreEqual(-1, Compat.Latin1.GetString(output).IndexOf("Orphan", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -113,7 +113,7 @@ public sealed class OptimizerTests
     public void TextEncodingsAndLzwBecomeFlate()
     {
         byte[] content = Repeat("BT /F1 12 Tf 10 10 Td (repeated text) Tj ET\n", 100);
-        string hex = Convert.ToHexString(content) + ">";
+        string hex = Compat.ToHex(content) + ">";
         PdfBuilder b = PdfBuilder.Simple("x");
         b.SetStream(4, "/Filter/ASCIIHexDecode", Encoding.ASCII.GetBytes(hex));
         byte[] input = b.Build();
@@ -149,7 +149,7 @@ public sealed class OptimizerTests
         (byte[] output, PdfOptimizationResult result) = Run(input);
 
         AssertOptimizedAndEquivalent(input, output, result);
-        StringAssert.Contains(Encoding.Latin1.GetString(output), "/Predictor 15");
+        StringAssert.Contains(Compat.Latin1.GetString(output), "/Predictor 15");
     }
 
     [TestMethod]
@@ -254,9 +254,9 @@ public sealed class OptimizerTests
         (byte[] output, PdfOptimizationResult result) = Run(input);
 
         AssertOptimizedAndEquivalent(input, output, result);
-        string text = Encoding.Latin1.GetString(output);
+        string text = Compat.Latin1.GetString(output);
         StringAssert.StartsWith(text, "%PDF-1.4");
-        Assert.IsFalse(text.Contains("/ObjStm", StringComparison.Ordinal));
+        Assert.AreEqual(-1, text.IndexOf("/ObjStm", StringComparison.Ordinal));
         StringAssert.Contains(text, "xref\n0 ");
         StringAssert.Contains(text, "pdfaid:part='1'");
     }
@@ -302,9 +302,9 @@ public sealed class OptimizerTests
     {
         PdfBuilder b = PdfBuilder.Simple("Hello");
         b.SetStream(4, "", Repeat("0 0 m 1 1 l S\n", 300));
-        string text = Encoding.Latin1.GetString(b.Build());
+        string text = Compat.Latin1.GetString(b.Build());
         int firstObject = text.IndexOf("1 0 obj", StringComparison.Ordinal);
-        byte[] input = Encoding.Latin1.GetBytes(text[..firstObject] + "% shifted\n" + text[firstObject..]);
+        byte[] input = Compat.Latin1.GetBytes(text[..firstObject] + "% shifted\n" + text[firstObject..]);
 
         Assert.AreEqual(OptimizationDisposition.UnsupportedRetained, Run(input).Result.Disposition);
         (byte[] output, PdfOptimizationResult result) = Run(input, NoThreshold with { AllowRepairedFiles = true });
@@ -364,7 +364,7 @@ public sealed class OptimizerTests
         (byte[] output, PdfOptimizationResult result) = Run(input, NoThreshold with { DeduplicateObjects = false });
 
         AssertOptimizedAndEquivalent(input, output, result);
-        string text = Encoding.Latin1.GetString(output);
+        string text = Compat.Latin1.GetString(output);
         StringAssert.Contains(text, "/Columns 3.5");
         StringAssert.Contains(text, "/Predictor 9");
         StringAssert.Contains(text, "/Vendor 1");
@@ -378,14 +378,14 @@ public sealed class OptimizerTests
         byte[] clean = b.Build();
 
         // Prepend three bytes and shift every offset by three, the way a correct producer would.
-        string text = Encoding.Latin1.GetString(clean);
+        string text = Compat.Latin1.GetString(clean);
         string shifted = System.Text.RegularExpressions.Regex.Replace(text, @"(\d{10}) 00000 n",
             m => (long.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) + 3).ToString("D10", System.Globalization.CultureInfo.InvariantCulture) + " 00000 n");
         int sx = shifted.LastIndexOf("startxref\n", StringComparison.Ordinal) + 10;
         int end = shifted.IndexOf('\n', sx);
         long xref = long.Parse(shifted[sx..end], System.Globalization.CultureInfo.InvariantCulture);
         shifted = shifted[..sx] + (xref + 3).ToString(System.Globalization.CultureInfo.InvariantCulture) + shifted[end..];
-        byte[] input = Encoding.Latin1.GetBytes("ï»¿" + shifted);
+        byte[] input = Compat.Latin1.GetBytes("ï»¿" + shifted);
 
         PdfFile file = Open(input);
         Assert.IsFalse(file.WasReconstructed);
@@ -413,7 +413,7 @@ public sealed class OptimizerTests
             b.SetStream(4, "", Repeat("0 0 m 1 1 l S\n", 300));
             string source = Path.Combine(dir, "in.pdf");
             string target = Path.Combine(dir, "sub", "out.pdf");
-            await File.WriteAllBytesAsync(source, b.Build());
+            File.WriteAllBytes(source, b.Build());
 
             PdfOptimizationResult result = await PdfOptimizer.OptimizeFileAsync(source, target);
 

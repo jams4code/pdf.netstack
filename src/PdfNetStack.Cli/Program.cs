@@ -28,6 +28,12 @@ namespace PdfNetStack.Cli
               pdfnetstack rotate <input.pdf> <output.pdf> <degrees> [pages]
               pdfnetstack meta <input.pdf> [output.pdf] [--title t] [--author a] [--subject s] [--keywords k]
 
+            Security:
+              pdfnetstack encrypt <input.pdf> <output.pdf> --user-password u --owner-password o
+                                  [--allow print,copy,modify,annotate,forms,accessibility,assemble,print-hq] [--aes128]
+              pdfnetstack decrypt <input.pdf> <output.pdf> --password <owner password>
+              Every editing command accepts --password to open an encrypted input.
+
             Options:
               --fast | --balanced       Faster Flate levels (default: maximum)
               --no-object-streams       Write a classic xref table, no object streams
@@ -69,6 +75,8 @@ namespace PdfNetStack.Cli
                     "extract" when parsed.Positional.Count == 3 => Extract(parsed),
                     "rotate" when parsed.Positional.Count is 3 or 4 => Rotate(parsed),
                     "meta" when parsed.Positional.Count is 1 or 2 => Meta(parsed),
+                    "encrypt" when parsed.Positional.Count == 2 => Encrypt(parsed),
+                    "decrypt" when parsed.Positional.Count == 2 => Decrypt(parsed),
                     _ => Fail("Unknown command or wrong number of arguments.\n\n" + Usage),
                 };
             }
@@ -89,6 +97,14 @@ namespace PdfNetStack.Cli
                 return Fail("Not a readable PDF: " + ex.Message);
             }
             catch (NotSupportedException ex)
+            {
+                return Fail(ex.Message);
+            }
+            catch (PdfPasswordException ex)
+            {
+                return Fail(ex.Message + " Pass it with --password.");
+            }
+            catch (InvalidOperationException ex)
             {
                 return Fail(ex.Message);
             }
@@ -177,13 +193,13 @@ namespace PdfNetStack.Cli
 
         private static int Merge(Arguments a)
         {
-            var inputs = a.Positional.Skip(1).Select(PdfDocument.Open).ToList();
+            var inputs = a.Positional.Skip(1).Select(path => PdfDocument.Open(path, a.Password)).ToList();
             return Saved(PdfDocument.Merge(inputs), a.Positional[0], a);
         }
 
         private static int Split(Arguments a)
         {
-            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
             string name = Path.GetFileNameWithoutExtension(a.Positional[0]);
             int width = doc.Pages.Count.ToString(CultureInfo.InvariantCulture).Length;
             int i = 0;
@@ -199,7 +215,7 @@ namespace PdfNetStack.Cli
 
         private static int Extract(Arguments a)
         {
-            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
             List<int> pages = Editing.ParseRanges(a.Positional[2], doc.Pages.Count);
             PdfDocument result = PdfDocument.Create();
             result.Pages.Import(pages.Select(i => doc.Pages[i]));
@@ -208,7 +224,7 @@ namespace PdfNetStack.Cli
 
         private static int Rotate(Arguments a)
         {
-            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
             int degrees = int.Parse(a.Positional[2], CultureInfo.InvariantCulture);
             IEnumerable<int> pages = a.Positional.Count == 4
                 ? Editing.ParseRanges(a.Positional[3], doc.Pages.Count).Distinct()
@@ -217,17 +233,50 @@ namespace PdfNetStack.Cli
             return Saved(doc, a.Positional[1], a);
         }
 
+        private static int Encrypt(Arguments a)
+        {
+            if (a.UserPassword is null && a.OwnerPassword is null) return Fail("Give --user-password and/or --owner-password.");
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
+            doc.Security.Encrypt(a.UserPassword ?? "", a.OwnerPassword ?? "", a.Permissions, a.Aes128 ? PdfEncryption.Aes128 : PdfEncryption.Aes256);
+            return Saved(doc, a.Positional[1], a);
+        }
+
+        private static int Decrypt(Arguments a)
+        {
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
+            doc.Security.RemoveEncryption();
+            return Saved(doc, a.Positional[1], a);
+        }
+
         private static int Meta(Arguments a)
         {
-            PdfDocument doc = PdfDocument.Open(a.Positional[0]);
+            PdfDocument doc = PdfDocument.Open(a.Positional[0], a.Password);
             foreach ((string key, string value) in a.Metadata) doc.Info[key] = value;
             if (a.Positional.Count == 2) return Saved(doc, a.Positional[1], a);
             if (a.Metadata.Count > 0) return Fail("Give an output file to write metadata changes.");
 
             Console.WriteLine($"Pages         {doc.Pages.Count}");
-            foreach (string key in doc.Info.Keys) Console.WriteLine($"{key,-13} {doc.Info[key]}");
+            foreach (string key in doc.Info.Keys) Console.WriteLine($"{Printable(key),-13} {Printable(doc.Info[key])}");
             if (doc.Outlines.Count > 0) Console.WriteLine($"Bookmarks     {doc.Outlines.Count} top level");
             return 0;
+        }
+
+        /// <summary>
+        /// Text from a document is untrusted. Control, C1 and bidirectional override characters are
+        /// shown as escapes so a crafted title cannot drive the terminal.
+        /// </summary>
+        internal static string Printable(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            var sb = new StringBuilder(text.Length);
+            foreach (char c in text)
+            {
+                bool unsafeChar = char.IsControl(c) || c is >= '\u0080' and <= '\u009F' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069' or '\u200E' or '\u200F' or '\u061C';
+                if (unsafeChar) sb.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                else sb.Append(c);
+            }
+
+            return sb.ToString();
         }
 
         private static int Verify(Arguments a)
@@ -434,6 +483,39 @@ namespace PdfNetStack.Cli
 
         public List<(string Key, string Value)> Metadata { get; } = [];
 
+        public string? Password { get; private set; }
+
+        public string? UserPassword { get; private set; }
+
+        public string? OwnerPassword { get; private set; }
+
+        public PdfPermissions Permissions { get; private set; } = PdfPermissions.All;
+
+        public bool Aes128 { get; private set; }
+
+        private static PdfPermissions ParsePermissions(string list)
+        {
+            PdfPermissions result = PdfPermissions.None;
+            foreach (string item in list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                result |= item switch
+                {
+                    "print" => PdfPermissions.Print,
+                    "print-hq" => PdfPermissions.PrintHighQuality | PdfPermissions.Print,
+                    "copy" => PdfPermissions.CopyContent,
+                    "modify" => PdfPermissions.Modify,
+                    "annotate" => PdfPermissions.Annotate,
+                    "forms" => PdfPermissions.FillForms,
+                    "accessibility" => PdfPermissions.ExtractForAccessibility,
+                    "assemble" => PdfPermissions.Assemble,
+                    "none" => PdfPermissions.None,
+                    _ => throw new ArgumentException($"Unknown permission '{item}'."),
+                };
+            }
+
+            return result;
+        }
+
         public static Arguments Parse(string[] args)
         {
             var a = new Arguments();
@@ -463,6 +545,11 @@ namespace PdfNetStack.Cli
                     case "--jobs": a.Jobs = Math.Max(1, int.Parse(Value(args, ref i), CultureInfo.InvariantCulture)); break;
                     case "--report": a.ReportPath = Value(args, ref i); break;
                     case "--no-optimize": a.NoOptimize = true; break;
+                    case "--password": a.Password = Value(args, ref i); break;
+                    case "--user-password": a.UserPassword = Value(args, ref i); break;
+                    case "--owner-password": a.OwnerPassword = Value(args, ref i); break;
+                    case "--allow": a.Permissions = ParsePermissions(Value(args, ref i)); break;
+                    case "--aes128": a.Aes128 = true; break;
                     case "--title": a.Metadata.Add(("Title", Value(args, ref i))); break;
                     case "--author": a.Metadata.Add(("Author", Value(args, ref i))); break;
                     case "--subject": a.Metadata.Add(("Subject", Value(args, ref i))); break;

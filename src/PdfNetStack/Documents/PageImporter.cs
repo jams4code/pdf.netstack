@@ -31,6 +31,11 @@ internal sealed class PageImporter
 
     public IReadOnlyList<PdfPage> Import(List<PdfPage> pages)
     {
+        if (!SameDocument && !_source.Security.HasOwnerAccess && !_source.Security.Permissions.HasFlag(PdfPermissions.CopyContent))
+        {
+            throw new InvalidOperationException("The source document does not permit copying its content. Open it with the owner password.");
+        }
+
         // Reserve numbers for every page first so links between them can be remapped.
         var pageMap = new Dictionary<int, int>();
         var numbers = new int[pages.Count];

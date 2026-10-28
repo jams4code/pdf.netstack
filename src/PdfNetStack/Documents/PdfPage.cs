@@ -97,7 +97,7 @@ public sealed class PdfPageCollection : IReadOnlyList<PdfPage>
     /// <summary>Inserts a blank page at <paramref name="index"/>.</summary>
     public PdfPage Insert(int index, PdfRectangle mediaBox)
     {
-        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)index, (uint)_pages.Count, nameof(index));
+        Compat.ThrowIfGreaterThan((uint)index, (uint)_pages.Count, nameof(index));
         if (mediaBox.Width <= 0 || mediaBox.Height <= 0) throw new ArgumentException("Page size must be positive.", nameof(mediaBox));
         var dict = new PdfDictionary();
         dict.Set("Type", new PdfName("Page"));
@@ -129,10 +129,10 @@ public sealed class PdfPageCollection : IReadOnlyList<PdfPage>
     /// </summary>
     public IReadOnlyList<PdfPage> Import(IEnumerable<PdfPage> pages, int? index = null)
     {
-        ArgumentNullException.ThrowIfNull(pages);
+        Compat.ThrowIfNull(pages, nameof(pages));
         List<PdfPage> source = pages.ToList();
         int at = index ?? _pages.Count;
-        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)at, (uint)_pages.Count, nameof(index));
+        Compat.ThrowIfGreaterThan((uint)at, (uint)_pages.Count, nameof(index));
 
         // Import per source document, so links between pages of one source resolve, then restore
         // the caller's order. A page listed twice is copied twice.

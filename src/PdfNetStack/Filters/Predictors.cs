@@ -49,7 +49,7 @@ internal static class Predictors
         {
             int filter = data[src++];
             int available = Math.Min(rowBytes, data.Length - src);
-            Array.Clear(current);
+            Array.Clear(current, 0, current.Length);
             data.Slice(src, available).CopyTo(current);
             src += available;
 

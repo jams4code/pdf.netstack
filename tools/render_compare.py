@@ -4,7 +4,7 @@ Development tool only. It is not part of any package and nothing in src/ depends
 Requires: pip install pypdfium2 numpy
 
 Usage:
-  python tools/render_compare.py <original-dir> <optimized-dir> [--dpi 150] [--pages 6] [--jobs 8]
+  python tools/render_compare.py <original-dir> <optimized-dir> [--dpi 150] [--pages 6] [--jobs 8] [--password pw]
 
 For every PDF present in both trees with different bytes, the script compares page count,
 page boxes and rotation, extracted text per page, and the rendered RGB pixels of the first
@@ -36,10 +36,10 @@ def page_selection(count, limit):
 
 
 def compare(job):
-    original, optimized, dpi, limit = job
+    original, optimized, dpi, limit, password = job
     try:
         a = pdfium.PdfDocument(original)
-        b = pdfium.PdfDocument(optimized)
+        b = pdfium.PdfDocument(optimized, password=password)
     except Exception as ex:  # noqa: BLE001 - report every failure
         return original, [f"open failed: {ex}"], 0
     problems = []
@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--pages", type=int, default=6)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--password", default=None, help="password for the second tree, for encrypted output")
     args = parser.parse_args()
 
     jobs = []
@@ -85,7 +86,7 @@ def main():
             out = os.path.join(root, name)
             src = os.path.join(args.original, os.path.relpath(out, args.optimized))
             if os.path.exists(src) and os.path.getsize(out) > 0 and sha(src) != sha(out):
-                jobs.append((src, out, args.dpi, args.pages))
+                jobs.append((src, out, args.dpi, args.pages, args.password))
 
     failures = 0
     pages = 0
