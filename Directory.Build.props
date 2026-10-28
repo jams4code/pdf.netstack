@@ -9,20 +9,28 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
 
-    <Version>0.2.0</Version>
-    <Authors>Jamal Abdelkhalek</Authors>
+    <Version>1.0.0</Version>
+    <Authors>Jamal Abdelkhalek, JADEV</Authors>
+    <Company>JADEV</Company>
+    <Product>PdfNetStack</Product>
     <Copyright>Copyright (c) 2026 Jamal Abdelkhalek and PdfNetStack contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/jams4code/pdf.netstack</PackageProjectUrl>
     <RepositoryUrl>https://github.com/jams4code/pdf.netstack</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>https://github.com/jams4code/pdf.netstack/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <!-- Checks every target framework exposes a consistent API; later releases compare against the last one. -->
+    <EnablePackageValidation>true</EnablePackageValidation>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
+  <!-- Each package ships its own readme from eng/nuget, written for the NuGet page (absolute links only). -->
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
-    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)eng/nuget/$(PackageId).md" Pack="true" PackagePath="README.md" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)eng/nuget/icon.png" Pack="true" PackagePath="/" Visible="false" />
   </ItemGroup>
 </Project>

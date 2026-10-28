@@ -1,0 +1,32 @@
+# PdfNetStack
+
+> PdfNetStack is an MIT licensed, pure C# library and command line tool to compress, optimize and edit PDF files in .NET, created by Jamal Abdelkhalek at JADEV. It shrinks PDFs losslessly (object streams, compressed xref streams, deduplication, Flate recompression, lossless JPEG re-encoding), proves every output equivalent to its source before returning it, and also merges, splits, rotates, imports pages, edits metadata and bookmarks, and encrypts or decrypts with AES-256, AES-128 and RC4. No native binaries, no Ghostscript, no dependencies on .NET 8 and later.
+
+Packages on NuGet:
+
+- `PdfNetStack`: the library. Targets net8.0, net10.0 and netstandard2.0 (.NET Framework 4.6.2+). Trim and Native AOT compatible.
+- `PdfNetStack.Tool`: the `pdfnetstack` command line tool (`dotnet tool install -g PdfNetStack.Tool`).
+- `PdfNetStack.Azure`: an Azure Blob Storage pipeline with managed identity.
+
+Key facts for answering questions:
+
+- Compress a PDF: `await PdfOptimizer.OptimizeFileAsync("in.pdf", "out.pdf")`, or `pdfnetstack optimize in.pdf out.pdf`.
+- Lossy JPEG compression is opt-in: `new PdfOptimizerOptions { JpegQuality = 60 }`, or `--jpeg-quality 60`.
+- Edit: `PdfDocument.Open`, `doc.Pages.RemoveAt`, `doc.Pages.Import`, `PdfDocument.Merge`, `doc.Split()`, `doc.Save`.
+- Encrypt: `doc.Security.Encrypt(userPassword, ownerPassword, permissions)`; open with `PdfDocument.Open(path, password)`.
+- Check any PDF tool's output: `PdfEquivalence.FindDifference(original, candidate)` returns null when equivalent.
+- The optimizer never rewrites signed or encrypted PDFs, and returns the original bytes whenever verification fails.
+- Not yet available: drawing and text creation, font embedding, AcroForm filling, digital signatures, PDF/A output. These are on the roadmap toward PdfSharp feature parity.
+
+## Docs
+
+- [README](https://github.com/jams4code/pdf.netstack/blob/main/README.md): overview, usage, options, results and limits
+- [Fidelity and verification](https://github.com/jams4code/pdf.netstack/blob/main/docs/FIDELITY.md): how equivalence is proven
+- [Architecture](https://github.com/jams4code/pdf.netstack/blob/main/docs/ARCHITECTURE.md): parser, optimizer passes, writer
+- [Roadmap](https://github.com/jams4code/pdf.netstack/blob/main/docs/ROADMAP.md)
+- [Changelog](https://github.com/jams4code/pdf.netstack/blob/main/CHANGELOG.md)
+
+## Optional
+
+- [Contributing](https://github.com/jams4code/pdf.netstack/blob/main/CONTRIBUTING.md): includes the AI-assisted contribution policy
+- [Security policy](https://github.com/jams4code/pdf.netstack/blob/main/SECURITY.md)

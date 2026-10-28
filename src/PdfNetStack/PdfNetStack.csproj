@@ -8,8 +8,9 @@
     <!-- Internal helpers document only the non-obvious parameters. -->
     <NoWarn>$(NoWarn);CS1573</NoWarn>
     <PackageId>PdfNetStack</PackageId>
-    <Description>Lossless PDF optimizer for .NET with zero dependencies. Rewrites PDFs with object streams, compressed cross-reference streams, unused object removal, stream recompression and resource deduplication, then proves the result is equivalent to the source before returning it.</Description>
-    <PackageTags>pdf;optimize;optimizer;compress;compression;lossless;object-streams;deduplication</PackageTags>
+    <Title>PdfNetStack: PDF compression, optimization and editing for .NET</Title>
+    <Description>Compress, optimize and edit PDF files in .NET. Pure C#, MIT licensed, no native binaries and no Ghostscript. Lossless PDF compression (object streams, compressed xref streams, deduplication, Flate recompression, lossless JPEG re-encoding) with a built-in equivalence proof on every output, plus opt-in JPEG quality reduction. Merge, split, reorder, rotate and import pages, edit metadata and bookmarks, encrypt and decrypt with AES-256, AES-128 and RC4. No dependencies on .NET 8 and later; .NET Standard 2.0 for .NET Framework 4.6.2+. Native AOT compatible. By Jamal Abdelkhalek, JADEV.</Description>
+    <PackageTags>pdf;pdf-compression;compress-pdf;pdf-optimizer;optimize-pdf;reduce-pdf-size;pdf-library;merge-pdf;split-pdf;pdf-encryption;aes;jpeg;lossless;netstandard;aot;csharp;pdfsharp-alternative;jadev</PackageTags>
   </PropertyGroup>
 
   <!-- .NET Standard 2.0 (.NET Framework 4.6.2+, Mono, Unity) needs Microsoft's MIT licensed span

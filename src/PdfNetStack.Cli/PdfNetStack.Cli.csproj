@@ -13,8 +13,9 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>pdfnetstack</ToolCommandName>
     <PackageId>PdfNetStack.Tool</PackageId>
-    <Description>Command line PDF optimizer: lossless compression with object streams, deduplication and verified output. Install with: dotnet tool install -g PdfNetStack.Tool</Description>
-    <PackageTags>pdf;optimize;compress;cli;dotnet-tool</PackageTags>
+    <Title>pdfnetstack: compress, merge, split and encrypt PDF files from the command line</Title>
+    <Description>Cross-platform command line tool to compress, optimize, merge, split, rotate, encrypt and decrypt PDF files. Lossless by default, every output verified against its source, optional JPEG quality reduction, batch mode with CSV reports. MIT licensed, no Ghostscript. Install with: dotnet tool install -g PdfNetStack.Tool. By Jamal Abdelkhalek, JADEV.</Description>
+    <PackageTags>pdf;pdf-compression;compress-pdf;pdf-optimizer;merge-pdf;split-pdf;pdf-encryption;cli;dotnet-tool;jadev</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

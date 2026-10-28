@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 1.0.0 (2026-10-28)
+
+First release on NuGet: `PdfNetStack`, `PdfNetStack.Tool` and `PdfNetStack.Azure`.
 
 - JPEG images: lossless re-encoding on by default (`OptimizeJpegImages`). Huffman tables are
   rebuilt for each image, progressive and restart marked JPEGs become baseline, and segments PDF
@@ -23,6 +25,15 @@
 - Contribution guide with an AI-assisted contribution policy, and a code of conduct.
 - Hardening from review: bounded resolution depth, bounded object regions, predictor row
   clamping, identity checks in deduplication and verification, per document decode budget.
+- JPEG reader hardening: oversubscribed Huffman tables are refused before use, at most 64 scans
+  per image, frames that claim more blocks than their data can code are refused as decompression
+  bombs, JFIF and Adobe segments are kept once, and an image with a component no scan covers is
+  left untouched.
+- Verification accepts requantized coefficients only on the images the optimizer requantized;
+  every other JPEG must stay coefficient identical.
+- Requantization follows the Adobe marker over `/ColorTransform` when choosing chroma tables, as
+  ISO 32000-1 specifies.
+- NuGet packages: icon, a readme per package, package validation.
 
 ## 0.1.0
 

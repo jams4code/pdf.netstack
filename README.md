@@ -1,6 +1,7 @@
 # PdfNetStack
 
-Lossless PDF optimizer and editing library for .NET. Pure C#, zero runtime dependencies, MIT licensed.
+Compress, optimize and edit PDF files in .NET. Pure C#, MIT licensed, no native binaries, no
+dependencies on .NET 8 and later.
 
 [![CI](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml/badge.svg)](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/PdfNetStack.svg)](https://www.nuget.org/packages/PdfNetStack)
@@ -51,8 +52,9 @@ PdfNetStack takes a narrower job and does it with proof:
   always a valid PDF: the verified rewrite or your input.
 - **No native code, no processes.** One managed assembly for .NET 8 and .NET 10, trim and AOT
   compatible, same behaviour on Windows, Linux and macOS.
-- **MIT all the way down.** The core package has no dependencies at all. CI blocks any runtime
-  package that is not on a reviewed license allowlist.
+- **MIT all the way down.** On .NET 8 and later the core package has no dependencies; on .NET
+  Standard 2.0 it uses Microsoft's `System.Memory`. CI blocks any runtime package that is not on a
+  reviewed license allowlist.
 
 ### Why C# and not a native library
 
@@ -231,14 +233,14 @@ machine with default options.
 
 | | |
 |---|---|
-| Optimized | 954 files, total size 568.9 MiB to 474.2 MiB (16.7% saved) |
-| Returned unchanged | 87 below the 1% threshold, 130 refused by the safety rules, 125 not PDFs (empty or resource fork files) |
+| Optimized | 1,003 files, total size 568.9 MiB to 469.0 MiB (17.6% saved) |
+| Returned unchanged | 38 below the 1% threshold, 130 refused by the safety rules, 125 not PDFs (empty or resource fork files) |
 | Verification failures | 0 |
-| Throughput | 34 to 41 s for the whole corpus, 14 to 17 MB/s depending on machine load |
-| With `AllowIncrementalUpdates` and `AllowRepairedFiles` | 1,068 files optimized, 19.2% saved |
+| Throughput | about 65 s for the whole corpus, 8 to 9 MB/s, lossless JPEG re-encoding included |
+| With `AllowIncrementalUpdates` and `AllowRepairedFiles` | 1,118 files optimized, 20.1% saved |
 
 Independent render check: every optimized file was rendered with PDFium at 150 DPI and
-compared with the original. 1,068 documents, 2,085 pages, zero differing pixels, identical
+compared with the original. 1,118 documents, 2,161 pages, zero differing pixels, identical
 extracted text. The script is in [tools/render_compare.py](tools/render_compare.py).
 
 The 631 page catalogue, 72.6 MiB of CAD drawings already Flate compressed: 6,075 duplicate
@@ -296,8 +298,8 @@ test and corpus discipline as the optimizer:
 - Lossy compression covers JPEG images only and works on their coefficients: it does not
   downsample, does not convert raw images to JPEG, and has no perceptual quality gate yet. See the
   [roadmap](docs/ROADMAP.md).
-- Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, and damaged JPEG data, are carried
-  over untouched.
+- Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
+  damaged JPEG data, are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
 - Linearized (fast web view) output is not produced; linearization is dropped.
 - The whole document is held in memory. Peak memory depends on decoded image sizes and on
