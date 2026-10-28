@@ -310,7 +310,7 @@ public sealed class OpenTypeFontTests
     public void CorruptedFontsFailCleanly()
     {
         var random = new Random(20261028);
-        foreach (string name in new[] { "Test-Regular.ttf", "Test-Regular.otf", "Test-CID.otf", "Test-Regular.woff" })
+        foreach (string name in new[] { "Test-Regular.ttf", "Test-Regular.otf", "Test-CID.otf", "Test-Regular.woff", "Test-Arabic.ttf" })
         {
             byte[] original = Fixture(name);
             for (int round = 0; round < 1500; round++)
@@ -321,7 +321,8 @@ public sealed class OpenTypeFontTests
                 try
                 {
                     PdfOpenTypeFont font = PdfOpenTypeFont.Load(data);
-                    string text = font.CanRender("AVTo Á") ? "AVTo Á" : "";
+                    string sample = name.Contains("Arabic") ? "لَا بَّبم fi" : "AVTo Á";
+                    string text = font.CanRender(sample) ? sample : "";
                     font.MeasureString(text, 12);
                     if (text.Length > 0 && font.AllowsEmbedding) Draw(font, text).ToArray(Plain);
                 }

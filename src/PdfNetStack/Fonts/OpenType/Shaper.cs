@@ -35,9 +35,7 @@ internal sealed class GlyphInfo
     public int YOffset;
     public int AttachTo = -1;
     public int AttachDx;
-    public int AttachDy;
     public int CursiveParent = -1;
-    public int CursiveDy;
 
     public GlyphInfo Copy() => (GlyphInfo)MemberwiseClone();
 }
@@ -72,6 +70,7 @@ internal sealed class Shaper
     private bool _rtl;
     private int _operations;
     private int _nextLigatureId = 1;
+    private int _maxLength;
 
     /// <summary>A shaper for one call; the tables are shared and read only.</summary>
     public Shaper(ShapingTables tables)
@@ -111,6 +110,9 @@ internal sealed class Shaper
 
         // Every lookup costs at most this many steps per glyph; a crafted font cannot run away.
         _operations = Math.Max(16384, _buffer.Count * 64);
+
+        // Multiple substitutions may grow the buffer, but never past this (HarfBuzz caps it too).
+        _maxLength = Math.Max(64, _buffer.Count * 32);
         bool arabic = script is "arab" or "syrc" or "nko " or "mong";
         if (arabic) SetJoiningForms();
         Classify();
@@ -342,6 +344,8 @@ internal sealed class Shaper
                     return i;
                 }
 
+                if (_buffer.Count + count - 1 > _maxLength) return -1;
+                _operations -= count;
                 var replacement = new List<GlyphInfo>(count);
                 for (int k = 0; k < count; k++)
                 {
@@ -383,6 +387,7 @@ internal sealed class Shaper
         {
             int lig = set + U16(d, set + 2 + 2 * l);
             int components = U16(d, lig + 2);
+            if (components == 0 || !Budget()) continue;
             var positions = new int[components];
             positions[0] = i;
             bool match = true;
@@ -756,16 +761,17 @@ internal sealed class Shaper
             b.XAdvance = entryX + b.XOffset;
         }
 
-        // The child hangs off its parent: with RightToLeft (flag bit 0) the earlier glyph is the child.
+        // The child hangs off its parent: with RightToLeft (flag bit 0) the earlier glyph is the
+        // child. Its vertical offset becomes the anchors' difference; the parent's is added at the end.
         if ((lookup.Flag & 1) != 0)
         {
             a.CursiveParent = j;
-            a.CursiveDy = entryY - exitY;
+            a.YOffset = entryY - exitY;
         }
         else
         {
             b.CursiveParent = i;
-            b.CursiveDy = exitY - entryY;
+            b.YOffset = exitY - entryY;
         }
 
         return j;
@@ -826,13 +832,26 @@ internal sealed class Shaper
         if (anchorOffset == 0) return -1;
         (int bx, int by) = Anchor(d, anchorBase + anchorOffset);
         (int mx, int my) = Anchor(d, markAnchor);
-        // Attaching replaces earlier placement; lookups after this one add to the offset again.
+        // Attaching replaces earlier placement; lookups after this one add to the offset again. As
+        // in HarfBuzz, the vertical offset is fixed now, from the base's offset along its cursive
+        // chain at this moment; only the horizontal position follows the base at the end.
         mark.AttachTo = target;
         mark.AttachDx = bx - mx;
-        mark.AttachDy = by - my;
         mark.XOffset = 0;
-        mark.YOffset = 0;
+        mark.YOffset = by - my + CrossOffset(target);
         return i + 1;
+    }
+
+    /// <summary>A glyph's vertical offset, plus those of its cursive ancestors as they stand now.</summary>
+    private int CrossOffset(int glyph)
+    {
+        int offset = _buffer[glyph].YOffset;
+        for (int steps = 0, at = _buffer[glyph].CursiveParent; at >= 0 && at < _buffer.Count && steps < _buffer.Count; steps++, at = _buffer[at].CursiveParent)
+        {
+            offset += _buffer[at].YOffset;
+        }
+
+        return offset;
     }
 
     private static (int X, int Y) Anchor(ReadOnlySpan<byte> d, int at) => (I16(d, at + 2), I16(d, at + 4));
@@ -932,7 +951,7 @@ internal sealed class Shaper
         }
 
         var resolved = new bool[n];
-        for (int k = 0; k < n; k++) ResolveY(k, resolved, 0);
+        for (int k = 0; k < n; k++) ResolveY(k, resolved);
 
         var originX = new int[n];
         var originY = new int[n];
@@ -942,9 +961,8 @@ internal sealed class Shaper
             if (g.AttachTo >= 0 && g.AttachTo < k)
             {
                 originX[k] = originX[g.AttachTo] + g.AttachDx + g.XOffset;
-                originY[k] = originY[g.AttachTo] + g.AttachDy + g.YOffset;
+                originY[k] = g.YOffset;
                 g.XOffset = originX[k] - pen[k];
-                g.YOffset = originY[k];
             }
             else
             {
@@ -954,14 +972,25 @@ internal sealed class Shaper
         }
     }
 
-    private void ResolveY(int k, bool[] resolved, int depth)
+    /// <summary>
+    /// Adds the parent's vertical offset to each glyph of a cursive chain, parents first. The
+    /// chain is walked with an explicit list: it can be as long as the text, too deep to recurse.
+    /// </summary>
+    private void ResolveY(int k, bool[] resolved)
     {
-        if (resolved[k]) return;
-        resolved[k] = true;
-        GlyphInfo g = _buffer[k];
-        int parent = g.CursiveParent;
-        if (parent < 0 || parent >= _buffer.Count || depth > _buffer.Count) return;
-        ResolveY(parent, resolved, depth + 1);
-        g.YOffset += _buffer[parent].YOffset + g.CursiveDy;
+        // The chain from k up to the first glyph already resolved, out of range, or seen (a cycle).
+        var chain = new List<int>();
+        var onChain = new HashSet<int>();
+        for (int at = k; at >= 0 && at < _buffer.Count && !resolved[at] && onChain.Add(at); at = _buffer[at].CursiveParent) chain.Add(at);
+        if (chain.Count == 0) return;
+
+        int topParent = _buffer[chain[^1]].CursiveParent;
+        bool topHasParent = topParent >= 0 && topParent < _buffer.Count && resolved[topParent] && !onChain.Contains(topParent);
+        for (int c = chain.Count - 1; c >= 0; c--)
+        {
+            GlyphInfo g = _buffer[chain[c]];
+            resolved[chain[c]] = true;
+            if (c < chain.Count - 1 || topHasParent) g.YOffset += _buffer[g.CursiveParent].YOffset;
+        }
     }
 }

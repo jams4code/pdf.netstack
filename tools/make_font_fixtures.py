@@ -203,6 +203,7 @@ ARABIC_GLYPHS = [
     ("f_i", None, 520, [(50, 0, 150, 700), (50, 500, 300, 560), (350, 0, 440, 500)]),
     ("T", 0x54, 550, [(40, 600, 510, 700), (225, 0, 325, 600)]),
     ("o", 0x6F, 500, [(50, 0, 450, 480)]),
+    ("x", 0x78, 480, [(40, 0, 440, 500)]),
     ("alef", 0x627, 220, [(80, 0, 140, 700)]),
     ("alef.fina", None, 240, [(80, 0, 140, 700), (0, 0, 80, 40)]),
     ("beh", 0x628, 600, [(50, 0, 550, 120), (275, -200, 325, -150)]),
@@ -263,7 +264,16 @@ feature kern {
     pos T o -80;
     pos beh.fina beh.init -30;
 } kern;
-"""
+feature curs {
+    lookupflag RightToLeft IgnoreMarks;
+    pos cursive beh.init <anchor NULL> <anchor 0 40>;
+    pos cursive beh.medi <anchor 350 0> <anchor 0 60>;
+    pos cursive beh.fina <anchor 570 0> <anchor NULL>;
+} curs;
+""" + "".join(
+    # Twenty lookups that each double x: a million glyphs from one, unless the shaper caps growth.
+    f"lookup grow{n} {{ sub x by x x; }} grow{n};\n" for n in range(20)
+) + "feature ccmp {\n" + "".join(f"    lookup grow{n};\n" for n in range(20)) + "} ccmp;\n"
 
 ARABIC_SAMPLES = [
     ("rtl", "arab", "\u0628\u0628\u0628 \u0628"),  # beh: init medi fina, isol
