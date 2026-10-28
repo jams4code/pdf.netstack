@@ -3,8 +3,9 @@ name: Release
 # Push a tag such as v1.0.0 (or v1.1.0-preview.1) to publish all three packages to NuGet.
 #
 # Authentication, in order of preference:
-# - Trusted publishing: a policy on nuget.org for this repository and this workflow file, and
-#   the NUGET_USER repository secret holding the nuget.org account name. No stored API key.
+# - Trusted publishing: a policy on nuget.org for this repository, this workflow file and the
+#   production environment, and the NUGET_USER secret holding the nuget.org user name (the
+#   profile name, not the email). No stored API key.
 # - Otherwise the NUGET_API_KEY repository secret.
 on:
   push:
@@ -17,6 +18,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Must match the environment in the nuget.org trusted publishing policy.
+    environment: production
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
