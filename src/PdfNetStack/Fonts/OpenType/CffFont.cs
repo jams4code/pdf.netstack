@@ -295,8 +295,8 @@ internal sealed class CffFont
             int offsets = at + 3;
             int dataStart = offsets + (count + 1) * offSize - 1;
             int last = Offset(d, offsets, offSize, count);
-            int end = dataStart + last;
             Check(d, dataStart, last);
+            int end = dataStart + last;
             at = end;
             return new Index(start, count, offSize, dataStart, end);
         }
@@ -305,7 +305,7 @@ internal sealed class CffFont
         {
             int offsets = start + 3;
             int a = Offset(d, offsets, offSize, i), b = Offset(d, offsets, offSize, i + 1);
-            if (a < 1 || b < a || dataStart + b > end) throw new FontFormatException("CFF INDEX is invalid.");
+            if (a < 1 || b < a || b > end - dataStart) throw new FontFormatException("CFF INDEX is invalid.");
             return d.Slice(dataStart + a, b - a);
         }
 

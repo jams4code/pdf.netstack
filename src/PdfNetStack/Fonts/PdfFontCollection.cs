@@ -85,7 +85,7 @@ public sealed class PdfFontCollection
             {
                 added += AddFile(file);
             }
-            catch (Exception e) when (e is FontFormatException or IOException or UnauthorizedAccessException)
+            catch (Exception e) when (e is FontFormatException or IOException or UnauthorizedAccessException or ArgumentException)
             {
                 // System font directories hold all sorts of files; one bad file must not stop the scan.
             }

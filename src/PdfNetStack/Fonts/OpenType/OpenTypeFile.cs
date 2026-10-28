@@ -491,6 +491,7 @@ internal static class SfntBuilder
             foreach (char c in tag) w.U8(c);
             if (tag == "head")
             {
+                if (data.Length < 54) throw new FontFormatException("Font head table is truncated.");
                 headOffset = offset;
                 Array.Clear(data, 8, 4);
             }

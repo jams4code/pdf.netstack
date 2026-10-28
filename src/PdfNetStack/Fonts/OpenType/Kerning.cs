@@ -9,6 +9,9 @@ namespace PdfNetStack.Fonts.OpenType;
 /// </summary>
 internal sealed class Kerning
 {
+    /// <summary>Feature lookup indices and subtables to visit at most; real fonts use a few hundred.</summary>
+    internal const int MaxWork = 1 << 16;
+
     private readonly byte[] _data;
     private readonly List<int[]> _lookups;
     private readonly int _kernPairs;
@@ -222,26 +225,38 @@ internal sealed class Kerning
         int baseOffset = font.TableOffset("GPOS");
         int features = baseOffset + U16(gpos, 6), lookups = baseOffset + U16(gpos, 8);
 
+        // Records may share feature and lookup tables; each is read once, and the total work is
+        // capped so a crafted font cannot make this loop for billions of steps.
+        int work = 0;
         var indices = new SortedSet<int>();
+        var seenFeatures = new HashSet<int>();
         int featureCount = U16(all, features);
         for (int i = 0; i < featureCount; i++)
         {
             int record = features + 2 + 6 * i;
             if (Tag(all, record) != "kern") continue;
             int feature = features + U16(all, record + 4);
+            if (!seenFeatures.Add(feature)) continue;
             int n = U16(all, feature + 2);
-            for (int k = 0; k < n; k++) indices.Add(U16(all, feature + 4 + 2 * k));
+            for (int k = 0; k < n; k++)
+            {
+                Count(ref work);
+                indices.Add(U16(all, feature + 4 + 2 * k));
+            }
         }
 
         int lookupCount = U16(all, lookups);
+        var seenLookups = new HashSet<int>();
         foreach (int index in indices)
         {
             if (index >= lookupCount) continue;
             int lookup = lookups + U16(all, lookups + 2 + 2 * index);
+            if (!seenLookups.Add(lookup)) continue;
             int type = U16(all, lookup), count = U16(all, lookup + 4);
             var subtables = new List<int>(count);
             for (int s = 0; s < count; s++)
             {
+                Count(ref work);
                 int subtable = lookup + U16(all, lookup + 6 + 2 * s);
                 int subtableType = type;
                 if (type == 9)
@@ -257,6 +272,11 @@ internal sealed class Kerning
         }
 
         return result;
+
+        static void Count(ref int work)
+        {
+            if (++work > MaxWork) throw new FontFormatException("Font GPOS table is too large.");
+        }
     }
 
     /// <summary>The first format 0 horizontal subtable of a version 0 'kern' table: pair array offset and count.</summary>

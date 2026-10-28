@@ -266,6 +266,45 @@ public sealed class OpenTypeFontTests
         StringAssert.Contains(Assert.ThrowsExactly<FontFormatException>(() => PdfOpenTypeFont.Load(woff2)).Message, "WOFF2");
     }
 
+    [TestMethod]
+    public void WoffWithAShortHeadTableIsRejected()
+    {
+        // One stored (uncompressed) 'head' table of 4 bytes.
+        var w = new FontWriter();
+        w.Bytes("wOFF"u8);
+        w.U32(0x00010000);
+        w.U32(64);
+        w.U16(1);
+        w.U16(0);
+        w.U32(16);
+        for (int i = 0; i < 6; i++) w.U32(0);
+        w.Bytes("head"u8);
+        w.U32(64);
+        w.U32(4);
+        w.U32(4);
+        w.U32(0);
+        w.U32(0);
+        Assert.ThrowsExactly<FontFormatException>(() => PdfOpenTypeFont.Load(w.ToArray()));
+    }
+
+    [TestMethod]
+    public void CffIndexOffsetsCannotOverflow()
+    {
+        // Header, Name INDEX "A", a Top DICT with CharStrings at 25, empty String and Subr INDEXes,
+        // then a CharStrings INDEX whose middle offset is near int.MaxValue.
+        byte[] cff =
+        [
+            1, 0, 4, 4,
+            0, 1, 1, 1, 2, (byte)'A',
+            0, 1, 1, 1, 7, 29, 0, 0, 0, 25, 17,
+            0, 0,
+            0, 0,
+            0, 2, 4, 0, 0, 0, 1, 0x7F, 0xFF, 0xFF, 0xF0, 0, 0, 0, 2, 14,
+        ];
+        var font = new CffFont(cff);
+        Assert.ThrowsExactly<FontFormatException>(() => font.Subset(new SortedSet<int> { 0 }));
+    }
+
     /// <summary>Thousands of corrupted fonts: each loads, measures and embeds, or fails with a font error.</summary>
     [TestMethod]
     public void CorruptedFontsFailCleanly()
