@@ -116,7 +116,9 @@ namespace PdfNetStack.Cli
 
         private static int Fail(string message)
         {
-            Console.Error.WriteLine(message);
+            // Messages can quote names taken from the document; never let them drive the terminal.
+            // Line breaks in our own usage text stay readable.
+            Console.Error.WriteLine(Printable(message).Replace(@"\u000A", "\n", StringComparison.Ordinal));
             return 2;
         }
 

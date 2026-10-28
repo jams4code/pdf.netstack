@@ -148,7 +148,8 @@ internal sealed class PdfFile
         if (encrypt is PdfReference r) _encryptNumber = r.Number;
         if (Resolve(encrypt) is not PdfDictionary dict) throw new PdfFormatException("Encryption dictionary is missing.");
         byte[] id0 = Resolve(Trailer["ID"]) is PdfArray { Count: > 0 } id && Resolve(id[0]) is PdfString s0 ? s0.Value : [];
-        Security = StandardSecurity.Open((PdfDictionary)DeepResolve(dict, 0), id0, password, Resolve);
+        int budget = 4096;
+        Security = StandardSecurity.Open((PdfDictionary)DeepResolve(dict, 0, ref budget), id0, password, Resolve);
 
         // Everything read so far was read encrypted. Keep only the encryption dictionary.
         lock (_cache)
@@ -160,9 +161,13 @@ internal sealed class PdfFile
         }
     }
 
-    /// <summary>A copy with every indirect reference replaced by its value, for small self-contained dictionaries.</summary>
-    private PdfObject DeepResolve(PdfObject obj, int depth)
+    /// <summary>
+    /// A copy with every indirect reference replaced by its value, for small self-contained
+    /// dictionaries. A node budget keeps shared or deeply nested references from expanding.
+    /// </summary>
+    private PdfObject DeepResolve(PdfObject obj, int depth, ref int budget)
     {
+        if (--budget < 0) throw new PdfFormatException("Encryption dictionary is too large.");
         PdfObject value = Resolve(obj) ?? PdfNull.Instance;
         if (depth > 16) return value;
         switch (value)
@@ -170,12 +175,16 @@ internal sealed class PdfFile
             case PdfDictionary d:
             {
                 var copy = new PdfDictionary(d.Count);
-                for (int i = 0; i < d.Count; i++) copy.Set(d.EntryAt(i).Key, DeepResolve(d.ValueAt(i), depth + 1));
+                for (int i = 0; i < d.Count; i++) copy.Set(d.EntryAt(i).Key, DeepResolve(d.ValueAt(i), depth + 1, ref budget));
                 return copy;
             }
 
             case PdfArray a:
-                return new PdfArray(a.Items.Select(item => DeepResolve(item, depth + 1)).ToList());
+            {
+                var items = new List<PdfObject>(a.Count);
+                foreach (PdfObject item in a.Items) items.Add(DeepResolve(item, depth + 1, ref budget));
+                return new PdfArray(items);
+            }
             default:
                 return value;
         }
