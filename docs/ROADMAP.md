@@ -23,9 +23,13 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    directories and system fonts with CSS weight matching. Still to do: WOFF2 (needs Brotli on
    .NET Standard), CFF2 variable fonts, named instances of variable fonts, optional hinting
    removal for smaller subsets.
-4. **Text layout and complex scripts.** Line breaking (UAX #14), paragraphs with alignment and
-   justification, the Unicode bidirectional algorithm (UAX #9), Arabic shaping through the font's
-   GSUB and GPOS tables (joining forms, mandatory ligatures, mark positioning).
+4. **Text layout and complex scripts.** Done: the Unicode line breaking algorithm (UAX #14) and
+   bidirectional algorithm (UAX #9), both passing the full Unicode 16 conformance suites; an
+   OpenType shaper (GSUB and GPOS, all lookup types, contextual and chained lookups, Arabic
+   joining, marks, cursive attachment) that matches HarfBuzz glyph for glyph on the fonts we
+   compare; ActualText so shaped and right to left text copies back in logical order. Next:
+   paragraphs (wrapping, alignment, justification, rich text runs, font fallback). Later: Unicode
+   normalization in the shaper (pointed Hebrew in older fonts), Indic and other complex shapers.
 5. **Images and Form XObjects.** JPEG passthrough, PNG decoding (all color types, alpha into a soft
    mask, interlacing), image placement with aspect fitting. Pages of another PDF drawn as Form
    XObjects: overlays, watermarks, letterheads, n-up.

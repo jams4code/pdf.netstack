@@ -1,0 +1,82 @@
+using System.Text;
+using PdfNetStack.Drawing;
+using PdfNetStack.Fonts;
+using PdfNetStack.Objects;
+
+namespace PdfNetStack.Tests;
+
+/// <summary>
+/// Drawing shaped text with the synthetic Arabic fixture. Glyph ids: space 1, f 3, i 4, f_i 5,
+/// T 6, o 7, beh.init 11, beh.medi 13, beh.fina 14, lam_alef 23, fatha 25.
+/// </summary>
+[TestClass]
+public sealed class ShapingTests
+{
+    private static PdfOpenTypeFont Arabic() =>
+        PdfOpenTypeFont.Load(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts", "Test-Arabic.ttf"));
+
+    private static string Content(PdfDocument doc)
+    {
+        PdfObject? contents = doc.Resolve(doc.Pages[0].Dictionary["Contents"]);
+        IEnumerable<PdfObject> parts = contents is PdfArray a ? a : [contents!];
+        return string.Concat(parts.Select(p => Encoding.ASCII.GetString(doc.GetStreamData((PdfStream)doc.Resolve(p)!))));
+    }
+
+    private static PdfDocument Draw(PdfFont font, string text)
+    {
+        PdfDocument doc = PdfDocument.Create();
+        using PdfGraphics g = doc.Pages.Add(PdfRectangle.A4).CreateGraphics();
+        g.DrawString(text, font, 10, PdfColor.Black, 50, 100);
+        return doc;
+    }
+
+    [TestMethod]
+    public void RightToLeftRunsAreReversedInALeftToRightLine()
+    {
+        // "To ببب": a left to right paragraph; the Arabic word is drawn right to left, so visually
+        // beh.fina comes first, then beh.medi, then beh.init.
+        List<int> glyphs = [.. Arabic().Shape("To ببب").Select(g => g.Glyph)];
+        CollectionAssert.AreEqual(new[] { 6, 7, 1, 14, 13, 11 }, glyphs);
+    }
+
+    [TestMethod]
+    public void LigaturesMeasureAndCopyAsTheirCharacters()
+    {
+        PdfOpenTypeFont font = Arabic();
+        Assert.AreEqual(520 + 500, font.MeasureString("fio", 1000), 1e-9);
+
+        PdfDocument doc = Draw(font, "لا");
+        var resources = (PdfDictionary)doc.Resolve(doc.Pages[0].Dictionary["Resources"])!;
+        var type0 = (PdfDictionary)doc.Resolve(((PdfDictionary)doc.Resolve(resources["Font"])!)["F1"])!;
+        doc.ToArray();
+        string toUnicode = Encoding.ASCII.GetString(doc.GetStreamData((PdfStream)doc.Resolve(type0["ToUnicode"])!));
+        StringAssert.Contains(toUnicode, "<0017> <06440627>");
+    }
+
+    [TestMethod]
+    public void ArabicCarriesActualTextAndRaisesMarks()
+    {
+        string content = Content(Draw(Arabic(), "بَب"));
+
+        // FEFF, then beh fatha beh in UTF-16BE: the logical text, for copying and search.
+        StringAssert.Contains(content, "/Span <</ActualText<FEFF0628064E0628>>> BDC\n");
+        StringAssert.Contains(content, " Ts\n");
+        StringAssert.Contains(content, "0 Ts\n");
+        StringAssert.EndsWith(content.TrimEnd(), "EMC\nQ");
+    }
+
+    [TestMethod]
+    public void PlainLatinTextHasNoActualText()
+    {
+        Assert.DoesNotContain("ActualText", Content(Draw(Arabic(), "To fo")));
+        Assert.DoesNotContain("ActualText", Content(Draw(PdfStandardFont.Helvetica, "Plain text")));
+    }
+
+    [TestMethod]
+    public void JoinersShapeButAreNotDrawn()
+    {
+        // ZWNJ stops beh from joining; ZWJ keeps the second beh in its initial form.
+        List<int> glyphs = [.. Arabic().Shape("ب‌ب‍").Select(g => g.Glyph)];
+        CollectionAssert.AreEqual(new[] { 11, 10 }, glyphs);
+    }
+}

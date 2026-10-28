@@ -239,29 +239,69 @@ public sealed class PdfGraphics : IDisposable
             _fontNames[resource] = name;
         }
 
-        if (brush is PdfGradientBrush gradient)
+        // Right to left text, ligatures and positioned marks do not copy back in order from the
+        // glyphs alone; ActualText carries the original text for copying and search.
+        bool actualText = NeedsActualText(text, glyphs);
+        if (actualText) BeginActualText(text);
+        try
         {
-            // Render mode 7 adds the glyph outlines to the clip; the shading then paints through it.
-            string shading = AddShading(gradient);
-            using (Save())
+            if (brush is PdfGradientBrush gradient)
             {
-                SetAlpha("ca", gradient.Alpha, ref _state.FillAlpha);
-                WriteText(resource, name, size, glyphs, x, y, 7);
-                _w.Name(shading).Op("sh");
+                // Render mode 7 adds the glyph outlines to the clip; the shading then paints through it.
+                string shading = AddShading(gradient);
+                using (Save())
+                {
+                    SetAlpha("ca", gradient.Alpha, ref _state.FillAlpha);
+                    WriteText(resource, name, size, glyphs, x, y, 7);
+                    _w.Name(shading).Op("sh");
+                }
+
+                if (pen is null) return;
+                brush = null;
             }
 
-            if (pen is null) return;
-            brush = null;
+            if (brush is PdfSolidBrush solid) SetFill(solid.Color);
+            if (pen is not null) SetPen(pen);
+            WriteText(resource, name, size, glyphs, x, y, (pen, brush) switch
+            {
+                (not null, not null) => 2,
+                (null, _) => 0,
+                _ => 1,
+            });
+        }
+        finally
+        {
+            if (actualText) _w.Op("EMC");
+        }
+    }
+
+    private static bool NeedsActualText(string text, List<ShapedGlyph> glyphs)
+    {
+        int visible = 0;
+        for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
+        {
+            if (PdfFont.IsInvisible(text, i)) continue;
+            visible++;
+            if (Text.UnicodeData.Bidi(char.ConvertToUtf32(text, i)) is Text.BidiClass.R or Text.BidiClass.AL or Text.BidiClass.AN) return true;
         }
 
-        if (brush is PdfSolidBrush solid) SetFill(solid.Color);
-        if (pen is not null) SetPen(pen);
-        WriteText(resource, name, size, glyphs, x, y, (pen, brush) switch
+        return visible != glyphs.Count || glyphs.Any(g => g.XOffset != 0 || g.YOffset != 0);
+    }
+
+    private void BeginActualText(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text)
         {
-            (not null, not null) => 2,
-            (null, _) => 0,
-            _ => 1,
-        });
+            if (!char.IsControl(c)) sb.Append(c);
+        }
+
+        byte[] utf16 = System.Text.Encoding.BigEndianUnicode.GetBytes(sb.ToString());
+        var bytes = new byte[utf16.Length + 2];
+        bytes[0] = 0xFE;
+        bytes[1] = 0xFF;
+        utf16.CopyTo(bytes, 2);
+        _w.Name("Span").Raw("<</ActualText").HexString(bytes).Raw(">>").Op("BDC");
     }
 
     /// <summary>Writes the drawing into the page. Further drawing is not possible.</summary>
@@ -342,42 +382,70 @@ public sealed class PdfGraphics : IDisposable
 
         _w.Numbers(1, 0, 0, -1).Numbers(x, y).Op("Tm");
 
+        // Each glyph sits at its pen position plus its offset. TJ numbers (thousandths of the font
+        // size, subtracted from the position) move to the offset before a glyph, then make the
+        // viewer's advance, the width written for the glyph, come out at the shaped advance.
+        // Vertical offsets, as for Arabic marks, use the text rise.
         var run = new List<byte>(glyphs.Count * 2);
         var parts = new List<(byte[] Codes, double Adjust)>();
+        double pending = 0;
         foreach (ShapedGlyph g in glyphs)
         {
+            double rise = Math.Round(g.YOffset, 3);
+            if (rise != _state.TextRise)
+            {
+                Flush();
+                _w.Number(rise / 1000 * size).Op("Ts");
+                _state.TextRise = rise;
+            }
+
+            pending = Math.Round(pending - g.XOffset, 3);
+            if (pending != 0)
+            {
+                parts.Add(([.. run], pending));
+                run.Clear();
+            }
+
             int code = resource.Encode(g);
             if (resource.IsTwoByte) run.Add((byte)(code >> 8));
             run.Add((byte)code);
-
-            // TJ numbers are thousandths of the font size, subtracted from the position.
-            double adjust = Math.Round(resource.Width(g.Glyph) - g.Advance, 3);
-            if (adjust != 0)
-            {
-                parts.Add(([.. run], adjust));
-                run.Clear();
-            }
+            pending = Math.Round(resource.Width(g.Glyph) + g.XOffset - g.Advance, 3);
         }
 
-        if (run.Count > 0 || parts.Count == 0) parts.Add(([.. run], 0));
-        if (parts.Count == 1 && parts[0].Adjust == 0)
+        Flush();
+        if (_state.TextRise != 0)
         {
-            WriteString(parts[0].Codes);
-            _w.Op("Tj");
-        }
-        else
-        {
-            _w.BeginArray();
-            foreach ((byte[] codes, double adjust) in parts)
-            {
-                if (codes.Length > 0) WriteString(codes);
-                if (adjust != 0) _w.Number(adjust);
-            }
-
-            _w.EndArray().Op("TJ");
+            _w.Number(0).Op("Ts");
+            _state.TextRise = 0;
         }
 
         _w.Op("ET");
+
+        void Flush()
+        {
+            if (run.Count > 0) parts.Add(([.. run], 0));
+            run.Clear();
+            pending = 0;
+            if (parts.Count == 0) return;
+            if (parts.Count == 1 && parts[0].Adjust == 0)
+            {
+                WriteString(parts[0].Codes);
+                _w.Op("Tj");
+            }
+            else
+            {
+                _w.BeginArray();
+                foreach ((byte[] codes, double adjust) in parts)
+                {
+                    if (codes.Length > 0) WriteString(codes);
+                    if (adjust != 0) _w.Number(adjust);
+                }
+
+                _w.EndArray().Op("TJ");
+            }
+
+            parts.Clear();
+        }
 
         void WriteString(byte[] codes)
         {
@@ -603,6 +671,7 @@ public sealed class PdfGraphics : IDisposable
         public string? FontName;
         public double FontSize;
         public int TextMode;
+        public double TextRise;
 
         public State Clone() => (State)MemberwiseClone();
     }

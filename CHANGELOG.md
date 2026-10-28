@@ -28,6 +28,12 @@
   installed fonts; `Find(family, weight, italic)` matches as CSS does. Scanning reads only the
   name, OS/2 and head tables; fonts load on first use.
 - `PdfFont` gains `StrikeoutPosition` and `StrikeoutThickness`.
+- Complex text: `DrawString` and `MeasureString` run the Unicode bidirectional algorithm and an
+  OpenType shaper. Arabic and Persian join and take their contextual forms, ligatures form
+  (lam-alef, fi), vowel marks sit on their letters, mixed right to left and left to right text is
+  ordered correctly with mirrored brackets, and kerning follows GPOS or the kern table as
+  HarfBuzz applies them. Shaped and right to left text carries ActualText, so it copies and
+  searches in logical order.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

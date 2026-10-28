@@ -21,6 +21,7 @@ public sealed class PdfOpenTypeFont : PdfFont
     private readonly Kerning? _kerning;
     private readonly double _scale;
     private CffFont? _cff;
+    private ShapingTables? _tables;
 
     private PdfOpenTypeFont(OpenTypeFile file)
     {
@@ -91,6 +92,8 @@ public sealed class PdfOpenTypeFont : PdfFont
 
     internal OpenTypeFile File => _file;
 
+    internal ShapingTables Tables => _tables ??= new ShapingTables(_file);
+
     internal CffFont Cff => _cff ??= new CffFont(_file.Table("CFF "));
 
     /// <summary>Loads a font from a file: .ttf, .otf, .ttc, .otc or .woff.</summary>
@@ -136,6 +139,30 @@ public sealed class PdfOpenTypeFont : PdfFont
 
     internal override bool TryGetGlyph(int codePoint, out int glyph) => _file.TryGetGlyph(codePoint, out glyph);
 
+    /// <summary>Shapes through GSUB and GPOS when the font has them: ligatures, Arabic forms, marks, kerning.</summary>
+    internal override List<ShapedGlyph> ShapeRun(string text, int start, int end, bool rightToLeft, string script)
+    {
+        ShapingTables tables = Tables;
+        if (tables.Gsub is null && tables.Gpos is null && tables.Gdef is null) return base.ShapeRun(text, start, end, rightToLeft, script);
+
+        List<GlyphInfo> infos = new Shaper(tables).Shape(text, start, end, rightToLeft, script);
+        var glyphs = new List<ShapedGlyph>(infos.Count);
+        foreach (GlyphInfo g in infos)
+        {
+            // Joiners, bidi marks and other format characters steer shaping but are not drawn.
+            if (g.Text.Length > 0 && g.Text.Length == (char.IsSurrogatePair(g.Text, 0) ? 2 : 1) && IsInvisible(g.Text, 0)) continue;
+            glyphs.Add(new ShapedGlyph(g.Glyph, g.CodePoint, Math.Round(g.XAdvance * _scale, 2))
+            {
+                XOffset = g.XOffset * _scale,
+                YOffset = g.YOffset * _scale,
+                Text = g.Text,
+                Cluster = g.Cluster,
+            });
+        }
+
+        return glyphs;
+    }
+
     internal override double GetAdvance(int glyph) => Math.Round(_file.Advance(glyph) * _scale, 2);
 
     internal override double GetKerning(int left, int right) =>
@@ -162,7 +189,7 @@ internal sealed class OpenTypeFontResource : FontResource
     private readonly PdfOpenTypeFont _font;
     private readonly SortedDictionary<int, int> _cidToGlyph = new();
     private readonly Dictionary<int, int> _glyphToCid = new();
-    private readonly Dictionary<int, int> _unicode = new();
+    private readonly Dictionary<int, string> _unicode = new();
     private readonly PdfDictionary _cidFont = new();
     private readonly PdfDictionary _descriptor = new();
     private readonly PdfReference _fontFile;
@@ -193,8 +220,9 @@ internal sealed class OpenTypeFontResource : FontResource
             _cidToGlyph[cid] = glyph.Glyph;
         }
 
-        // The first character drawn with a glyph is what copying the text gives back.
-        if (!_unicode.ContainsKey(cid)) _unicode[cid] = glyph.CodePoint;
+        // The first text drawn with a glyph is what copying gives back; a ligature maps to all its characters.
+        string text = glyph.Text ?? char.ConvertFromUtf32(glyph.CodePoint);
+        if (text.Length > 0 && !_unicode.ContainsKey(cid)) _unicode[cid] = text;
         return cid;
     }
 
@@ -290,7 +318,7 @@ internal sealed class OpenTypeFontResource : FontResource
         sb.Append("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n");
         sb.Append("/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n");
         sb.Append("1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n");
-        KeyValuePair<int, int>[] entries = [.. _unicode.OrderBy(e => e.Key)];
+        KeyValuePair<int, string>[] entries = [.. _unicode.OrderBy(e => e.Key)];
         for (int i = 0; i < entries.Length; i += 100)
         {
             int n = Math.Min(100, entries.Length - i);
@@ -298,7 +326,7 @@ internal sealed class OpenTypeFontResource : FontResource
             for (int k = i; k < i + n; k++)
             {
                 sb.Append('<').Append(entries[k].Key.ToString("X4", CultureInfo.InvariantCulture)).Append("> <");
-                foreach (char c in char.ConvertFromUtf32(entries[k].Value)) sb.Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                foreach (char c in entries[k].Value) sb.Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
                 sb.Append(">\n");
             }
 

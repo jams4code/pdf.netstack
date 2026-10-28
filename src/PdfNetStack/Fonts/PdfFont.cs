@@ -106,39 +106,60 @@ public abstract class PdfFont
     internal abstract FontResource CreateResource(PdfDocument document);
 
     /// <summary>
-    /// Maps text to positioned glyphs. Control and format characters (tabs, line breaks, zero
-    /// width joiners, bidi marks, soft hyphens) are skipped.
+    /// Shapes one line of text: the bidirectional algorithm orders its runs (paragraph direction
+    /// from the first strong character), and each run is shaped by the font. Glyphs come back in
+    /// visual order. Control and format characters are not drawn.
     /// </summary>
     /// <exception cref="ArgumentException">The font has no glyph for a character.</exception>
-    internal List<ShapedGlyph> Shape(string text)
+    internal List<ShapedGlyph> Shape(string text) => Text.LineShaper.Shape(this, text, null);
+
+    /// <summary>
+    /// Shapes one run of a single direction and script, in logical order. This default maps each
+    /// character to a glyph, mirrors brackets in right to left runs, and applies pair kerning.
+    /// </summary>
+    internal virtual List<ShapedGlyph> ShapeRun(string text, int start, int end, bool rightToLeft, string script)
     {
-        var glyphs = new List<ShapedGlyph>(text.Length);
-        for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
+        var glyphs = new List<ShapedGlyph>(end - start);
+        for (int i = start; i < end; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
             if (IsInvisible(text, i)) continue;
             int codePoint = char.ConvertToUtf32(text, i);
-            if (!TryGetGlyph(codePoint, out int glyph))
-            {
-                throw new ArgumentException(
-                    $"{Name} has no glyph for U+{codePoint:X4}. Use a font that covers this character.", nameof(text));
-            }
-
-            if (glyphs.Count > 0)
+            int glyph = 0;
+            bool found = (rightToLeft && TryGetGlyph(Text.UnicodeData.Mirror(codePoint), out glyph)) || TryGetGlyph(codePoint, out glyph);
+            if (!found) throw MissingGlyph(codePoint);
+            if (!rightToLeft && glyphs.Count > 0)
             {
                 ShapedGlyph previous = glyphs[^1];
                 double kern = GetKerning(previous.Glyph, glyph);
                 if (kern != 0) glyphs[^1] = previous with { Advance = previous.Advance + kern };
             }
 
-            glyphs.Add(new ShapedGlyph(glyph, codePoint, GetAdvance(glyph)));
+            glyphs.Add(new ShapedGlyph(glyph, codePoint, GetAdvance(glyph)) { Cluster = i });
         }
 
         return glyphs;
     }
 
-    private static bool IsInvisible(string text, int index) =>
+    internal ArgumentException MissingGlyph(int codePoint) =>
+        new($"{Name} has no glyph for U+{codePoint:X4}. Use a font that covers this character.");
+
+    internal static bool IsInvisible(string text, int index) =>
         CharUnicodeInfo.GetUnicodeCategory(text, index) is UnicodeCategory.Control or UnicodeCategory.Format;
 }
 
-/// <summary>A glyph to draw and how far to move after it, in thousandths of the font size.</summary>
-internal readonly record struct ShapedGlyph(int Glyph, int CodePoint, double Advance);
+/// <summary>
+/// A glyph to draw and how far to move after it. Distances are thousandths of the font size;
+/// offsets move the glyph from its pen position, y up.
+/// </summary>
+internal readonly record struct ShapedGlyph(int Glyph, int CodePoint, double Advance)
+{
+    public double XOffset { get; init; }
+
+    public double YOffset { get; init; }
+
+    /// <summary>The characters the glyph stands for, for copying text; null for <see cref="CodePoint"/> alone.</summary>
+    public string? Text { get; init; }
+
+    /// <summary>UTF-16 index of the first character the glyph comes from.</summary>
+    public int Cluster { get; init; }
+}

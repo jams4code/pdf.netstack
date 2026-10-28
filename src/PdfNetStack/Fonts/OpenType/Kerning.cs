@@ -25,6 +25,20 @@ internal sealed class Kerning
         _kernPairCount = kernPairCount;
     }
 
+    /// <summary>The legacy 'kern' table alone, which shaping applies when GPOS does not kern the script.</summary>
+    public static Kerning? LoadLegacy(OpenTypeFile font)
+    {
+        try
+        {
+            (int pairs, int count) = KernTable(font);
+            return count > 0 ? new Kerning(font.Data, [], pairs, count) : null;
+        }
+        catch (FontFormatException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Reads the font's kerning, or returns null when it has none.</summary>
     public static Kerning? Load(OpenTypeFile font)
     {

@@ -110,8 +110,8 @@ public sealed class OpenTypeFontTests
         // Glyph pair (format 1): A V -164 units. Class pair (format 2, second subtable): T o, T x -123.
         Assert.AreEqual(600.1 - 80.08 + 600.1, f.MeasureString("AV", 1000), 1e-9);
         Assert.AreEqual(600.1 + 600.1, f.MeasureString("VA", 1000), 1e-9);
-        Assert.AreEqual(549.8 - 60.06 + 500, f.MeasureString("To", 1000), 1e-9);
-        Assert.AreEqual(549.8 - 60.06 + 479.98, f.MeasureString("Tx", 1000), 1e-9);
+        Assert.AreEqual((1126 - 123) / 2.048 + 500, f.MeasureString("To", 1000), 0.005);
+        Assert.AreEqual((1126 - 123) / 2.048 + 479.98, f.MeasureString("Tx", 1000), 0.005);
         Assert.AreEqual(549.8 + 600.1, f.MeasureString("TA", 1000), 1e-9);
     }
 

@@ -105,4 +105,6 @@ and zlib licenses) through `tools/make_jpeg_fixtures.py`; no code from either is
 it carries is BSD-3-Clause) and the Symbol and ZapfDingbats encoding tables from pypdf
 (BSD-3-Clause); only the resulting code point numbers end up in the generated file. The font
 test fixtures are synthetic fonts built by `tools/make_font_fixtures.py` with fontTools (MIT);
-they contain no glyphs or data from any existing font.
+they contain no glyphs or data from any existing font. HarfBuzz (MIT), through uharfbuzz
+(Apache-2.0), records reference shaping results: `Test-Arabic.shaping.jsonl` for the synthetic
+font, and local comparisons through `tools/harfbuzz_reference.py`. No HarfBuzz code is used.
