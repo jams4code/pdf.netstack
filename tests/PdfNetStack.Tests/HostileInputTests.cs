@@ -104,13 +104,23 @@ public sealed class HostileInputTests
     [TestMethod]
     public void ManyUnterminatedObjectsReconstructInLinearTime()
     {
-        var sb = new StringBuilder("%PDF-1.4\n");
-        for (int k = 1; sb.Length < 600_000; k++) sb.Append(k).Append(" 0 obj (\n");
-        byte[] input = Compat.Latin1.GetBytes(sb.ToString());
+        // Compare scaling, not wall time, so a busy machine cannot fail the test: four times the
+        // input should take about four times as long, where quadratic work would take sixteen.
+        static long Run(int size)
+        {
+            var sb = new StringBuilder("%PDF-1.4\n");
+            for (int k = 1; sb.Length < size; k++) sb.Append(k).Append(" 0 obj (\n");
+            byte[] input = Compat.Latin1.GetBytes(sb.ToString());
+            var clock = Stopwatch.StartNew();
+            AssertSafe(input, PdfOptimizer.Optimize(input, Permissive));
+            return Math.Max(1, clock.ElapsedMilliseconds);
+        }
 
-        var clock = Stopwatch.StartNew();
-        AssertSafe(input, PdfOptimizer.Optimize(input, Permissive));
-        Assert.IsLessThan(10_000, clock.ElapsedMilliseconds, $"took {clock.ElapsedMilliseconds} ms");
+        Run(150_000);
+        long small = Run(150_000);
+        long large = Run(600_000);
+        Assert.IsLessThan(10.0, (double)large / small, $"150 KB took {small} ms, 600 KB took {large} ms");
+        Assert.IsLessThan(60_000, large);
     }
 
     [TestMethod]
