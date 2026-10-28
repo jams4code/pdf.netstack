@@ -40,6 +40,15 @@ internal static class Compat
         if (value.Length == 0) throw new ArgumentException("Value cannot be empty.", name);
     }
 
+    public static void ThrowIfDisposed(bool disposed, object instance)
+    {
+#if NET8_0_OR_GREATER
+        ObjectDisposedException.ThrowIf(disposed, instance);
+#else
+        if (disposed) throw new ObjectDisposedException(instance.GetType().Name);
+#endif
+    }
+
     public static void ThrowIfGreaterThan(uint value, uint max, string name)
     {
         if (value > max) throw new ArgumentOutOfRangeException(name);

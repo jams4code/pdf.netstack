@@ -19,7 +19,11 @@ public sealed class PdfPage
 
     internal int Number { get; }
 
-    internal PdfDictionary Dictionary { get; }
+    /// <summary>
+    /// The page dictionary (ISO 32000-1, 7.7.3.3), for features the high level API does not cover.
+    /// Inherited attributes (resources, boxes, rotation) are already copied onto it.
+    /// </summary>
+    public PdfDictionary Dictionary { get; }
 
     /// <summary>The document this page belongs to.</summary>
     public PdfDocument Document => Owner;
@@ -63,6 +67,17 @@ public sealed class PdfPage
             if (normalized == 0) Dictionary.Remove("Rotate");
             else Dictionary.Set("Rotate", PdfNumber.FromInteger(normalized));
         }
+    }
+
+    /// <summary>
+    /// Starts drawing on this page. Coordinates are points from the top left of the media box,
+    /// y down. Dispose the result, or save the document, to write the drawing.
+    /// </summary>
+    /// <param name="layer">Draw over the existing content, or underneath it.</param>
+    public Drawing.PdfGraphics CreateGraphics(Drawing.PdfGraphicsLayer layer = Drawing.PdfGraphicsLayer.Foreground)
+    {
+        if (Index < 0) throw new InvalidOperationException("The page was removed from its document.");
+        return new Drawing.PdfGraphics(this, layer);
     }
 
     /// <summary>Rotates the page clockwise by <paramref name="degrees"/>, a multiple of 90.</summary>

@@ -34,8 +34,7 @@ public sealed record PdfSaveOptions
 /// and changed. Saving writes a new, single revision file.
 /// </summary>
 /// <remarks>
-/// Editing a digitally signed document invalidates its signatures. Encrypted documents are not
-/// supported yet. Content of imported pages, including fonts, images, annotations and their
+/// Editing a digitally signed document invalidates its signatures. Content of imported pages, including fonts, images, annotations and their
 /// appearance streams, is copied; resources shared by several imported pages are copied once.
 /// </remarks>
 public sealed class PdfDocument
@@ -43,6 +42,7 @@ public sealed class PdfDocument
     private readonly HashSet<int> _pageTreeNodes = new();
     private readonly HashSet<int> _everPages = new();
     private readonly Dictionary<PdfDocument, PageImporter> _importers = new();
+    private readonly List<Drawing.PdfGraphics> _openGraphics = new();
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -60,7 +60,15 @@ public sealed class PdfDocument
 
     internal int NextNumber { get; set; } = 1;
 
-    internal PdfDictionary Catalog { get; private set; } = new();
+    /// <summary>
+    /// The document catalog (ISO 32000-1, 7.7.2), root of the object graph. Use it with
+    /// <see cref="Resolve(PdfObject?)"/> and <see cref="AddObject(PdfObject)"/> for features the
+    /// high level API does not cover, such as viewer preferences or page labels.
+    /// </summary>
+    public PdfDictionary Catalog { get; private set; } = new();
+
+    /// <summary>Per stream decode ceiling for <see cref="GetStreamData(PdfStream)"/>.</summary>
+    internal long DecodeLimit { get; private set; } = 256L << 20;
 
     internal int CatalogNumber { get; private set; }
 
@@ -115,7 +123,7 @@ public sealed class PdfDocument
         PdfFile file = PdfFile.Open(data, maxDecodedStreamBytes);
         if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
 
-        var doc = new PdfDocument(file.HeaderVersion, file.Security);
+        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes };
         ObjectGraph graph = ObjectGraph.Collect(file, stripThumbnails: false, stripPieceInfo: false, CancellationToken.None);
         foreach (int number in graph.Order) doc.Objects[number] = file.GetObject(number);
         doc.NextNumber = (doc.Objects.Count == 0 ? 0 : doc.Objects.Keys.Max()) + 1;
@@ -186,6 +194,9 @@ public sealed class PdfDocument
     public byte[] ToArray(PdfSaveOptions? options = null)
     {
         options ??= PdfSaveOptions.Default;
+
+        // Drawing still open is written now, so a missing Dispose does not lose it.
+        foreach (Drawing.PdfGraphics g in _openGraphics.ToArray()) g.Dispose();
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
         Security.RequireOwner();
 
@@ -343,6 +354,39 @@ public sealed class PdfDocument
         return new PdfArray([new PdfString(id, wasHex: true), new PdfString(id, wasHex: true)]);
     }
 
+    /// <summary>
+    /// Adds <paramref name="obj"/> as a new indirect object and returns a reference to it. Streams
+    /// must be added this way. The object is written on save only if something references it.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="obj"/> is a reference.</exception>
+    public PdfReference AddObject(PdfObject obj)
+    {
+        Compat.ThrowIfNull(obj, nameof(obj));
+        if (obj is PdfReference) throw new ArgumentException("A reference cannot be an indirect object.", nameof(obj));
+        return new PdfReference(Add(obj), 0);
+    }
+
+    /// <summary>
+    /// Decodes a stream's data: Flate, LZW, ASCIIHex, ASCII85 and RunLength filters and PNG or TIFF
+    /// predictors are undone. Image codecs (DCTDecode, JPXDecode, JBIG2Decode, CCITTFaxDecode) are
+    /// left in place, so an image comes back as its JPEG or JPEG 2000 file.
+    /// </summary>
+    /// <exception cref="PdfFormatException">The data is damaged or exceeds the decode limit.</exception>
+    public byte[] GetStreamData(PdfStream stream)
+    {
+        Compat.ThrowIfNull(stream, nameof(stream));
+        try
+        {
+            List<Filters.FilterSpec> filters = Filters.StreamCodec.GetFilters(stream.Dictionary, Resolve);
+            using Filters.DecodedStream decoded = Filters.StreamCodec.Decode(stream.Data, filters, Filters.DecodeDepth.Full, DecodeLimit, Resolve);
+            return decoded.Data.ToArray();
+        }
+        catch (Filters.StreamDecodeException e)
+        {
+            throw new PdfFormatException("Stream data cannot be decoded: " + e.Message, e);
+        }
+    }
+
     internal int Add(PdfObject obj)
     {
         int number = NextNumber++;
@@ -350,13 +394,21 @@ public sealed class PdfDocument
         return number;
     }
 
+    internal void RegisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Add(graphics);
+
+    internal void UnregisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Remove(graphics);
+
     internal void RegisterPage(int number) => _everPages.Add(number);
 
     internal bool IsPage(int number) => _everPages.Contains(number);
 
     internal bool IsPageTreeNode(int number) => _pageTreeNodes.Contains(number);
 
-    internal PdfObject? Resolve(PdfObject? obj)
+    /// <summary>
+    /// Follows references to the object they point to. Returns <paramref name="obj"/> itself when
+    /// it is not a reference, and <see cref="PdfNull.Instance"/> for a reference to a missing object.
+    /// </summary>
+    public PdfObject? Resolve(PdfObject? obj)
     {
         for (int guard = 0; obj is PdfReference r && guard < 32; guard++)
         {

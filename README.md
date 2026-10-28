@@ -126,6 +126,30 @@ pages survive reordering and moving between documents. Annotations travel with t
 are copied fresh for every import; links to pages imported in the same call are remapped, links
 to pages left behind become empty. Editing a signed document invalidates its signatures.
 
+### Drawing
+
+```csharp
+using PdfNetStack.Drawing;
+
+PdfDocument doc = PdfDocument.Create();
+PdfPage page = doc.Pages.Add(PdfRectangle.A4);
+using (PdfGraphics g = page.CreateGraphics())          // origin top left, y down, points
+{
+    var header = new PdfLinearGradientBrush(new PdfPoint(0, 0), new PdfPoint(595, 0),
+        PdfColor.FromHex("#1E3A8A"), PdfColor.FromHex("#2563EB"));
+    g.DrawRectangle(null, header, 0, 0, 595, 140);
+    g.DrawRoundedRectangle(new PdfPen(PdfColor.FromHex("#CBD5E1")), PdfColor.White, 40, 170, 515, 220, 16);
+    g.DrawEllipse(null, PdfColor.FromHex("#14B8A6").WithAlpha(0.5), 60, 430, 180, 180);
+}
+doc.Save("drawing.pdf");
+```
+
+Paths with lines, Bezier curves, arcs, ellipses, polygons and rounded rectangles (elliptical
+corners sized like CSS `border-radius`); pens with caps, joins and dashes; gray, RGB and CMYK
+colors with opacity; linear and radial gradients; transforms, saved states and clipping.
+`CreateGraphics(PdfGraphicsLayer.Background)` draws underneath a page's existing content, for
+letterheads and watermarks. The API follows PdfSharp's `XGraphics` naming.
+
 ### Encryption
 
 ```csharp
@@ -280,18 +304,34 @@ object streams have little left to gain losslessly.
 | `MaxDecodedStreamBytes` | 256 MiB | Per stream decode ceiling |
 | `MaxDegreeOfParallelism` | CPU count | Lower it to cap memory on image heavy files |
 
-## Toward PdfSharp feature parity
+## Toward PdfSharp feature parity, then HTML to PDF
 
-PdfNetStack is growing into a full MIT alternative to PdfSharp, in phases, each with the same
-test and corpus discipline as the optimizer:
+PdfNetStack is growing into a full MIT alternative to PdfSharp, then an HTML and CSS to PDF
+engine in pure C#, each step with the same test and corpus discipline as the optimizer. Details
+in the [roadmap](docs/ROADMAP.md).
 
-| Phase | Scope | Status |
+| Step | Scope | Status |
 |---|---|---|
-| 1 | Document editing: open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | Done |
-| 2 | Encryption: open password protected files (RC4, AES-128, AES-256), write AES-128/256 with permissions | Done |
-| 3 | Creation: drawing canvas, TrueType embedding and subsetting, JPEG and PNG images, text | Next |
-| 4 | Forms and annotations: read and fill AcroForm fields, links, notes, stamps | Planned |
-| 5 | Digital signatures and PDF/A output | Planned |
+| Editing | Open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | Done (1.0) |
+| Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | Done (1.0) |
+| Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | Done (next release) |
+| Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | Done (next release) |
+| Fonts and text | Standard 14 fonts, TrueType/OpenType embedding with subsetting, text layout, Arabic and RTL | Planned |
+| Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Planned |
+| Annotations and forms | Links, notes, stamps; AcroForm reading, filling and flattening | Planned |
+| Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |
+| HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |
+
+### Low level access
+
+```csharp
+using PdfNetStack.Objects;
+
+PdfDocument doc = PdfDocument.Open("report.pdf");
+doc.Catalog.Set("PageMode", new PdfName("UseOutlines"));        // open with bookmarks shown
+var content = PdfStream.FromData("0 0 1 rg 72 72 144 144 re f"u8);
+doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace page content
+```
 
 ## Limits
 

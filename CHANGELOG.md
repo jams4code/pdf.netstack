@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Public object model: `PdfObject`, `PdfNull`, `PdfBoolean`, `PdfNumber`, `PdfName`,
+  `PdfString`, `PdfArray`, `PdfDictionary`, `PdfStream` and `PdfReference` in
+  `PdfNetStack.Objects`, with `PdfDocument.Catalog`, `Resolve`, `AddObject` and
+  `GetStreamData`, and `PdfPage.Dictionary`, for features the high level API does not cover.
+- Drawing: `PdfPage.CreateGraphics()` returns a `PdfGraphics` canvas (top left origin, points)
+  for new and existing pages, in front of or behind the existing content. `PdfPath` with lines,
+  Bezier curves, arcs, ellipses, polygons and rounded rectangles; `PdfPen`, `PdfColor` (gray, RGB,
+  CMYK, opacity), solid, linear and radial gradient brushes; transforms, saved states, clipping.
+  Only changed graphics state is written, and shared page resources are never modified.
+
 ## 1.0.0 (2026-10-28)
 
 First release on NuGet: `PdfNetStack`, `PdfNetStack.Tool` and `PdfNetStack.Azure`.
