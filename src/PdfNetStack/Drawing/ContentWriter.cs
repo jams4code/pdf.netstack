@@ -106,6 +106,72 @@ internal sealed class ContentWriter
         return this;
     }
 
+    /// <summary>A literal string operand. Strings, like arrays, delimit themselves: no spaces are needed around them.</summary>
+    public ContentWriter LiteralString(ReadOnlySpan<byte> bytes)
+    {
+        Ensure(bytes.Length * 2 + 2);
+        _buffer[_length++] = (byte)'(';
+        foreach (byte b in bytes)
+        {
+            switch (b)
+            {
+                case (byte)'(' or (byte)')' or (byte)'\\':
+                    _buffer[_length++] = (byte)'\\';
+                    _buffer[_length++] = b;
+                    break;
+
+                // A raw line end would be read back as a plain line feed (ISO 32000-1, 7.3.4.2).
+                case (byte)'\r':
+                    _buffer[_length++] = (byte)'\\';
+                    _buffer[_length++] = (byte)'r';
+                    break;
+                case (byte)'\n':
+                    _buffer[_length++] = (byte)'\\';
+                    _buffer[_length++] = (byte)'n';
+                    break;
+                default:
+                    _buffer[_length++] = b;
+                    break;
+            }
+        }
+
+        _buffer[_length++] = (byte)')';
+        _needsSpace = false;
+        return this;
+    }
+
+    /// <summary>A hexadecimal string operand.</summary>
+    public ContentWriter HexString(ReadOnlySpan<byte> bytes)
+    {
+        Ensure(bytes.Length * 2 + 2);
+        _buffer[_length++] = (byte)'<';
+        foreach (byte b in bytes)
+        {
+            _buffer[_length++] = Hex(b >> 4);
+            _buffer[_length++] = Hex(b & 0xF);
+        }
+
+        _buffer[_length++] = (byte)'>';
+        _needsSpace = false;
+        return this;
+
+        static byte Hex(int v) => (byte)(v < 10 ? '0' + v : 'A' + v - 10);
+    }
+
+    public ContentWriter BeginArray()
+    {
+        Byte((byte)'[');
+        _needsSpace = false;
+        return this;
+    }
+
+    public ContentWriter EndArray()
+    {
+        Byte((byte)']');
+        _needsSpace = false;
+        return this;
+    }
+
     public ContentWriter Bytes(ReadOnlySpan<byte> bytes)
     {
         Ensure(bytes.Length);

@@ -140,6 +140,11 @@ using (PdfGraphics g = page.CreateGraphics())          // origin top left, y dow
     g.DrawRectangle(null, header, 0, 0, 595, 140);
     g.DrawRoundedRectangle(new PdfPen(PdfColor.FromHex("#CBD5E1")), PdfColor.White, 40, 170, 515, 220, 16);
     g.DrawEllipse(null, PdfColor.FromHex("#14B8A6").WithAlpha(0.5), 60, 430, 180, 180);
+
+    PdfFont bold = PdfStandardFont.HelveticaBold;                 // using PdfNetStack.Fonts
+    g.DrawString("Invoice 2026-114", bold, 28, PdfColor.White, 40, 80);   // x, baseline y
+    double width = bold.MeasureString("Total: €1,250.00", 14);
+    g.DrawString("Total: €1,250.00", bold, 14, PdfColor.Black, 555 - width, 360);
 }
 doc.Save("drawing.pdf");
 ```
@@ -149,6 +154,31 @@ corners sized like CSS `border-radius`); pens with caps, joins and dashes; gray,
 colors with opacity; linear and radial gradients; transforms, saved states and clipping.
 `CreateGraphics(PdfGraphicsLayer.Background)` draws underneath a page's existing content, for
 letterheads and watermarks. The API follows PdfSharp's `XGraphics` naming.
+
+The 14 standard PDF fonts (Helvetica, Times, Courier with their bold and italic styles,
+Symbol, ZapfDingbats) need no embedding, so a page of text weighs about 2 KB. They cover Western
+and Central European languages (Windows-1252 plus Ł, ő, č and the like).
+
+Any TrueType or OpenType font works too, embedded as a subset of the glyphs you draw:
+
+```csharp
+using PdfNetStack.Fonts;
+
+PdfFont inter = PdfOpenTypeFont.Load("fonts/Inter-Regular.ttf");          // .ttf .otf .ttc .woff
+PdfFont? title = PdfFontCollection.System.Find("Segoe UI", weight: 600);   // installed fonts
+
+var brand = new PdfFontCollection();
+brand.AddDirectory("fonts");
+PdfFont heading = brand.Find("Inter", weight: 700) ?? PdfStandardFont.HelveticaBold;
+```
+
+Embedded text is kerned from the font's GPOS or kern table, stays searchable and copyable in
+any script the font covers (a ToUnicode map is written), and the subset keeps only the outlines
+used, so a page in Inter costs a few KB. `PdfFontCollection` matches family, weight and italic
+the way CSS does. Text can be filled with a gradient, outlined with a pen, or both;
+`MeasureString`, `Ascent`, `Descent` and `GetLineHeight` give the metrics for layout. Fonts are
+parsed defensively: a damaged file raises `FontFormatException`, and a font whose license
+forbids embedding (OS/2 fsType) is refused. Not supported yet: WOFF2, CFF2 variable fonts.
 
 ### Encryption
 
@@ -316,7 +346,8 @@ in the [roadmap](docs/ROADMAP.md).
 | Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | Done (1.0) |
 | Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | Done (next release) |
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | Done (next release) |
-| Fonts and text | Standard 14 fonts, TrueType/OpenType embedding with subsetting, text layout, Arabic and RTL | Planned |
+| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF embedding with subsetting, kerning, font collections | Done (next release) |
+| Text layout | Line breaking, alignment, justification, Arabic and RTL | Planned |
 | Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Planned |
 | Annotations and forms | Links, notes, stamps; AcroForm reading, filling and flattening | Planned |
 | Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |

@@ -11,6 +11,25 @@
   Bezier curves, arcs, ellipses, polygons and rounded rectangles; `PdfPen`, `PdfColor` (gray, RGB,
   CMYK, opacity), solid, linear and radial gradient brushes; transforms, saved states, clipping.
   Only changed graphics state is written, and shared page resources are never modified.
+- Text with the 14 standard fonts: `PdfStandardFont`, `PdfGraphics.DrawString` (fill with any
+  brush including gradients, stroke with a pen, or both) and `PdfFont.MeasureString`, with
+  ascent, descent, line height, cap height, x-height and underline metrics. Latin text uses
+  WinAnsiEncoding; up to 37 further characters per font and document (Central European letters,
+  the minus sign) get codes through /Differences. Symbol and ZapfDingbats take their Unicode
+  characters. Control and format characters are skipped; a character the font lacks throws.
+- Embedded fonts: `PdfOpenTypeFont.Load` reads TrueType and OpenType (CFF) fonts from .ttf,
+  .otf, .ttc/.otc collections and WOFF files. Drawn text embeds a subset of the glyphs used as a
+  Type 0 font (CIDFontType2 or CIDFontType0C), with a W array and a ToUnicode map, so text is
+  searchable and copyable in any script. Pair kerning from GPOS (formats 1 and 2, extension
+  lookups) or the kern table. Line metrics follow browsers (typo metrics when the font sets
+  USE_TYPO_METRICS, else hhea). Fonts whose fsType forbids embedding are refused; damaged fonts
+  raise `FontFormatException`.
+- `PdfFontCollection`: add fonts, files and directories, or use `PdfFontCollection.System` for
+  installed fonts; `Find(family, weight, italic)` matches as CSS does. Scanning reads only the
+  name, OS/2 and head tables; fonts load on first use.
+- `PdfFont` gains `StrikeoutPosition` and `StrikeoutThickness`.
+- Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
+  font metrics.
 
 ## 1.0.0 (2026-10-28)
 

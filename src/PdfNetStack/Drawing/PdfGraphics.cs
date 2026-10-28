@@ -1,3 +1,4 @@
+using PdfNetStack.Fonts;
 using PdfNetStack.Objects;
 
 namespace PdfNetStack.Drawing;
@@ -30,6 +31,7 @@ public sealed class PdfGraphics : IDisposable
     private readonly Stack<State> _saved = new();
     private readonly Dictionary<(string Key, double Value), string> _alphaStates = new();
     private readonly HashSet<string> _ownCategories = new(StringComparer.Ordinal);
+    private readonly Dictionary<FontResource, string> _fontNames = new();
     private PdfDictionary? _resources;
     private State _state = new();
     private bool _disposed;
@@ -204,6 +206,64 @@ public sealed class PdfGraphics : IDisposable
         });
     }
 
+    /// <summary>
+    /// Draws one line of text filled with <paramref name="brush"/>. (<paramref name="x"/>,
+    /// <paramref name="y"/>) is the start of the baseline; add <see cref="PdfFont.Ascent"/> times
+    /// the size to <paramref name="y"/> to place the top of the line instead.
+    /// </summary>
+    /// <exception cref="ArgumentException">The font has no glyph for a character of the text.</exception>
+    public void DrawString(string text, PdfFont font, double size, PdfBrush brush, double x, double y) =>
+        DrawString(text, font, size, null, brush, x, y);
+
+    /// <summary>
+    /// Draws one line of text, its glyph outlines stroked with <paramref name="pen"/> and filled
+    /// with <paramref name="brush"/>; either may be null. (<paramref name="x"/>, <paramref name="y"/>)
+    /// is the start of the baseline. Control and format characters, such as tabs and zero width
+    /// joiners, are skipped.
+    /// </summary>
+    /// <exception cref="ArgumentException">The font has no glyph for a character of the text.</exception>
+    public void DrawString(string text, PdfFont font, double size, PdfPen? pen, PdfBrush? brush, double x, double y)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(text, nameof(text));
+        Compat.ThrowIfNull(font, nameof(font));
+        if (!(size > 0) || double.IsInfinity(size)) throw new ArgumentOutOfRangeException(nameof(size), "Font size must be positive.");
+        if (pen is null && brush is null) return;
+        List<ShapedGlyph> glyphs = font.Shape(text);
+        if (glyphs.Count == 0) return;
+
+        FontResource resource = _page.Owner.GetFontResource(font);
+        if (!_fontNames.TryGetValue(resource, out string? name))
+        {
+            name = AddResource("Font", "F", resource.Reference);
+            _fontNames[resource] = name;
+        }
+
+        if (brush is PdfGradientBrush gradient)
+        {
+            // Render mode 7 adds the glyph outlines to the clip; the shading then paints through it.
+            string shading = AddShading(gradient);
+            using (Save())
+            {
+                SetAlpha("ca", gradient.Alpha, ref _state.FillAlpha);
+                WriteText(resource, name, size, glyphs, x, y, 7);
+                _w.Name(shading).Op("sh");
+            }
+
+            if (pen is null) return;
+            brush = null;
+        }
+
+        if (brush is PdfSolidBrush solid) SetFill(solid.Color);
+        if (pen is not null) SetPen(pen);
+        WriteText(resource, name, size, glyphs, x, y, (pen, brush) switch
+        {
+            (not null, not null) => 2,
+            (null, _) => 0,
+            _ => 1,
+        });
+    }
+
     /// <summary>Writes the drawing into the page. Further drawing is not possible.</summary>
     public void Dispose()
     {
@@ -257,6 +317,73 @@ public sealed class PdfGraphics : IDisposable
         }
 
         page.Set("Contents", contents);
+    }
+
+    /// <summary>
+    /// One text object. The text matrix flips y back up so glyphs stand upright on the y down
+    /// canvas. Where a glyph's advance differs from the width the viewer will use (kerning), a
+    /// TJ adjustment makes up the difference.
+    /// </summary>
+    private void WriteText(FontResource resource, string name, double size, List<ShapedGlyph> glyphs, double x, double y, int mode)
+    {
+        _w.Op("BT");
+        if (_state.FontName != name || _state.FontSize != size)
+        {
+            _w.Name(name).Number(size).Op("Tf");
+            _state.FontName = name;
+            _state.FontSize = size;
+        }
+
+        if (_state.TextMode != mode)
+        {
+            _w.Number(mode).Op("Tr");
+            _state.TextMode = mode;
+        }
+
+        _w.Numbers(1, 0, 0, -1).Numbers(x, y).Op("Tm");
+
+        var run = new List<byte>(glyphs.Count * 2);
+        var parts = new List<(byte[] Codes, double Adjust)>();
+        foreach (ShapedGlyph g in glyphs)
+        {
+            int code = resource.Encode(g);
+            if (resource.IsTwoByte) run.Add((byte)(code >> 8));
+            run.Add((byte)code);
+
+            // TJ numbers are thousandths of the font size, subtracted from the position.
+            double adjust = Math.Round(resource.Width(g.Glyph) - g.Advance, 3);
+            if (adjust != 0)
+            {
+                parts.Add(([.. run], adjust));
+                run.Clear();
+            }
+        }
+
+        if (run.Count > 0 || parts.Count == 0) parts.Add(([.. run], 0));
+        if (parts.Count == 1 && parts[0].Adjust == 0)
+        {
+            WriteString(parts[0].Codes);
+            _w.Op("Tj");
+        }
+        else
+        {
+            _w.BeginArray();
+            foreach ((byte[] codes, double adjust) in parts)
+            {
+                if (codes.Length > 0) WriteString(codes);
+                if (adjust != 0) _w.Number(adjust);
+            }
+
+            _w.EndArray().Op("TJ");
+        }
+
+        _w.Op("ET");
+
+        void WriteString(byte[] codes)
+        {
+            if (resource.IsTwoByte) _w.HexString(codes);
+            else _w.LiteralString(codes);
+        }
     }
 
     private void SetFill(PdfColor color)
@@ -441,6 +568,15 @@ public sealed class PdfGraphics : IDisposable
             sub = (PdfDictionary)_resources[category]!;
         }
 
+        // An object the page already refers to, such as a font drawn by an earlier canvas, keeps its name.
+        if (value is PdfReference reference)
+        {
+            foreach (KeyValuePair<string, PdfObject> entry in sub)
+            {
+                if (entry.Value is PdfReference r && r.Number == reference.Number) return entry.Key;
+            }
+        }
+
         int n = sub.Count + 1;
         while (sub.ContainsKey(prefix + n)) n++;
         string name = prefix + n;
@@ -464,6 +600,9 @@ public sealed class PdfGraphics : IDisposable
         public double MiterLimit = 10;
         public IReadOnlyList<double> Dash = [];
         public double DashOffset;
+        public string? FontName;
+        public double FontSize;
+        public int TextMode;
 
         public State Clone() => (State)MemberwiseClone();
     }

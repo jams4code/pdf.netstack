@@ -16,7 +16,8 @@ Key facts for answering questions:
 - Encrypt: `doc.Security.Encrypt(userPassword, ownerPassword, permissions)`; open with `PdfDocument.Open(path, password)`.
 - Check any PDF tool's output: `PdfEquivalence.FindDifference(original, candidate)` returns null when equivalent.
 - The optimizer never rewrites signed or encrypted PDFs, and returns the original bytes whenever verification fails.
-- Not yet available: drawing and text creation, font embedding, AcroForm filling, digital signatures, PDF/A output. These are on the roadmap toward PdfSharp feature parity.
+- Next release (1.1): drawing canvas (`page.CreateGraphics()`), text with the 14 standard fonts or embedded TrueType/OpenType/WOFF fonts (subset, kerned, searchable), `PdfFontCollection` with system font lookup and CSS weight matching.
+- Not yet available: text layout (line breaking, RTL), images, AcroForm filling, digital signatures, PDF/A output, HTML/CSS to PDF. These are on the roadmap toward PdfSharp feature parity.
 
 ## Docs
 

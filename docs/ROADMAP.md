@@ -16,10 +16,13 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    nonzero rules, pens (width, caps, joins, dashes), DeviceRGB, DeviceGray and DeviceCMYK colors,
    constant alpha, transforms and a state stack, clipping, linear and radial gradients. Drawing on
    an existing page wraps its content so the page's own graphics state cannot leak into ours.
-3. **Fonts and text.** The 14 standard fonts with their metrics. TrueType and OpenType (CFF)
-   parsing, glyph subsetting, Type 0 / CIDFontType2 embedding with Identity-H, ToUnicode maps so
-   text stays searchable and copyable, string measurement, kerning. A font resolver for files,
-   streams and system fonts.
+3. **Fonts and text.** Done for 1.1. The 14 standard fonts with their metrics. TrueType and
+   OpenType (CFF, name-keyed and CID-keyed) from .ttf, .otf, collections and WOFF; subsetting
+   that keeps glyph ids; Type 0 embedding over CIDFontType2 or CIDFontType0 with Identity-H;
+   ToUnicode maps; measurement; pair kerning from GPOS or kern. `PdfFontCollection` for files,
+   directories and system fonts with CSS weight matching. Still to do: WOFF2 (needs Brotli on
+   .NET Standard), CFF2 variable fonts, named instances of variable fonts, optional hinting
+   removal for smaller subsets.
 4. **Text layout and complex scripts.** Line breaking (UAX #14), paragraphs with alignment and
    justification, the Unicode bidirectional algorithm (UAX #9), Arabic shaping through the font's
    GSUB and GPOS tables (joining forms, mandatory ligatures, mark positioning).

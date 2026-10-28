@@ -43,6 +43,7 @@ public sealed class PdfDocument
     private readonly HashSet<int> _everPages = new();
     private readonly Dictionary<PdfDocument, PageImporter> _importers = new();
     private readonly List<Drawing.PdfGraphics> _openGraphics = new();
+    private readonly Dictionary<Fonts.PdfFont, Fonts.FontResource> _fonts = new();
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -197,6 +198,10 @@ public sealed class PdfDocument
 
         // Drawing still open is written now, so a missing Dispose does not lose it.
         foreach (Drawing.PdfGraphics g in _openGraphics.ToArray()) g.Dispose();
+
+        // Font dictionaries were reserved on first use; widths, encodings and subsets depend on
+        // everything drawn, so they are written now.
+        foreach (Fonts.FontResource font in _fonts.Values) font.Finish();
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
         Security.RequireOwner();
 
@@ -397,6 +402,18 @@ public sealed class PdfDocument
     internal void RegisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Add(graphics);
 
     internal void UnregisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Remove(graphics);
+
+    /// <summary>The document's resource for <paramref name="font"/>, created on first use.</summary>
+    internal Fonts.FontResource GetFontResource(Fonts.PdfFont font)
+    {
+        if (!_fonts.TryGetValue(font, out Fonts.FontResource? resource))
+        {
+            resource = font.CreateResource(this);
+            _fonts[font] = resource;
+        }
+
+        return resource;
+    }
 
     internal void RegisterPage(int number) => _everPages.Add(number);
 
