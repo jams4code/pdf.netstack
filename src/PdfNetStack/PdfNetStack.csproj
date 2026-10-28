@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>PdfNetStack</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Internal helpers document only the non-obvious parameters. -->
+    <NoWarn>$(NoWarn);CS1573</NoWarn>
+    <PackageId>PdfNetStack</PackageId>
+    <Description>Lossless PDF optimizer for .NET with zero dependencies. Rewrites PDFs with object streams, compressed cross-reference streams, unused object removal, stream recompression and resource deduplication, then proves the result is equivalent to the source before returning it.</Description>
+    <PackageTags>pdf;optimize;optimizer;compress;compression;lossless;object-streams;deduplication</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfNetStack.Tests" />
+    <InternalsVisibleTo Include="PdfNetStack.Cli" />
+  </ItemGroup>
+
+</Project>

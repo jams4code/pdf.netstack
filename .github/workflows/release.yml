@@ -1,0 +1,45 @@
+name: Release
+
+# Push a tag such as v0.1.0 to publish. Requires the NUGET_API_KEY repository secret.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: dotnet test PdfNetStack.sln -c Release
+
+      - name: License check
+        shell: pwsh
+        run: ./eng/check-licenses.ps1
+
+      - name: Pack
+        run: dotnet pack PdfNetStack.sln -c Release -o artifacts -p:Version=${VERSION}
+
+      - name: Publish to NuGet
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md

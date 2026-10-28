@@ -1,0 +1,30 @@
+{
+  "comment": "Every runtime package that ships with a PdfNetStack package must be listed here with its verified license. Adding an entry is a license review: check the nuspec license expression, not the project page.",
+  "packages": {
+    "Azure.Core": "MIT",
+    "Azure.Identity": "MIT",
+    "Azure.Storage.Blobs": "MIT",
+    "Azure.Storage.Common": "MIT",
+    "Microsoft.Bcl.AsyncInterfaces": "MIT",
+    "Microsoft.Extensions.Configuration.Abstractions": "MIT",
+    "Microsoft.Extensions.DependencyInjection.Abstractions": "MIT",
+    "Microsoft.Extensions.Diagnostics.Abstractions": "MIT",
+    "Microsoft.Extensions.FileProviders.Abstractions": "MIT",
+    "Microsoft.Extensions.Hosting.Abstractions": "MIT",
+    "Microsoft.Extensions.Logging.Abstractions": "MIT",
+    "Microsoft.Extensions.Options": "MIT",
+    "Microsoft.Extensions.Primitives": "MIT",
+    "Microsoft.Identity.Client": "MIT",
+    "Microsoft.Identity.Client.Extensions.Msal": "MIT",
+    "Microsoft.IdentityModel.Abstractions": "MIT",
+    "Microsoft.NET.ILLink.Tasks": "MIT (build time only)",
+    "System.ClientModel": "MIT",
+    "System.Diagnostics.DiagnosticSource": "MIT",
+    "System.IO.Hashing": "MIT",
+    "System.IO.Pipelines": "MIT",
+    "System.Memory.Data": "MIT",
+    "System.Security.Cryptography.ProtectedData": "MIT",
+    "System.Text.Encodings.Web": "MIT",
+    "System.Text.Json": "MIT"
+  }
+}

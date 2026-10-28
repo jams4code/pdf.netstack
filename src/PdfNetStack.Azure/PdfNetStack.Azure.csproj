@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>PdfNetStack.Azure</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>PdfNetStack.Azure</PackageId>
+    <Description>Azure Blob Storage pipeline for PdfNetStack: reads a source blob, writes the optimized PDF to a separate container under a content-addressed name, with a provenance sidecar. Managed identity only, no account keys.</Description>
+    <PackageTags>pdf;optimize;azure;blob;storage</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfNetStack\PdfNetStack.csproj" />
+    <!-- MIT licensed. Azure.Storage.Blobs is pinned below 12.30 because 12.30 added a dependency on
+         Apache.Arrow (Apache-2.0). Review licenses before moving the pin. CI enforces the allowlist. -->
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="[12.29.2]" />
+  </ItemGroup>
+
+</Project>

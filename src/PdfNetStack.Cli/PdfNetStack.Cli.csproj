@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>PdfNetStack.Cli</RootNamespace>
+    <AssemblyName>PdfNetStack.Tool</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>pdfnetstack</ToolCommandName>
+    <PackageId>PdfNetStack.Tool</PackageId>
+    <Description>Command line PDF optimizer: lossless compression with object streams, deduplication and verified output. Install with: dotnet tool install -g PdfNetStack.Tool</Description>
+    <PackageTags>pdf;optimize;compress;cli;dotnet-tool</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfNetStack\PdfNetStack.csproj" />
+  </ItemGroup>
+
+</Project>

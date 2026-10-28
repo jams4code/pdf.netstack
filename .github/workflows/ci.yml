@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build PdfNetStack.sln -c Release
+
+      - name: Test (.NET 8 and .NET 10)
+        run: dotnet test PdfNetStack.sln -c Release --no-build
+
+      - name: License check
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: ./eng/check-licenses.ps1
+
+      - name: Native AOT publish (no trim or AOT warnings allowed)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          dotnet publish src/PdfNetStack.Cli -c Release -f net10.0 -r linux-x64 -p:PublishAot=true -o aot
+          ./aot/PdfNetStack.Tool --help
+
+      - name: Pack
+        if: matrix.os == 'ubuntu-latest'
+        run: dotnet pack PdfNetStack.sln -c Release --no-build -o artifacts
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: packages
+          path: artifacts/*
