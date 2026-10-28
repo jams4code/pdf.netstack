@@ -121,8 +121,10 @@ internal static class Decoders
 #endif
             return output;
         }
-        catch (InvalidDataException ex)
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
         {
+            // Most runtimes raise InvalidDataException; newer zlib-ng builds raise ZLibException,
+            // an IOException. Either way the data is not valid Flate.
             output.Dispose();
             throw new StreamDecodeException("Invalid Flate data.", ex);
         }
