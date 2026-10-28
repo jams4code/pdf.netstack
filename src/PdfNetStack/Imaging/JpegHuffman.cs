@@ -27,6 +27,8 @@ internal sealed class JpegHuffmanTable
             _valueOffset[length] = index - code;
             for (int i = 0; i < count; i++, index++, code++)
             {
+                // Checked before the code is used: an oversubscribed table would index past the lookahead.
+                if (code >= 1 << length) throw new JpegFormatException("Huffman table defines more codes than fit.");
                 if (length <= LookaheadBits)
                 {
                     int shift = LookaheadBits - length;
@@ -40,7 +42,6 @@ internal sealed class JpegHuffmanTable
             }
 
             _maxCode[length] = count == 0 ? -1 : code - 1;
-            if (code > 1 << length) throw new JpegFormatException("Huffman table defines more codes than fit.");
             code <<= 1;
         }
 

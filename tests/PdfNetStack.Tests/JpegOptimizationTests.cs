@@ -2,6 +2,7 @@ using System.IO.Compression;
 using PdfNetStack.Filters;
 using PdfNetStack.Imaging;
 using PdfNetStack.Objects;
+using PdfNetStack.Optimization;
 using PdfNetStack.Parsing;
 
 namespace PdfNetStack.Tests;
@@ -86,6 +87,25 @@ public sealed class JpegOptimizationTests
         Assert.IsLessThan(input.Length * 6 / 10, output.Length);
         Assert.IsNull(PdfEquivalence.FindDifference(input, output, allowJpegRequantization: true));
         StringAssert.EndsWith(PdfEquivalence.FindDifference(input, output), "JPEG quantization changed");
+    }
+
+    [TestMethod]
+    public void RequantizationAllowanceCoversOnlyTheImagesThatWereRequantized()
+    {
+        byte[] photo = Fixture("photo-q95.jpg");
+        byte[]? coarse = JpegTranscoder.TryTranscode(photo, 50, null, 3, 64 << 20, out bool requantized);
+        Assert.IsNotNull(coarse);
+        Assert.IsTrue(requantized);
+
+        // Images are objects 3 and 6. Both changed; only object 3 is declared requantized.
+        string dictionary = Jpeg(320, 240, "/DeviceRGB");
+        PdfFile source = PdfFile.Open(ImagePdf((photo, dictionary), (photo, dictionary)), 64 << 20);
+        PdfFile output = PdfFile.Open(ImagePdf((coarse, dictionary), (coarse, dictionary)), 64 << 20);
+
+        string? difference = EquivalenceVerifier.Verify(source, output, [], 64 << 20, static n => n == 3, 1, CancellationToken.None, out _);
+        Assert.IsNotNull(difference);
+        StringAssert.EndsWith(difference, "JPEG quantization changed");
+        Assert.IsNull(EquivalenceVerifier.Verify(source, output, [], 64 << 20, static n => n is 3 or 6, 1, CancellationToken.None, out _));
     }
 
     [TestMethod]

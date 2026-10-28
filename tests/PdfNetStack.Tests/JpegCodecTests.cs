@@ -310,6 +310,118 @@ public sealed class JpegCodecTests
         Assert.AreEqual(1, one.Lengths[7]);
     }
 
+    [TestMethod]
+    public void OversubscribedHuffmanTableIsRefused()
+    {
+        var counts = new byte[16];
+        counts[0] = 3; // three 1 bit codes cannot exist
+        Assert.ThrowsExactly<JpegFormatException>(() => new JpegHuffmanTable(counts, new byte[] { 0, 1, 2 }));
+
+        counts[0] = 2;
+        counts[1] = 1; // both 1 bit codes taken, nothing left at 2 bits
+        Assert.ThrowsExactly<JpegFormatException>(() => new JpegHuffmanTable(counts, new byte[] { 0, 1, 2 }));
+
+        // The same table inside a real file is a refusal, not a crash.
+        byte[] source = Fixture("gray-baseline.jpg");
+        int dht = IndexOfMarker(source, 0xC4);
+        int first = dht + 5;
+        int donor = Enumerable.Range(1, 15).First(k => source[first + k] >= 3);
+        source[first] += 3;
+        source[first + donor] -= 3;
+        Assert.IsNull(JpegTranscoder.TryTranscode(source, null, null, 1, Limit, out _));
+    }
+
+    [TestMethod]
+    public void ScanCountIsCapped()
+    {
+        byte[] source = Fixture("gray-baseline.jpg");
+        int sos = IndexOfMarker(source, 0xDA);
+        byte[] scan = source.AsSpan(sos, source.Length - 2 - sos).ToArray();
+
+        byte[] Repeat(int times)
+        {
+            var data = new List<byte>(source.AsSpan(0, sos).ToArray());
+            for (int i = 0; i < times; i++) data.AddRange(scan);
+            data.Add(0xFF);
+            data.Add(0xD9);
+            return [.. data];
+        }
+
+        using (JpegImage image = JpegReader.Read(Repeat(JpegReader.MaxScans), Limit))
+        {
+            Assert.HasCount(1, image.Components);
+        }
+
+        Assert.ThrowsExactly<JpegFormatException>(() => JpegReader.Read(Repeat(JpegReader.MaxScans + 1), Limit).Dispose());
+    }
+
+    [TestMethod]
+    public void FrameLargerThanItsDataIsRefused()
+    {
+        // 4096 x 2048 is 131072 blocks: inside the decode limit, but 704 bytes cannot code that many.
+        byte[] bomb = Fixture("gray-baseline.jpg");
+        int sof = IndexOfMarker(bomb, 0xC0);
+        bomb[sof + 5] = 0x08;
+        bomb[sof + 6] = 0x00;
+        bomb[sof + 7] = 0x10;
+        bomb[sof + 8] = 0x00;
+        JpegFormatException e = Assert.ThrowsExactly<JpegFormatException>(() => JpegReader.Read(bomb, Limit).Dispose());
+        StringAssert.Contains(e.Message, "larger than its data");
+    }
+
+    [TestMethod]
+    public void RepeatedHeaderSegmentsAreKeptOnce()
+    {
+        byte[] source = Fixture("ycc420-baseline.jpg");
+        byte[] jfif = [0xFF, 0xE0, 0x00, 0x10, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0];
+        byte[] adobe = [0xFF, 0xEE, 0x00, 0x0E, (byte)'A', (byte)'d', (byte)'o', (byte)'b', (byte)'e', 0, 100, 0, 0, 0, 0, 1];
+        var data = new List<byte>(source.AsSpan(0, 2).ToArray());
+        for (int i = 0; i < 50; i++)
+        {
+            data.AddRange(jfif);
+            data.AddRange(adobe);
+        }
+
+        data.AddRange(source.AsSpan(2).ToArray());
+        byte[] padded = [.. data];
+
+        using (JpegImage image = JpegReader.Read(padded, Limit))
+        {
+            Assert.AreEqual(1, image.Segments.Count(s => s.Marker == 0xE0));
+            Assert.AreEqual(1, image.Segments.Count(s => s.Marker == 0xEE));
+            Assert.AreEqual(1, image.AdobeTransform);
+        }
+
+        // One JFIF and one Adobe segment survive, not fifty of each.
+        byte[] output = Lossless(padded, 3);
+        Assert.IsLessThan(source.Length + jfif.Length + adobe.Length, output.Length);
+    }
+
+    [TestMethod]
+    public void ComponentWithoutAScanIsRefused()
+    {
+        // The gray image's frame rewritten to declare two more components that no scan covers.
+        byte[] source = Fixture("gray-baseline.jpg");
+        int sof = IndexOfMarker(source, 0xC0);
+        byte id = source[sof + 10];
+        byte[] frame = [0xFF, 0xC0, 0x00, 0x11, .. source.AsSpan(sof + 4, 5).ToArray(), 3,
+            id, 0x11, 0, (byte)(id + 1), 0x11, 0, (byte)(id + 2), 0x11, 0];
+        byte[] data = [.. source.AsSpan(0, sof).ToArray(), .. frame, .. source.AsSpan(sof + 13).ToArray()];
+
+        JpegFormatException e = Assert.ThrowsExactly<JpegFormatException>(() => JpegReader.Read(data, Limit).Dispose());
+        StringAssert.Contains(e.Message, "never scanned");
+        Assert.IsNull(JpegTranscoder.TryTranscode(data, 50, null, 3, Limit, out _));
+    }
+
+    [TestMethod]
+    public void AdobeMarkerOverridesThePdfColorTransform()
+    {
+        // ISO 32000-1, 7.4.8: the marker in the data wins over /ColorTransform.
+        using JpegImage rgb = JpegReader.Read(Fixture("rgb-baseline.jpg"), Limit);
+        Assert.AreEqual(0, rgb.AdobeTransform);
+        CollectionAssert.AreEqual(new[] { false, false, false }, rgb.ChromaComponents(1));
+    }
+
     internal static int IndexOfMarker(byte[] data, byte marker)
     {
         for (int i = 0; i + 1 < data.Length; i++)

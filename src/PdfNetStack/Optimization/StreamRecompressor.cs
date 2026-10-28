@@ -11,7 +11,11 @@ namespace PdfNetStack.Optimization;
 internal readonly record struct JpegSettings(int? Quality);
 
 /// <summary>Streams whose encoding changed, and how many of them were JPEG images.</summary>
-internal readonly record struct RecompressionCounts(int Streams, int JpegImages, int JpegRequantized);
+/// <param name="RequantizedObjects">Source object numbers of the JPEG images that were requantized.</param>
+internal readonly record struct RecompressionCounts(int Streams, int JpegImages, HashSet<int> RequantizedObjects)
+{
+    public int JpegRequantized => RequantizedObjects.Count;
+}
 
 /// <summary>
 /// Re-encodes streams. Text based encodings (ASCIIHex, ASCII85) are removed, LZW and RunLength
@@ -46,7 +50,8 @@ internal static class StreamRecompressor
 
         // Largest first, handed out one at a time, so one big image never runs alone at the end.
         int[] schedule = Enumerable.Range(0, streams.Count).OrderByDescending(i => streams[i].Data.Length).ToArray();
-        int changed = 0, jpegImages = 0, requantized = 0;
+        int changed = 0, jpegImages = 0;
+        var requantized = new bool[streams.Count];
         var partitioner = System.Collections.Concurrent.Partitioner.Create(schedule, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
         Parallel.ForEach(partitioner, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, i =>
         {
@@ -55,7 +60,7 @@ internal static class StreamRecompressor
             Result? result = Recompress(streams[i], plan, level, imagePredictors, decodeLimit);
             if (result is null) return;
             if (result.Jpeg) Interlocked.Increment(ref jpegImages);
-            if (result.Requantized) Interlocked.Increment(ref requantized);
+            requantized[i] = result.Requantized;
             PdfDictionary d = streams[i].Dictionary;
             streams[i].Data = result.Data;
             d.Remove("DL");
@@ -74,7 +79,13 @@ internal static class StreamRecompressor
             Interlocked.Increment(ref changed);
         });
 
-        return new RecompressionCounts(changed, jpegImages, requantized);
+        var requantizedObjects = new HashSet<int>();
+        for (int i = 0; i < streams.Count; i++)
+        {
+            if (requantized[i]) requantizedObjects.Add(numbers[i]);
+        }
+
+        return new RecompressionCounts(changed, jpegImages, requantizedObjects);
     }
 
     /// <param name="Jpeg">Set for a JPEG image the JPEG pass may re-encode.</param>

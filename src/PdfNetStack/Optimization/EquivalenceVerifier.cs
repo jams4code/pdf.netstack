@@ -20,20 +20,20 @@ internal sealed class EquivalenceVerifier
     private readonly PdfFile _b;
     private readonly HashSet<string> _ignoredSourceKeys;
     private readonly long _decodeLimit;
-    private readonly bool _allowJpegRequantization;
+    private readonly Predicate<int> _mayRequantize;
     private readonly HashSet<(int, int)> _visited = new();
     private readonly Dictionary<int, int> _aToB = new();
     private readonly Dictionary<int, int> _bToA = new();
     private readonly Queue<(int A, int B, string Path)> _pending = new();
-    private readonly List<(PdfStream A, PdfStream B, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB)> _streams = new();
+    private readonly List<(PdfStream A, PdfStream B, int NumberA, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB)> _streams = new();
 
-    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, bool allowJpegRequantization)
+    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, Predicate<int> mayRequantize)
     {
         _a = a;
         _b = b;
         _ignoredSourceKeys = new HashSet<string>(ignoredSourceKeys, StringComparer.Ordinal);
         _decodeLimit = decodeLimit;
-        _allowJpegRequantization = allowJpegRequantization;
+        _mayRequantize = mayRequantize;
     }
 
     public int ObjectsCompared { get; private set; }
@@ -41,14 +41,14 @@ internal sealed class EquivalenceVerifier
     public int StreamsCompared { get; private set; }
 
     /// <param name="ignoredSourceKeys">Keys allowed to exist only in the source, for opt-in stripping.</param>
-    /// <param name="allowJpegRequantization">
-    /// Accept JPEG images whose coefficients are exactly the source's requantized to coarser tables.
-    /// Everything else about them must still match.
+    /// <param name="mayRequantize">
+    /// Called with a source object number; true accepts a JPEG image there whose coefficients are
+    /// exactly the source's requantized to coarser tables. Everything else about it must still match.
     /// </param>
     /// <returns>Null when equivalent, otherwise a description of the first difference found.</returns>
-    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, bool allowJpegRequantization, int parallelism, CancellationToken ct, out int objectsCompared)
+    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, Predicate<int> mayRequantize, int parallelism, CancellationToken ct, out int objectsCompared)
     {
-        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, allowJpegRequantization);
+        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, mayRequantize);
         string? difference = v.Run(parallelism, ct);
         objectsCompared = v.ObjectsCompared;
         return difference;
@@ -68,7 +68,7 @@ internal sealed class EquivalenceVerifier
             if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
             (int a, int b, string path) = _pending.Dequeue();
             ObjectsCompared++;
-            string? d = CompareResolved(_a.GetObject(a), _b.GetObject(b), path, 0);
+            string? d = CompareResolved(_a.GetObject(a), _b.GetObject(b), path, 0, a);
             if (d is not null) return d;
         }
 
@@ -77,7 +77,7 @@ internal sealed class EquivalenceVerifier
         string? failure = null;
         Parallel.ForEach(jobs, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, (job, state) =>
         {
-            string? d = CompareStreamData(job.A, job.B, job.FiltersA, job.FiltersB, job.Path);
+            string? d = CompareStreamData(job.A, job.B, job.NumberA, job.FiltersA, job.FiltersB, job.Path);
             if (d is not null)
             {
                 Interlocked.CompareExchange(ref failure, d, null);
@@ -130,7 +130,8 @@ internal sealed class EquivalenceVerifier
         _ => true,
     };
 
-    private string? CompareResolved(PdfObject? a, PdfObject? b, string path, int depth)
+    /// <param name="numberA">Object number of <paramref name="a"/> when it is an indirect object, else -1.</param>
+    private string? CompareResolved(PdfObject? a, PdfObject? b, string path, int depth, int numberA = -1)
     {
         a ??= PdfNull.Instance;
         b ??= PdfNull.Instance;
@@ -185,7 +186,7 @@ internal sealed class EquivalenceVerifier
                     }
                 }
 
-                _streams.Add((aStream, bStream, path, fa, fb));
+                _streams.Add((aStream, bStream, numberA, path, fa, fb));
                 return null;
             }
 
@@ -245,7 +246,7 @@ internal sealed class EquivalenceVerifier
         }
     }
 
-    private string? CompareStreamData(PdfStream a, PdfStream b, List<FilterSpec>? fa, List<FilterSpec>? fb, string path)
+    private string? CompareStreamData(PdfStream a, PdfStream b, int numberA, List<FilterSpec>? fa, List<FilterSpec>? fb, string path)
     {
         using DecodedStream? da = TryDecode(a, fa);
         using DecodedStream? db = TryDecode(b, fb);
@@ -263,7 +264,7 @@ internal sealed class EquivalenceVerifier
         // Re-encoded JPEG data differs in bytes; equality is decided on its coefficients.
         if (da.PendingPredictor is null && da.Remaining is [{ Name: "DCTDecode" }])
         {
-            string? difference = JpegEquivalence.FindDifference(da.Data.Span, db.Data.Span, _allowJpegRequantization, _decodeLimit);
+            string? difference = JpegEquivalence.FindDifference(da.Data.Span, db.Data.Span, numberA >= 0 && _mayRequantize(numberA), _decodeLimit);
             return difference is null ? null : path + ": " + difference;
         }
 

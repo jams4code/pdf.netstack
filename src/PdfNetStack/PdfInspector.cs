@@ -117,6 +117,7 @@ public static class PdfEquivalence
     {
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowJpegRequantization, Environment.ProcessorCount, CancellationToken.None, out _);
+        Predicate<int> mayRequantize = allowJpegRequantization ? static _ => true : static _ => false;
+        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, mayRequantize, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 }

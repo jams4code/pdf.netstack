@@ -142,10 +142,11 @@ internal sealed class JpegImage : IDisposable
     public bool[] ChromaComponents(int? pdfColorTransform)
     {
         int n = Components.Length;
-        bool transformed = pdfColorTransform is { } pdf
-            ? pdf != 0
-            : AdobeTransform is { } adobe
-                ? adobe != 0
+        // An Adobe marker in the data overrides the DCTDecode /ColorTransform entry (ISO 32000-1, 7.4.8).
+        bool transformed = AdobeTransform is { } adobe
+            ? adobe != 0
+            : pdfColorTransform is { } pdf
+                ? pdf != 0
                 : n == 3 && !(Components[0].Id == 'R' && Components[1].Id == 'G' && Components[2].Id == 'B');
         var chroma = new bool[n];
         if (transformed && n is 3 or 4)

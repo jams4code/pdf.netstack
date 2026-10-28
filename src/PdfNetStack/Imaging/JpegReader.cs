@@ -10,6 +10,12 @@ namespace PdfNetStack.Imaging;
 /// </summary>
 internal ref struct JpegReader
 {
+    /// <summary>
+    /// Scans one image may have. Encoders write 1 to about 12; each scan can visit every block, so
+    /// the cap bounds the work a small hostile stream can cause. Images over it are left untouched.
+    /// </summary>
+    public const int MaxScans = 64;
+
     private readonly ReadOnlySpan<byte> _data;
     private readonly long _limit;
     private readonly ushort[]?[] _tables = new ushort[]?[4];
@@ -86,6 +92,7 @@ internal ref struct JpegReader
                         ReadRestartInterval();
                         break;
                     case 0xDA:
+                        if (scans == MaxScans) throw new JpegFormatException("JPEG has too many scans.");
                         ReadScan(image ?? throw new JpegFormatException("JPEG scan before frame header."));
                         scans++;
                         break;
@@ -99,6 +106,9 @@ internal ref struct JpegReader
                         throw new JpegFormatException(Compat.Format("Unsupported JPEG marker FF{0:X2}.", marker));
                 }
             }
+
+            // Every component needs a scan, or it has no coefficients and no quantization table.
+            if (Array.Exists(image!.Components, c => !c.Started)) throw new JpegFormatException("JPEG component is never scanned.");
         }
         catch
         {
@@ -106,7 +116,7 @@ internal ref struct JpegReader
             throw;
         }
 
-        image!.Segments.AddRange(segments);
+        image.Segments.AddRange(segments);
         image.HasJfif = jfif;
         image.AdobeTransform = adobe;
         return image;
@@ -134,14 +144,19 @@ internal ref struct JpegReader
     private void ReadApplication(int marker, List<JpegSegment> segments, ref bool jfif, ref int? adobe)
     {
         ReadOnlySpan<byte> s = Segment();
+
+        // One of each is kept, the last, which is the one libjpeg acts on. Repeats would only
+        // multiply in memory and in the output.
         if (marker == 0xE0 && s.StartsWith("JFIF\0"u8))
         {
             jfif = true;
+            segments.RemoveAll(x => x.Marker == 0xE0);
             segments.Add(new JpegSegment(0xE0, s.ToArray()));
         }
         else if (marker == 0xEE && s.Length >= 12 && s.StartsWith("Adobe"u8))
         {
             adobe = s[11];
+            segments.RemoveAll(x => x.Marker == 0xEE);
             segments.Add(new JpegSegment(0xEE, s.ToArray()));
         }
     }
@@ -233,6 +248,11 @@ internal ref struct JpegReader
         }
 
         if (bytes > _limit || bytes > Compat.MaxArrayLength) throw new JpegFormatException("JPEG exceeds the decode limit.");
+
+        // Every block a scan codes costs at least one bit of entropy data (its DC symbol), and the
+        // buffers hold at most 16 times the coded blocks (MCU padding at 4x4 sampling). A frame that
+        // claims more blocks than the data could carry is a decompression bomb, not an image.
+        if (bytes / (64 * sizeof(short)) > 16L * 8 * _data.Length) throw new JpegFormatException("JPEG frame is larger than its data can describe.");
 
         var components = new JpegComponent[count];
         try

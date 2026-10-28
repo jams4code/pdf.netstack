@@ -218,7 +218,7 @@ public static partial class PdfOptimizer
             timings = timings with { Analyze = phase.Elapsed };
             phase.Restart();
 
-            RecompressionCounts recompressed = default;
+            RecompressionCounts recompressed = new(0, 0, []);
             if (options.RecompressStreams)
             {
                 JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality) : null;
@@ -308,7 +308,7 @@ public static partial class PdfOptimizer
                 if (options.RemovePageThumbnails) ignored.Add("Thumb");
                 if (options.RemovePieceInfo) ignored.Add("PieceInfo");
                 string? difference = EquivalenceVerifier.Verify(reference, written, ignored, options.MaxDecodedStreamBytes,
-                    allowJpegRequantization: recompressed.JpegRequantized > 0, options.MaxDegreeOfParallelism, ct, out int compared);
+                    recompressed.RequantizedObjects.Contains, options.MaxDegreeOfParallelism, ct, out int compared);
                 if (difference is not null)
                 {
                     return new Outcome(OptimizationDisposition.OriginalRetained, null, "Verification failed: " + difference, pageCount, stats);
