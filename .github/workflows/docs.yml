@@ -1,0 +1,154 @@
+name: Docs
+
+# Builds the documentation site in website/: compiles and runs every code sample against this
+# commit, renders the sample previews, generates the API reference, builds the site, checks links,
+# names, licenses and the Lighthouse budgets. Deploys to Cloudflare Pages only when the
+# Cloudflare secrets exist (see website/README.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'src/**'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'src/**'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # page dates come from git history
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: website/scripts/requirements.txt
+
+      - name: Build the library
+        working-directory: .
+        run: dotnet build PdfNetStack.sln -c Release
+
+      - name: Install site and tool dependencies
+        run: |
+          npm ci
+          pip install -r scripts/requirements.txt
+
+      - name: Run every code sample
+        run: node scripts/run-samples.mjs
+
+      - name: Render sample previews
+        run: python scripts/previews.py
+
+      - name: Build the site
+        run: npm run build
+
+      - name: Check npm licenses
+        run: npm run licenses
+
+      - name: Lighthouse budgets
+        run: npx --yes @lhci/cli@0.15.1 autorun --config=./lighthouserc.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: website/dist
+          retention-days: 7
+
+  deploy:
+    # Production: main only, from the `docs` environment (limited to main in the repository
+    # settings). Skipped until the owner adds the Cloudflare secrets.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: docs
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        with:
+          name: site
+          path: dist
+
+      - name: Deploy to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=pdfnetstack --branch=main
+
+      - name: Deployment skipped
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo "Cloudflare secrets are not set in the docs environment; nothing deployed."
+
+  preview:
+    # Pull requests from this repository get a preview on a branch alias of the Pages project,
+    # from the `docs-preview` environment. Forks have no secrets and stop after the build.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: build
+    runs-on: ubuntu-latest
+    environment: docs-preview
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        with:
+          name: site
+          path: dist
+
+      - name: Deploy a preview to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=pdfnetstack --branch=pr-${{ github.event.pull_request.number }}
+
+      - name: Preview skipped
+        if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''
+        run: echo "Cloudflare secrets are not set in the docs-preview environment; no preview deployed."

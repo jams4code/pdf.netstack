@@ -1,0 +1,62 @@
+---
+// The page body, preceded by a note when the page documents features that are not on NuGet yet,
+// and followed by the page's questions and answers (the `faq` frontmatter, also emitted as
+// FAQPage JSON-LD by route-data.ts).
+import Default from '@astrojs/starlight/components/MarkdownContent.astro';
+import { Aside } from '@astrojs/starlight/components';
+import { pagePath } from '../lib/paths.mjs';
+import { RELEASE } from '../site.config.mjs';
+
+const { entry } = Astro.locals.starlightRoute;
+const { since, faq } = entry.data;
+const unpublished = since !== undefined && !RELEASE.published.includes(since);
+const fromSource = `${pagePath('getting-started')}#build-from-source`;
+---
+
+<Default>
+  {
+    unpublished && (
+      <Aside type="caution" title={since === 'unreleased' ? 'Not on NuGet yet' : `${since}, not yet on NuGet`}>
+        {since === 'unreleased' ? (
+          <p>
+            This page documents code in the main branch that is not published on NuGet yet. To use it
+            today, <a href={fromSource}>build against the source</a>.
+          </p>
+        ) : (
+          <p>
+            This page documents features of PdfNetStack {since}, which are in the main branch. The
+            package on NuGet does not have them yet. To use them today,{' '}
+            <a href={fromSource}>build against the source</a>.
+          </p>
+        )}
+      </Aside>
+    )
+  }
+  <slot />
+  {
+    faq?.length && (
+      <section class="page-faq" aria-labelledby="questions">
+        <h2 id="questions">Questions</h2>
+        <dl>
+          {faq.map(({ q, a }) => (
+            <>
+              <dt>{q}</dt>
+              <dd>{a}</dd>
+            </>
+          ))}
+        </dl>
+      </section>
+    )
+  }
+</Default>
+
+<style>
+  .page-faq dt {
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin-top: 1rem;
+  }
+  .page-faq dd {
+    margin: 0.25rem 0 0;
+  }
+</style>

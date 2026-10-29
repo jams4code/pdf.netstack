@@ -691,6 +691,7 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 
 ## Documentation
 
+- [Documentation site](https://pdfnetstack.jadev-corp.com): guides, recipes and the API reference
 - [Architecture](docs/ARCHITECTURE.md)
 - [Fidelity and verification](docs/FIDELITY.md)
 - [Roadmap](docs/ROADMAP.md)

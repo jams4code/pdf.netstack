@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.astro/
+obj/
+samples/work/
+# Generated at build by scripts/prepare.mjs
+src/generated/
+src/content/docs/api/
+src/content/docs/changelog.md
+src/content/docs/roadmap.md
+src/content/docs/concepts/fidelity.md
+src/content/docs/concepts/architecture.md
+lighthouse/
+.lighthouseci/

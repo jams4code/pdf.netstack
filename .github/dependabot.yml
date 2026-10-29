@@ -9,3 +9,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+
+  # The documentation site in website/. Build time tools only; nothing of them ships in a package.
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: monthly
+    groups:
+      website:
+        patterns: ['*']

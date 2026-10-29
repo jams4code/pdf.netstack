@@ -5,6 +5,7 @@
 *.pdf binary
 *.jpg binary
 *.woff2 binary
+*.webp binary
 *.br binary
 *.deflate binary
 *.bmp binary

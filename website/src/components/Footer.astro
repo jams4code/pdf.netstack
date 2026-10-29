@@ -1,0 +1,42 @@
+---
+// Starlight's footer, followed by who builds PdfNetStack and the project links.
+import Default from '@astrojs/starlight/components/Footer.astro';
+import { pagePath } from '../lib/paths.mjs';
+import { CORP, REPO } from '../site.config.mjs';
+---
+
+<Default />
+<div class="site-footer">
+  <p>
+    PdfNetStack is built and maintained by <a href={`${CORP}/en`}>JADEV</a> and{' '}
+    <a href={`${CORP}/jamal`}>Jamal Abdelkhalek</a>.
+  </p>
+  <p class="links">
+    <a href={`${REPO}/blob/main/LICENSE`}>MIT license</a>
+    <a href={`${REPO}/blob/main/SECURITY.md`}>Security policy</a>
+    <a href={pagePath('changelog')}>Changelog</a>
+    <a href={`${REPO}/issues`}>Issues</a>
+  </p>
+  <p class="note">Product names are trademarks of their respective owners.</p>
+</div>
+
+<style>
+  .site-footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+  }
+  .site-footer p {
+    margin: 0.25rem 0;
+  }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+  }
+  .site-footer a {
+    color: var(--sl-color-gray-2);
+  }
+</style>

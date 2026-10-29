@@ -1,0 +1,77 @@
+---
+// The page title, followed by the "available since" badge and the Markdown twin links.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { markdownPath } from '../lib/paths.mjs';
+import { RELEASE } from '../site.config.mjs';
+
+const { entry } = Astro.locals.starlightRoute;
+const id = entry.id === 'index' ? '' : entry.id;
+const since = entry.data.since;
+const released = since !== undefined && RELEASE.published.includes(since);
+const badge =
+  since === undefined
+    ? null
+    : since === 'unreleased'
+      ? 'Not on NuGet yet'
+      : released
+        ? `Since ${since}`
+        : `${since}, not yet on NuGet`;
+const md = markdownPath(id);
+---
+
+<Default />
+<div class="page-meta">
+  {badge && <span class:list={['since', { unreleased: !released }]}>{badge}</span>}
+  <a href={md} class="md-link">View as Markdown</a>
+  <button type="button" class="md-copy" data-src={md}>Copy as Markdown</button>
+</div>
+
+<script>
+  // The button is in the page from the start, so nothing moves when this runs. Without a
+  // clipboard (plain HTTP, old browsers) it hides; the Markdown link next to it still works.
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.md-copy')) {
+    if (!navigator.clipboard) {
+      button.style.visibility = 'hidden';
+      continue;
+    }
+    button.addEventListener('click', async () => {
+      const response = await fetch(button.dataset.src!);
+      await navigator.clipboard.writeText(await response.text());
+      button.textContent = 'Copied';
+      setTimeout(() => (button.textContent = 'Copy as Markdown'), 2000);
+    });
+  }
+</script>
+
+<style>
+  .page-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-top: 0.75rem;
+    font-size: var(--sl-text-sm);
+  }
+  .since {
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--sl-color-accent);
+    color: var(--sl-color-text-accent);
+  }
+  .since.unreleased {
+    border-color: var(--sl-color-orange);
+    color: var(--sl-color-orange-high);
+  }
+  .md-link,
+  .md-copy {
+    color: var(--sl-color-gray-3);
+  }
+  .md-copy {
+    font: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+</style>

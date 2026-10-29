@@ -96,6 +96,14 @@ Every change needs tests that fail without it. Depending on the change:
 - a regression test in `HostileInputTests` for any crash, hang or memory problem,
 - mutation fuzzing stays green (`RobustnessTests`; set `PDFNETSTACK_FUZZ_ITERATIONS` for a long run).
 
+## Working on the docs
+
+The documentation site lives in `website/` and changes in the same pull request as the code it
+describes. A user facing feature is done when its guide section is written. Every C# sample on the
+site is a file in `website/samples/` that CI compiles and runs against your change, and the API
+reference is generated from the XML documentation comments. To build and preview the site, see
+[website/README.md](website/README.md).
+
 ## Commits and pull requests
 
 - One topic per pull request. Keep it reviewable.

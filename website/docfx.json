@@ -1,0 +1,22 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "PdfNetStack/PdfNetStack.csproj",
+            "PdfNetStack.Html/PdfNetStack.Html.csproj",
+            "PdfNetStack.Ocr/PdfNetStack.Ocr.csproj"
+          ]
+        }
+      ],
+      "dest": "obj/api",
+      "outputFormat": "markdown",
+      "properties": { "TargetFramework": "net8.0", "Configuration": "Release" },
+      "namespaceLayout": "flattened",
+      "memberLayout": "samePage",
+      "enumSortOrder": "declaringOrder"
+    }
+  ]
+}
