@@ -3,6 +3,9 @@ using PdfNetStack.Html.Css;
 
 namespace PdfNetStack.Html.Layout;
 
+/// <summary>A border edge resolved between adjoining cells (CSS 2.1, 17.6.2.1).</summary>
+internal sealed record CollapsedEdge(string Style, CssColor Color);
+
 /// <summary>Four sides in CSS px.</summary>
 internal readonly record struct Edges(double Top, double Right, double Bottom, double Left)
 {
@@ -45,6 +48,12 @@ internal sealed class BoxFragment(Box box) : Fragment
     public Edges Border { get; set; }
 
     public Edges Padding { get; set; }
+
+    /// <summary>
+    /// For cells in the collapsing border model: each side's winning style and color, top, right,
+    /// bottom, left; the widths are in <see cref="Border"/>. Null to draw the box's own borders.
+    /// </summary>
+    public CollapsedEdge[]? CollapsedBorders { get; set; }
 
     /// <summary>Block children or lines, in order.</summary>
     public List<Fragment> Children { get; } = [];

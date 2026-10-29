@@ -48,10 +48,11 @@ internal sealed class Painter
         opacity *= Opacity(f.Style);
         if (opacity <= 0) return;
         bool visible = f.Style.Keyword("visibility") == "visible";
+        bool decorated = f.Box is not TableWrapperBox && !HiddenEmptyCell(f);
         if (visible && Visible(f))
         {
-            if (!ReferenceEquals(f.Box, _skipBackground)) Background(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, f.Padding, opacity);
-            Borders(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, true, true, opacity);
+            if (decorated && !ReferenceEquals(f.Box, _skipBackground)) Background(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, f.Padding, opacity);
+            if (decorated) Borders(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, true, true, opacity, f.CollapsedBorders);
             if (f.Box is ReplacedBox image && f.ContentWidth > 0 && f.ContentHeight > 0)
             {
                 _g.DrawImage(image.Image, f.ContentX, f.ContentY, f.ContentWidth, f.ContentHeight);
@@ -101,6 +102,10 @@ internal sealed class Painter
         }
     }
 
+    /// <summary>empty-cells: hide draws no background or borders for a cell without content, in the separated border model.</summary>
+    private static bool HiddenEmptyCell(BoxFragment f) =>
+        f.Box is TableCellBox && f.CollapsedBorders is null && f.Style.Keyword("empty-cells") == "hide" && f.Children.Count == 0;
+
     private void Background(ComputedStyle s, double x, double y, double w, double h, Edges border, Edges padding, double opacity)
     {
         CssColor color = s.Color("background-color");
@@ -135,24 +140,25 @@ internal sealed class Painter
         return (CssColor.Transparent, null);
     }
 
-    private void Borders(ComputedStyle s, double x, double y, double w, double h, Edges border, bool startEdge, bool endEdge, double opacity)
+    /// <param name="collapsed">Resolved edges for a cell in the collapsing border model, top right bottom left; null for the box's own.</param>
+    private void Borders(ComputedStyle s, double x, double y, double w, double h, Edges border, bool startEdge, bool endEdge, double opacity, CollapsedEdge[]? collapsed = null)
     {
         if (border.Top + border.Right + border.Bottom + border.Left <= 0) return;
         double left = startEdge ? border.Left : 0, right = endEdge ? border.Right : 0;
         double x2 = x + w, y2 = y + h;
 
         // Each side is a trapezoid, so corners meet on the diagonal as in browsers.
-        Side(s, "top", border.Top, opacity, [new(x, y), new(x2, y), new(x2 - right, y + border.Top), new(x + left, y + border.Top)], x, y + (border.Top / 2), x2, y + (border.Top / 2));
-        Side(s, "bottom", border.Bottom, opacity, [new(x, y2), new(x2, y2), new(x2 - right, y2 - border.Bottom), new(x + left, y2 - border.Bottom)], x, y2 - (border.Bottom / 2), x2, y2 - (border.Bottom / 2));
-        if (startEdge) Side(s, "left", left, opacity, [new(x, y), new(x + left, y + border.Top), new(x + left, y2 - border.Bottom), new(x, y2)], x + (left / 2), y, x + (left / 2), y2);
-        if (endEdge) Side(s, "right", right, opacity, [new(x2, y), new(x2 - right, y + border.Top), new(x2 - right, y2 - border.Bottom), new(x2, y2)], x2 - (right / 2), y, x2 - (right / 2), y2);
+        Side(s, "top", collapsed?[0], border.Top, opacity, [new(x, y), new(x2, y), new(x2 - right, y + border.Top), new(x + left, y + border.Top)], x, y + (border.Top / 2), x2, y + (border.Top / 2));
+        Side(s, "bottom", collapsed?[2], border.Bottom, opacity, [new(x, y2), new(x2, y2), new(x2 - right, y2 - border.Bottom), new(x + left, y2 - border.Bottom)], x, y2 - (border.Bottom / 2), x2, y2 - (border.Bottom / 2));
+        if (startEdge) Side(s, "left", collapsed?[3], left, opacity, [new(x, y), new(x + left, y + border.Top), new(x + left, y2 - border.Bottom), new(x, y2)], x + (left / 2), y, x + (left / 2), y2);
+        if (endEdge) Side(s, "right", collapsed?[1], right, opacity, [new(x2, y), new(x2 - right, y + border.Top), new(x2 - right, y2 - border.Bottom), new(x2, y2)], x2 - (right / 2), y, x2 - (right / 2), y2);
     }
 
-    private void Side(ComputedStyle s, string side, double width, double opacity, PdfPoint[] trapezoid, double x1, double y1, double x2, double y2)
+    private void Side(ComputedStyle s, string side, CollapsedEdge? edge, double width, double opacity, PdfPoint[] trapezoid, double x1, double y1, double x2, double y2)
     {
         if (width <= 0) return;
-        string style = s.Keyword("border-" + side + "-style");
-        CssColor color = s.Color("border-" + side + "-color");
+        string style = edge?.Style ?? s.Keyword("border-" + side + "-style");
+        CssColor color = edge?.Color ?? s.Color("border-" + side + "-color");
         if (color.A <= 0) return;
         PdfColor pdf = ToPdf(color, opacity);
         switch (style)

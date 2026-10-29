@@ -90,7 +90,7 @@ public static class HtmlConverter
 
         Dictionary<string, (int Page, double Y)> anchors = Anchors(layout, slices);
         (PdfPage Page, double Top)? Anchor(string id) =>
-            anchors.TryGetValue(id, out var a) ? (pages[a.Page], (master.Geometry(a.Page).Margin.Top + a.Y - slices[a.Page].Top) * PointsPerPixel) : null;
+            anchors.TryGetValue(id, out var a) ? (pages[a.Page], (master.Geometry(a.Page).Margin.Top + slices[a.Page].Inset + a.Y - slices[a.Page].Top) * PointsPerPixel) : null;
 
         (CssColor canvas, Box? propagated) = Painter.CanvasBackground(layout);
         for (int i = 0; i < slices.Count; i++)
@@ -107,7 +107,21 @@ public static class HtmlConverter
             {
                 graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
                 graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
-                graphics.TranslateTransform(0, -slice.Top);
+
+                // Table headers repeated at the top of a page that continues a table.
+                double offset = 0;
+                foreach (Paginator.RepeatedHeader header in slice.Headers)
+                {
+                    using (graphics.Save())
+                    {
+                        graphics.TranslateTransform(0, offset - header.Header.Y);
+                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated).Paint(header.Header);
+                    }
+
+                    offset += header.Advance;
+                }
+
+                graphics.TranslateTransform(0, slice.Inset - slice.Top);
 
                 // The page shows its slice; content may overflow sideways into the margins.
                 graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);

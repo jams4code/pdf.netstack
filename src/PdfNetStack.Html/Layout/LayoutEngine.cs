@@ -49,7 +49,7 @@ internal readonly record struct MarginCollapse(double Positive, double Negative)
 }
 
 /// <summary>Lays out the box tree into fragments on a continuous canvas of a given width, in CSS px.</summary>
-internal sealed class LayoutEngine
+internal sealed partial class LayoutEngine
 {
     private readonly Dictionary<ComputedStyle, FontSet> _fonts = [];
     private readonly Dictionary<Box, (double Min, double Max)> _intrinsic = [];
@@ -84,13 +84,22 @@ internal sealed class LayoutEngine
         || box.Style.Keyword("position") is "absolute" or "fixed"
         || box.Parent is FlexBox;
 
-    private Placed LayoutBlockLevel(Box box, double cbX, double cbWidth, double cursorY, MarginCollapse pending, double? cbHeight, double? forcedWidth = null)
+    /// <param name="box">The block-level box.</param>
+    /// <param name="cbX">The containing block's left content edge.</param>
+    /// <param name="cbWidth">The containing block's width, for auto widths and percentages.</param>
+    /// <param name="cursorY">Where the box would start before its margins.</param>
+    /// <param name="pending">Margins above it still collapsing.</param>
+    /// <param name="cbHeight">The containing block's height when definite, for percentage heights.</param>
+    /// <param name="forcedWidth">A content width decided by the parent, as for table cells and shrink-to-fit boxes.</param>
+    /// <param name="borderOverride">Border widths decided by the parent, as for cells in the collapsing border model.</param>
+    private Placed LayoutBlockLevel(Box box, double cbX, double cbWidth, double cursorY, MarginCollapse pending, double? cbHeight, double? forcedWidth = null, Edges? borderOverride = null)
     {
         if (box is ReplacedBox replaced) return LayoutReplacedBlock(replaced, cbX, cbWidth, cursorY, pending, cbHeight);
+        if (box is TableBox table) return LayoutTable(table, cbX, cbWidth, cursorY, pending, shrink: false);
 
         ComputedStyle style = box.Style;
         Edges margin = BoxMetrics.Margins(style, cbWidth);
-        Edges border = BoxMetrics.Borders(style);
+        Edges border = borderOverride ?? BoxMetrics.Borders(style);
         Edges padding = BoxMetrics.Paddings(style, cbWidth);
         double contentWidth = forcedWidth ?? ResolveWidth(box, cbWidth, ref margin, border, padding);
 
@@ -345,8 +354,14 @@ internal sealed class LayoutEngine
     public BoxFragment LayoutAtomic(Box box, double available)
     {
         if (box is ReplacedBox replaced) return LayoutReplaced(replaced, available, null);
+        if (box is TableBox table)
+        {
+            BoxFragment wrapper = LayoutTable(table, 0, available, 0, MarginCollapse.None, shrink: true).Fragment;
+            wrapper.Translate(wrapper.Margin.Left - wrapper.X, wrapper.Margin.Top - wrapper.Y);
+            return wrapper;
+        }
 
-        // Inline blocks, inline flex and inline tables shrink to fit (CSS 2.1, 10.3.9).
+        // Inline blocks and inline flex containers shrink to fit (CSS 2.1, 10.3.9).
         ComputedStyle s = box.Style;
         Edges margin = BoxMetrics.Margins(s, available);
         Edges border = BoxMetrics.Borders(s);
@@ -384,6 +399,11 @@ internal sealed class LayoutEngine
 
             // A percentage width or max-width lets the image shrink to nothing at min-content.
             result = (HasPercent(s, "width") || HasPercent(s, "max-width") ? 0 : w, w);
+        }
+        else if (box is TableBox table)
+        {
+            (double min, double max) = TableIntrinsic(table);
+            result = (min + margin.Horizontal, max + margin.Horizontal);
         }
         else if (!BoxMetrics.IsAuto(s, "width") && !HasPercent(s, "width") && s.Length("width") is double fixedWidth)
         {

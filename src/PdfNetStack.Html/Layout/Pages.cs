@@ -164,19 +164,33 @@ internal static class Paginator
 {
     private const double Epsilon = 0.01;
 
-    /// <summary>The part of the canvas a page shows, from <see cref="Top"/> to <see cref="Bottom"/>.</summary>
-    internal readonly record struct Slice(double Top, double Bottom);
+    /// <summary>
+    /// The part of the canvas a page shows, from <see cref="Top"/> to <see cref="Bottom"/>, below
+    /// the table headers repeated at the top of the page.
+    /// </summary>
+    internal sealed record Slice(double Top, double Bottom, IReadOnlyList<RepeatedHeader> Headers)
+    {
+        /// <summary>The room the repeated headers take above the content.</summary>
+        public double Inset => Headers.Sum(h => h.Advance);
+    }
+
+    /// <summary>A table header group to repeat, and how far the content below it moves down.</summary>
+    internal sealed record RepeatedHeader(BoxFragment Header, double Advance);
 
     private sealed record Candidate(double Break, double Resume, bool Forced)
     {
         public bool Avoid { get; set; }
     }
 
+    // A table's header group repeats on pages that start between its end and the end of the body rows.
+    private sealed record Repeat(BoxFragment Header, double Start, double End, double Advance);
+
     public static List<Slice> Paginate(BoxFragment root, Func<int, double> pageHeight)
     {
         var candidates = new List<Candidate>();
         var avoid = new List<(double Top, double Bottom)>();
-        Collect(root, candidates, avoid);
+        var repeats = new List<Repeat>();
+        Collect(root, candidates, avoid, repeats);
         foreach (Candidate c in candidates)
         {
             if (avoid.Any(r => c.Break > r.Top + Epsilon && c.Break < r.Bottom - Epsilon)) c.Avoid = true;
@@ -188,11 +202,21 @@ internal static class Paginator
         double top = root.Y;
         while (top < end - Epsilon || slices.Count == 0)
         {
-            double limit = top + pageHeight(slices.Count);
+            double height = pageHeight(slices.Count);
+            List<RepeatedHeader> headers = repeats
+                .Where(r => top > r.Start + Epsilon && top < r.End - Epsilon)
+                .OrderBy(r => r.Start)
+                .Select(r => new RepeatedHeader(r.Header, r.Advance))
+                .ToList();
+
+            // Headers that would fill most of the page are not repeated, so the page still makes progress.
+            if (headers.Sum(h => h.Advance) > height / 2) headers.Clear();
+            double limit = top + height - headers.Sum(h => h.Advance);
+
             Candidate? forced = candidates.FirstOrDefault(c => c.Forced && c.Break > top + Epsilon && c.Break <= limit + Epsilon && c.Resume > top + Epsilon);
             if (forced is null && limit >= end - Epsilon)
             {
-                slices.Add(new Slice(top, Math.Max(end, top)));
+                slices.Add(new Slice(top, Math.Max(end, top), headers));
                 break;
             }
 
@@ -202,12 +226,12 @@ internal static class Paginator
             if (chosen is null)
             {
                 // Nothing breakable fits: cut through, so a tall image or line spans pages.
-                slices.Add(new Slice(top, limit));
+                slices.Add(new Slice(top, limit, headers));
                 top = limit;
                 continue;
             }
 
-            slices.Add(new Slice(top, chosen.Break));
+            slices.Add(new Slice(top, chosen.Break, headers));
             top = chosen.Resume;
         }
 
@@ -221,12 +245,31 @@ internal static class Paginator
 
     private static bool IsAvoid(string value) => value is "avoid" or "avoid-page";
 
-    private static void Collect(BoxFragment box, List<Candidate> candidates, List<(double Top, double Bottom)> avoid)
+    private static void Collect(BoxFragment box, List<Candidate> candidates, List<(double Top, double Bottom)> avoid, List<Repeat> repeats)
     {
         if (IsAvoid(box.Style.Keyword("break-inside"))) avoid.Add((box.Y, box.Bottom));
 
-        // Rows and flex lines are not split: their cells sit side by side.
-        if (box.Box is TableRowBox) return;
+        if (box.Box is TableBox)
+        {
+            List<BoxFragment> groups = box.Children.OfType<BoxFragment>().ToList();
+            if (groups.Count > 1 && groups[0].Box is TableRowGroupBox { IsHeader: true })
+            {
+                BoxFragment header = groups[0];
+                BoxFragment lastBody = groups.LastOrDefault(g => g.Box is TableRowGroupBox { IsFooter: false, IsHeader: false }) ?? header;
+                repeats.Add(new Repeat(header, header.Bottom, lastBody.Bottom, groups[1].Y - header.Y));
+            }
+        }
+
+        // Rows are not split: their cells sit side by side. A cell spanning rows keeps them together.
+        if (box.Box is TableRowBox)
+        {
+            foreach (Fragment cell in box.Children)
+            {
+                if (cell.Bottom > box.Bottom + Epsilon) avoid.Add((box.Y, cell.Bottom));
+            }
+
+            return;
+        }
 
         List<LineFragment> lines = box.Children.OfType<LineFragment>().ToList();
         if (lines.Count > 1)
@@ -253,10 +296,11 @@ internal static class Paginator
                 BoxFragment previous = blocks[i - 1];
                 string after = previous.Style.Keyword("break-after");
                 bool forced = IsForced(after) || IsForced(before);
-                candidates.Add(new Candidate(previous.Bottom, Math.Max(previous.Bottom, child.Y), forced) { Avoid = !forced && (IsAvoid(after) || IsAvoid(before)) });
+                bool header = previous.Box is TableRowGroupBox { IsHeader: true };
+                candidates.Add(new Candidate(previous.Bottom, Math.Max(previous.Bottom, child.Y), forced) { Avoid = !forced && (header || IsAvoid(after) || IsAvoid(before)) });
             }
 
-            Collect(child, candidates, avoid);
+            Collect(child, candidates, avoid, repeats);
         }
 
         if (blocks.Count > 0 && IsForced(blocks[^1].Style.Keyword("break-after")))

@@ -89,7 +89,13 @@ quality output, built on the canvas, fonts and text layout above.
    background covering the page), solid, dashed, dotted and double borders, text decorations
    in every style, opacity, `overflow` clipping, `visibility`. Next: background images and
    gradients, border radius, box shadows, transforms, `object-fit`.
-5. **Flexbox, tables, then grid.** Table layout with header rows repeated across pages.
+5. **Flexbox, tables, then grid.** Tables done: the auto width algorithm browsers share (min
+   and max per column, spanning cells, percentages, constrained columns, shrink to fit),
+   `table-layout: fixed`, row and column spans, header groups first and footer groups last,
+   `border-spacing` and `border-collapse` with conflict resolution between cells, rows, groups
+   and the table, vertical alignment in cells, captions, `empty-cells`, inline tables, the
+   legacy `cellpadding`, `cellspacing` and `border` attributes; rows never split, and header
+   rows repeat at the top of every page a table continues on. Next: flexbox, then grid.
 6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
    the base folder load, so untrusted HTML cannot reach the network or other files. Style
    sheets from `<link>` and `@import`, images in JPEG and PNG. Next: SVG images.

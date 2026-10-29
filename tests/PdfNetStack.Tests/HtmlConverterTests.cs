@@ -67,6 +67,25 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void RepeatsTableHeadersOnEveryPage()
+    {
+        string rows = string.Concat(Enumerable.Range(1, 90).Select(i => $"<tr><td>Row {i}</td><td>v</td></tr>"));
+        PdfDocument doc = Convert($"<table><thead><tr><th>Heading</th><th>Value</th></tr></thead><tbody>{rows}</tbody><tfoot><tr><td>Total</td><td>0</td></tr></tfoot></table>");
+        Assert.IsGreaterThan(1, doc.Pages.Count);
+        for (int page = 0; page < doc.Pages.Count; page++)
+        {
+            string text = Text(doc, page);
+            StringAssert.StartsWith(text, "HeadingValue", $"page {page + 1} starts with the header");
+            Assert.HasCount(1, Regex.Matches(text, "Heading"));
+        }
+
+        // Every row is drawn once, and the footer once, at the end.
+        string all = string.Join("|", Enumerable.Range(0, doc.Pages.Count).Select(p => Text(doc, p)));
+        for (int i = 1; i <= 90; i++) Assert.HasCount(1, Regex.Matches(all, $"Row {i}(?![0-9])"), $"row {i}");
+        StringAssert.Contains(Text(doc, doc.Pages.Count - 1), "Total");
+    }
+
+    [TestMethod]
     public void AppliesPageRulesAndMarginBoxes()
     {
         PdfDocument doc = Convert("""

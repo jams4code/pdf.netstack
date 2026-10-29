@@ -153,3 +153,14 @@ internal sealed class TableColumnGroupBox(ComputedStyle style, HtmlElement? elem
 }
 
 internal sealed class TableCaptionBox(ComputedStyle style, HtmlElement? element) : BlockBox(style, element);
+
+/// <summary>
+/// The table wrapper (CSS 2.1, 17.4): it holds the table's margins and its captions, and draws
+/// nothing itself. Layout makes one per table; it is not part of the box tree.
+/// </summary>
+internal sealed class TableWrapperBox(TableBox table) : Box(table.Style, table.Element)
+{
+    public TableBox Table { get; } = table;
+
+    public override bool IsBlockLevel => Table.IsBlockLevel;
+}
