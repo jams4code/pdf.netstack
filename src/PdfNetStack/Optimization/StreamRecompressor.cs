@@ -247,7 +247,9 @@ internal static class StreamRecompressor
             file.Resolve(parms["ColorTransform"]) is PdfNumber { IsInteger: true } ct && ct.IntegerValue is 0 or 1
                 ? (int)ct.IntegerValue
                 : null;
-        return new JpegPlan(settings.Quality, colorTransform, components, settings.Progressive, settings.MinSsim);
+        // A color key mask matches exact sample values, which requantization would move.
+        int? quality = LossyImages.HasColorKey(file, d) ? null : settings.Quality;
+        return new JpegPlan(quality, colorTransform, components, settings.Progressive, settings.MinSsim);
     }
 
     /// <summary>

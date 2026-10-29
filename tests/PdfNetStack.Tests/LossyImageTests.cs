@@ -399,6 +399,84 @@ public sealed class LossyImageTests
     }
 
     [TestMethod]
+    public void ProofRejectsANewSizeOverUnchangedData()
+    {
+        // The dictionary claims half the size over the very same bytes: a crop at the wrong stride.
+        Raster photo = SyntheticImages.Photo(400, 300, 3);
+        byte[] flate = Deflate(photo.Samples);
+        byte[] source = Pdf((Raw(photo), flate, "400 0 0 300 0 0"));
+        string halved = Raw(photo).Replace("/Width 400/Height 300", "/Width 200/Height 150");
+
+        Assert.IsNotNull(PdfEquivalence.FindDifference(source, Pdf((halved, flate, "400 0 0 300 0 0")), Limit, false, 0.5));
+        Assert.IsNull(PdfEquivalence.FindDifference(source, source, Limit, false, 0.5));
+
+        // Data that cannot be decoded at all may not change size either.
+        byte[] broken = [0x78, 0x9C, 1, 2, 3, 4, 5, 6];
+        byte[] damaged = Pdf((Raw(photo), broken, "400 0 0 300 0 0"));
+        StringAssert.Contains(PdfEquivalence.FindDifference(damaged, Pdf((halved, broken, "400 0 0 300 0 0")), Limit, false, 0.5), "undecodable");
+        Assert.IsNull(PdfEquivalence.FindDifference(damaged, damaged, Limit, false, 0.5));
+    }
+
+    [TestMethod]
+    public void ProofKeepsMasksAndTheirImagesExact()
+    {
+        Raster photo = SyntheticImages.Photo(400, 300, 1);
+        Raster small = Resampler.Downsample(photo, 200, 150);
+        byte[] flate = Deflate(photo.Samples), smallFlate = Deflate(small.Samples);
+        const string draw = "400 0 0 300 0 0";
+
+        // A soft mask is opacity, not a picture: it may not be resampled, while its image may.
+        byte[] source = Pdf(b => b.SetStream(30, Raw(photo), flate), (Raw(photo, "/SMask 30 0 R"), flate, draw));
+        StringAssert.Contains(PdfEquivalence.FindDifference(source, Pdf(b => b.SetStream(30, Raw(small), smallFlate), (Raw(photo, "/SMask 30 0 R"), flate, draw)), Limit, false, 0.5), "Width");
+        Assert.IsNull(PdfEquivalence.FindDifference(source, Pdf(b => b.SetStream(30, Raw(photo), flate), (Raw(small, "/SMask 30 0 R"), smallFlate, draw)), Limit, false, 0.5));
+
+        // A /Matte soft mask ties the image to its size; so does a color key or a stencil mask.
+        byte[] matte = Pdf(b => b.SetStream(30, Raw(photo, "/Matte[0]"), flate), (Raw(photo, "/SMask 30 0 R"), flate, draw));
+        StringAssert.Contains(PdfEquivalence.FindDifference(matte, Pdf(b => b.SetStream(30, Raw(photo, "/Matte[0]"), flate), (Raw(small, "/SMask 30 0 R"), smallFlate, draw)), Limit, false, 0.5), "Width");
+        byte[] keyed = Pdf((Raw(photo, "/Mask[0 10]"), flate, draw));
+        StringAssert.Contains(PdfEquivalence.FindDifference(keyed, Pdf((Raw(small, "/Mask[0 10]"), smallFlate, draw)), Limit, false, 0.5), "Width");
+
+        // Requantization is refused on a soft mask and accepted on its image.
+        Raster gray = SyntheticImages.Photo(160, 120, 1);
+        byte[] jpeg = SyntheticImages.Jpeg(gray, 95);
+        byte[] coarse = JpegTranscoder.TryTranscode(jpeg, 30, null, 1, Limit, out bool requantized)!;
+        Assert.IsTrue(requantized);
+        byte[] Masked(byte[] maskData, byte[] imageData) => Pdf(b => b.SetStream(30, Dct(gray), maskData), (Dct(gray, "/SMask 30 0 R"), imageData, draw));
+        byte[] original = Masked(jpeg, jpeg);
+        Assert.IsNotNull(PdfEquivalence.FindDifference(original, Masked(coarse, jpeg), Limit, allowJpegRequantization: true));
+        Assert.IsNull(PdfEquivalence.FindDifference(original, Masked(jpeg, coarse), Limit, allowJpegRequantization: true));
+
+        // A color key matches exact samples, so the optimizer keeps such a JPEG lossless.
+        byte[] colorKeyed = Pdf((Dct(gray, "/Mask[0 10]"), jpeg, draw));
+        (byte[] output, PdfOptimizationResult result) = PdfOptimizer.Optimize(colorKeyed, NoThreshold with { JpegQuality = 30 });
+        Assert.AreEqual(0, result.Statistics.JpegImagesRequantized, result.Reason);
+        Assert.IsNull(PdfEquivalence.FindDifference(colorKeyed, output));
+    }
+
+    [TestMethod]
+    public void ContentPartsCountAgainstTheDecodeLimit()
+    {
+        // A page lists one 2 KB part many times; only the first part draws the form small. The
+        // joined content passes the decode limit, so the page, and every form it can reach, is
+        // left unmeasured instead of being joined past the limit.
+        Raster photo = SyntheticImages.Photo(300, 300, 1);
+        var b = new PdfBuilder();
+        b.Set(1, "<</Type/Catalog/Pages 2 0 R>>");
+        b.Set(2, "<</Type/Pages/Kids[3 0 R]/Count 1>>");
+        b.SetStream(10, Raw(photo), Deflate(photo.Samples));
+        b.SetStream(11, "/Type/XObject/Subtype/Form/BBox[0 0 1 1]/Resources<</XObject<</Im0 10 0 R>>>>", "/Im0 Do"u8.ToArray());
+        b.SetStream(4, "", "q 72 0 0 72 0 0 cm /Fm0 Do Q"u8.ToArray());
+        b.SetStream(5, "", Enumerable.Repeat((byte)' ', 2000).ToArray());
+        string parts = "4 0 R " + string.Concat(Enumerable.Repeat("5 0 R ", 50));
+        b.Set(3, $"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</XObject<</Fm0 11 0 R>>>>/Contents[{parts}]>>");
+        PdfFile file = PdfFile.Open(b.Build(), Limit);
+        ObjectGraph graph = ObjectGraph.Collect(file, false, false, CancellationToken.None);
+
+        Assert.IsEmpty(ImagePlacement.Measure(file, graph, [10], 50_000, CancellationToken.None));
+        Assert.AreEqual(1.0, ImagePlacement.Measure(file, graph, [10], Limit, CancellationToken.None)[10].Width, 1e-9);
+    }
+
+    [TestMethod]
     public void DamagedImagesAreLeftAlone()
     {
         Raster photo = SyntheticImages.Photo(1200, 900, 3);

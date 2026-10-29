@@ -107,7 +107,8 @@ public static class PdfEquivalence
     /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
     /// <param name="allowJpegRequantization">
     /// Also accept JPEG images whose coefficients are exactly the source's requantized to coarser
-    /// tables, as <see cref="PdfOptimizerOptions.JpegQuality"/> produces.
+    /// tables, as <see cref="PdfOptimizerOptions.JpegQuality"/> produces. Soft masks, masks and
+    /// color keyed images never qualify, as the optimizer never requantizes them.
     /// </param>
     public static string? FindDifference(
         ReadOnlyMemory<byte> original,
@@ -117,8 +118,8 @@ public static class PdfEquivalence
     {
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        Predicate<int> mayRequantize = allowJpegRequantization ? static _ => true : static _ => false;
-        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, mayRequantize, Environment.ProcessorCount, CancellationToken.None, out _);
+        ImageAllowance allowance = LossyImages.AllowanceFor(a, allowJpegRequantization, null, CancellationToken.None);
+        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowance, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 
     /// <summary>
@@ -128,7 +129,9 @@ public static class PdfEquivalence
     /// <see cref="PdfOptimizerOptions.ConvertImagesToJpeg"/> produce: same components and aspect, no
     /// larger, mean colors kept, and luminance SSIM against the original resampled to the new size
     /// of at least <paramref name="minImageSsim"/>. Every other part of such an image must match.
-    /// Requantized images must then meet the same SSIM.
+    /// Requantized images must then meet the same SSIM. Only images the optimizer could change
+    /// that way qualify: masks, soft masks, stencil masks and color keyed images must match
+    /// exactly, and so must the size of images with any /Mask or a /Matte soft mask.
     /// </summary>
     /// <param name="original">The source PDF.</param>
     /// <param name="candidate">The PDF to check against it.</param>
@@ -145,10 +148,7 @@ public static class PdfEquivalence
         if (minImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(minImageSsim));
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        var allowance = new ImageAllowance(
-            allowJpegRequantization ? static _ => true : static _ => false,
-            minImageSsim is null ? static _ => false : static _ => true,
-            minImageSsim);
+        ImageAllowance allowance = LossyImages.AllowanceFor(a, allowJpegRequantization, minImageSsim, CancellationToken.None);
         return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowance, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 }

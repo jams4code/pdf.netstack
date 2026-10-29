@@ -45,8 +45,11 @@ including one coefficient off by one, fails verification. `pdfnetstack verify --
 and `PdfEquivalence.FindDifference(..., allowJpegRequantization: true)` apply the same rule.
 
 The lossy image options (`MaxImageDpi`, `ConvertImagesToJpeg`) change pixels, so their proof
-works on pixels and is a bound, not an identity. Only images the optimizer changed get it. Every
-other dictionary entry must still match; the output must have the same components, no larger a
+works on pixels and is a bound, not an identity. Only images the optimizer changed get it, and
+`PdfEquivalence` grants it only to images the optimizer could have changed: soft masks, masks,
+stencil and color keyed images must match exactly, and so must the size of images with a /Mask
+or a /Matte soft mask. An image whose data is unchanged must keep its size. Every other
+dictionary entry must still match; the output must have the same components, no larger a
 size, the same aspect within a pixel, and decode as its dictionary says (raw samples or one
 JPEG). Both images are decoded and the source is resampled to the output's size with the same
 filter. Then each channel's mean may move by at most 4 steps, 32 pixel thumbnails may differ by

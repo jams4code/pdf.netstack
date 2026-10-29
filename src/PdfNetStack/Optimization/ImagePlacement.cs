@@ -41,6 +41,7 @@ internal sealed class ImagePlacement
     private readonly Dictionary<int, PlacedSize> _sizes = [];
     private readonly HashSet<PdfDictionary> _interpreted = [];
     private readonly HashSet<PdfDictionary> _tainted = [];
+    private readonly HashSet<PdfDictionary> _taintedResources = [];
     private readonly HashSet<(int Number, long A, long B, long C, long D)> _walked = [];
     private readonly HashSet<int> _active = [];
     private long _operations;
@@ -126,7 +127,9 @@ internal sealed class ImagePlacement
             _ => [],
         };
 
-        // Content split across streams is one stream (ISO 32000-1, 7.8.2).
+        // Content split across streams is one stream (ISO 32000-1, 7.8.2). Every part counts
+        // against the byte budget and the joined content against the decode limit before it is
+        // kept, so a page listing many parts, or one part many times, cannot grow past either.
         using var joined = new MemoryStream();
         bool damaged = false;
         foreach (PdfObject part in parts)
@@ -137,6 +140,20 @@ internal sealed class ImagePlacement
             {
                 damaged = true;
                 continue;
+            }
+
+            long size = joined.Length + data.Length + 1;
+            if (_bytes + size > MaxBytes)
+            {
+                _overBudget = true;
+                return;
+            }
+
+            if (size > _decodeLimit)
+            {
+                // Too large to walk in full: treated as damaged from here on.
+                damaged = true;
+                break;
             }
 
             joined.Write(data, 0, data.Length);
@@ -320,11 +337,62 @@ internal sealed class ImagePlacement
     private PdfMatrix FormMatrix(PdfStream form) =>
         Numbers(_file.Resolve(form.Dictionary["Matrix"]) as PdfArray, 6) is { } m ? new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]) : PdfMatrix.Identity;
 
-    /// <summary>Content of these resources was not fully walked, so images they hold are not measured.</summary>
-    private void Taint(PdfDictionary? resources)
+    /// <summary>
+    /// Content using these resources was not fully walked, so images it can draw are not
+    /// measured: those in the resources themselves, and those in every form, tiling pattern, soft
+    /// mask group and Type 3 font they lead to, since the unwalked content may draw those at any
+    /// size. Each dictionary is visited once; past the nesting limit the whole walk is abandoned.
+    /// </summary>
+    private void Taint(PdfDictionary? resources) => Taint(resources, 0);
+
+    private void Taint(PdfDictionary? resources, int depth)
     {
-        if (_file.Resolve(resources?["XObject"]) is PdfDictionary xobjects) _tainted.Add(xobjects);
+        if (resources is null || !_taintedResources.Add(resources)) return;
+        if (depth > PdfParser.MaxNesting)
+        {
+            _overBudget = true;
+            return;
+        }
+
+        if (_file.Resolve(resources["XObject"]) is PdfDictionary xobjects)
+        {
+            _tainted.Add(xobjects);
+            foreach (string key in xobjects.Keys)
+            {
+                if (_file.Resolve(xobjects[key]) is PdfStream { Dictionary: var form } && form.GetName("Subtype") == "Form") TaintNested(form, depth);
+            }
+        }
+
+        if (_file.Resolve(resources["Pattern"]) is PdfDictionary patterns)
+        {
+            foreach (string key in patterns.Keys)
+            {
+                if (_file.Resolve(patterns[key]) is PdfStream pattern) TaintNested(pattern.Dictionary, depth);
+            }
+        }
+
+        if (_file.Resolve(resources["ExtGState"]) is PdfDictionary states)
+        {
+            foreach (string key in states.Keys)
+            {
+                if (_file.Resolve(states[key]) is PdfDictionary state && _file.Resolve(state["SMask"]) is PdfDictionary mask && _file.Resolve(mask["G"]) is PdfStream group)
+                {
+                    TaintNested(group.Dictionary, depth);
+                }
+            }
+        }
+
+        if (_file.Resolve(resources["Font"]) is PdfDictionary fonts)
+        {
+            foreach (string key in fonts.Keys)
+            {
+                if (_file.Resolve(fonts[key]) is PdfDictionary font && font.GetName("Subtype") == "Type3") TaintNested(font, depth);
+            }
+        }
     }
+
+    /// <summary>Taints the resources of a form, pattern, group or Type 3 font; without its own it uses the caller's, already tainted.</summary>
+    private void TaintNested(PdfDictionary owner, int depth) => Taint(_file.Resolve(owner["Resources"]) as PdfDictionary, depth + 1);
 
     private byte[]? Decode(PdfStream stream)
     {

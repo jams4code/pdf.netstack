@@ -83,8 +83,12 @@
     change, requantization included, falls below it stays as it was, and
     `ImagesKeptByQualityGate` counts them. The proof checks resampled and converted images
     against the source resampled to their new size (components, aspect, mean color, a coarse
-    comparison and SSIM), and with a gate also requantized ones.
-    `PdfEquivalence.FindDifference` takes the same gate.
+    comparison and SSIM), and with a gate also requantized ones. An image whose data is carried
+    over unchanged must keep its size. `PdfEquivalence.FindDifference` takes the same gate and
+    the optimizer's exclusions: soft masks, masks, stencil and color keyed images must match
+    exactly, and images with a /Mask or a /Matte soft mask keep their size.
+  - A JPEG with a color key mask is no longer requantized, since the key matches exact sample
+    values.
   - `ProgressiveJpeg` (`--progressive`) also writes every JPEG the optimizer produces as
     progressive, with libjpeg's scan script and Huffman tables per scan, and keeps it when
     smaller. Coefficients are unchanged, so this one is lossless.

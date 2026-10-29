@@ -183,11 +183,16 @@ internal sealed class EquivalenceVerifier
                 List<FilterSpec>? fb = SafeFilters(_b, bStream);
 
                 // A resampled image may change its size and its coding between raw samples and
-                // JPEG; the data comparison proves the rest.
+                // JPEG; the data comparison proves the rest. Images the lossy pass never changes
+                // must match exactly, whatever the allowance says.
                 (ImageGeometry, ImageGeometry)? images = null;
                 if (numberA >= 0 && _allowance.MayResample(numberA) && fa is not null && fb is not null
+                    && LossyImages.MayResample(_a, aStream.Dictionary) && !LossyImages.HasMatteSoftMask(_a, aStream.Dictionary)
                     && LossyImages.Geometry(_a, aStream.Dictionary, fa) is { } ga && LossyImages.Geometry(_b, bStream.Dictionary, fb) is { } gb)
                 {
+                    // A soft mask with /Matte must keep its image's size (ISO 32000-1, 11.6.5.3).
+                    bool resized = ga.Width != gb.Width || ga.Height != gb.Height;
+                    if (resized && LossyImages.HasMatteSoftMask(_b, bStream.Dictionary)) return path + ": image with a /Matte soft mask changed size";
                     images = (ga, gb);
                 }
 
@@ -277,13 +282,20 @@ internal sealed class EquivalenceVerifier
         using DecodedStream? db = TryDecode(b, fb);
         if (da is null || db is null)
         {
-            // Undecodable data must have been carried over untouched, encoding included.
+            // Undecodable data must have been carried over untouched, encoding and size included.
+            if (job.Images is { } g && g.A != g.B) return path + ": image size or coding changed on undecodable data";
             if (!a.Data.Span.SequenceEqual(b.Data.Span)) return path + ": undecodable stream data changed";
             return SameFilterChain(fa, fb) ? null : path + ": filter chain changed on undecodable stream";
         }
 
-        if (job.Images is { } images && !(SameFilterChain(da.Remaining, db.Remaining) && da.Data.Span.SequenceEqual(db.Data.Span)))
+        if (job.Images is { } images)
         {
+            // The dictionary walk let the size differ; only an image carried over whole, same
+            // size, coding and data, or one the lossy proof accepts, may pass.
+            bool unchanged = images.A == images.B && da.PendingPredictor == db.PendingPredictor
+                && SameFilterChain(da.Remaining, db.Remaining) && da.Data.Span.SequenceEqual(db.Data.Span);
+            if (unchanged) return null;
+
             // Each side must decode as its own dictionary says: samples, or one JPEG.
             static bool Coded(DecodedStream d, ImageGeometry g) =>
                 d.PendingPredictor is null && (g.Jpeg ? d.Remaining is [{ Name: "DCTDecode" }] : d.Remaining.Count == 0);

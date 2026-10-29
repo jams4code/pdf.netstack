@@ -71,9 +71,7 @@ internal static class LossyImages
     /// </summary>
     public static ImagePlan? PlanFor(PdfFile file, PdfDictionary d, List<FilterSpec> filters, ImageSettings settings, bool jpegAllowed, PlacedSize? placed)
     {
-        if (d.GetName("Subtype") != "Image") return null;
-        if (file.Resolve(d["ImageMask"]) is PdfBoolean { Value: true }) return null;
-        if (d["Mask"] is not null and not PdfNull) return null;
+        if (d.GetName("Subtype") != "Image" || !MayResample(file, d)) return null;
         if (Int(file, d["BitsPerComponent"]) != 8) return null;
         int width = Int(file, d["Width"]), height = Int(file, d["Height"]);
         if (width <= 0 || height <= 0 || (long)width * height > ImageSamples.MaxPixels) return null;
@@ -93,12 +91,60 @@ internal static class LossyImages
                 ? (int)t.IntegerValue
                 : null;
 
-        // A soft mask with /Matte must keep the size of its image (ISO 32000-1, 11.6.5.3).
-        bool matte = file.Resolve(d["SMask"]) is PdfStream mask && mask.Dictionary["Matte"] is not null;
-        (int, int)? target = settings.MaxDpi is { } dpi && placed is { } size && !matte ? Target(width, height, size, dpi) : null;
+        (int, int)? target = settings.MaxDpi is { } dpi && placed is { } size && !HasMatteSoftMask(file, d) ? Target(width, height, size, dpi) : null;
         bool mayConvert = settings.ConvertToJpeg && !jpeg && components is 1 or 3 && settings.Quality is not null;
         if (target is null && !mayConvert) return null;
         return new ImagePlan(width, height, components, jpeg, colorTransform, target, mayConvert);
+    }
+
+    /// <summary>
+    /// False for images the lossy pass never changes, whatever their format: stencil masks, and
+    /// images with a /Mask, whose stencil or color key must line up with their samples.
+    /// </summary>
+    public static bool MayResample(PdfFile file, PdfDictionary d) =>
+        file.Resolve(d["ImageMask"]) is not PdfBoolean { Value: true } && d["Mask"] is null or PdfNull;
+
+    /// <summary>True when the image's soft mask has /Matte, so both must keep one size (ISO 32000-1, 11.6.5.3).</summary>
+    public static bool HasMatteSoftMask(PdfFile file, PdfDictionary d) =>
+        file.Resolve(d["SMask"]) is PdfStream mask && mask.Dictionary["Matte"] is not null and not PdfNull;
+
+    /// <summary>True when the image has a color key mask, which matches exact sample values.</summary>
+    public static bool HasColorKey(PdfFile file, PdfDictionary d) => file.Resolve(d["Mask"]) is PdfArray;
+
+    /// <summary>
+    /// What a check of another tool's output may accept: requantization only of JPEG images the
+    /// optimizer would requantize, and resampling or conversion only of images the lossy pass may
+    /// change, by the same exclusions. Masks and soft masks (anything another image uses as /Mask
+    /// or /SMask), stencil masks, color keyed images, and for resampling also images with any
+    /// /Mask or a /Matte soft mask, must match exactly.
+    /// </summary>
+    public static ImageAllowance AllowanceFor(PdfFile source, bool requantize, double? minSsim, CancellationToken ct)
+    {
+        if (!requantize && minSsim is null) return ImageAllowance.None;
+        ObjectGraph graph = ObjectGraph.Collect(source, false, false, ct);
+        var images = new List<(int Number, PdfDictionary Dictionary)>();
+        var targets = new HashSet<int>();
+        foreach (int number in graph.Order)
+        {
+            if (source.GetObject(number) is not PdfStream stream || stream.Dictionary.GetName("Subtype") != "Image") continue;
+            images.Add((number, stream.Dictionary));
+            if (stream.Dictionary["SMask"] is PdfReference soft) targets.Add(soft.Number);
+            if (stream.Dictionary["Mask"] is PdfReference hard) targets.Add(hard.Number);
+        }
+
+        var requantizable = new HashSet<int>();
+        var resamplable = new HashSet<int>();
+        foreach ((int number, PdfDictionary d) in images)
+        {
+            if (targets.Contains(number) || source.Resolve(d["ImageMask"]) is PdfBoolean { Value: true } || HasColorKey(source, d)) continue;
+            requantizable.Add(number);
+            if (MayResample(source, d) && !HasMatteSoftMask(source, d)) resamplable.Add(number);
+        }
+
+        return new ImageAllowance(
+            requantize ? requantizable.Contains : static _ => false,
+            minSsim is null ? static _ => false : resamplable.Contains,
+            minSsim);
     }
 
     /// <summary>
