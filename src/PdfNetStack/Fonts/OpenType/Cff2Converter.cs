@@ -29,6 +29,12 @@ internal sealed class Cff2Converter
     /// <summary>Charstring steps per glyph and output bytes per font; inlining cannot run away.</summary>
     private const int MaxStepsPerGlyph = 1 << 20, MaxOutput = 64 << 20;
 
+    /// <summary>
+    /// Work for the whole font: every step, plus the length of every subroutine each time it is
+    /// called, so many glyphs or repeated calls cannot add up past it.
+    /// </summary>
+    private const long MaxStepsPerFont = 1L << 26;
+
     private readonly byte[] _d;
     private readonly float[] _coordinates;
     private readonly ItemVariationStore? _store;
@@ -37,6 +43,8 @@ internal sealed class Cff2Converter
     private Index _localSubrs;
     private int _vsIndex;
     private int _steps;
+    private long _fontSteps;
+    private long _maxFontSteps = MaxStepsPerFont;
     private int _stems;
     private int _output;
     private readonly List<double> _stack = [];
@@ -61,10 +69,11 @@ internal sealed class Cff2Converter
     private List<(int Op, double[] Operands)> Top { get; }
 
     /// <summary>The CFF table for the CFF2 table <paramref name="cff2"/> at <paramref name="coordinates"/>.</summary>
+    /// <param name="maxSteps">The work budget for the whole font; lowered only by tests.</param>
     /// <exception cref="FontFormatException">The CFF2 table is damaged or exceeds what CFF can hold.</exception>
-    public static byte[] ToCff(ReadOnlySpan<byte> cff2, float[] coordinates, string fontName, int glyphCount)
+    public static byte[] ToCff(ReadOnlySpan<byte> cff2, float[] coordinates, string fontName, int glyphCount, long maxSteps = MaxStepsPerFont)
     {
-        var converter = new Cff2Converter(cff2.ToArray(), coordinates);
+        var converter = new Cff2Converter(cff2.ToArray(), coordinates) { _maxFontSteps = maxSteps };
         return converter.Convert(fontName, glyphCount);
     }
 
@@ -179,9 +188,10 @@ internal sealed class Cff2Converter
     private bool Run(byte[] code, int depth)
     {
         if (depth > MaxSubrDepth) throw new FontFormatException("CFF2 subroutines nest too deeply.");
+        if ((_fontSteps += code.Length) > _maxFontSteps) throw new FontFormatException("CFF2 font takes too much work to convert.");
         for (int i = 0; i < code.Length;)
         {
-            if (++_steps > MaxStepsPerGlyph) throw new FontFormatException("CFF2 charstring is too long.");
+            if (++_steps > MaxStepsPerGlyph || ++_fontSteps > _maxFontSteps) throw new FontFormatException("CFF2 charstring is too long.");
             int b0 = code[i];
             if (b0 >= 32 || b0 == 28 || b0 == 255)
             {

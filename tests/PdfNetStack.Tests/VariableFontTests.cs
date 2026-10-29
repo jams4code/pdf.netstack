@@ -243,6 +243,18 @@ public sealed class VariableFontTests
     }
 
     [TestMethod]
+    public void Cff2ConversionHasAFontWideBudget()
+    {
+        // The budget counts steps and subroutine bytes across every glyph, not per glyph.
+        var file = Fonts.OpenType.OpenTypeFile.Parse(File.ReadAllBytes(FixturePath("Test-Variable.otf")), 0);
+        byte[] cff2 = file.Table("CFF2").ToArray();
+        float[] origin = new float[Fonts.OpenType.FontData.U16(file.Table("fvar"), 8)];
+        int glyphs = file.GlyphCount;
+        Assert.IsNotEmpty(Fonts.OpenType.Cff2Converter.ToCff(cff2, origin, "Test", glyphs));
+        Assert.ThrowsExactly<FontFormatException>(() => Fonts.OpenType.Cff2Converter.ToCff(cff2, origin, "Test", glyphs, maxSteps: 64));
+    }
+
+    [TestMethod]
     public void TruncatedVariableFontsFailCleanly()
     {
         foreach (string name in new[] { "Test-Variable.ttf", "Test-Variable.otf" })
