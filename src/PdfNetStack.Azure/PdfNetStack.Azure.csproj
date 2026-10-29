@@ -5,6 +5,8 @@
     <RootNamespace>PdfNetStack.Azure</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>PdfNetStack.Azure</PackageId>
+    <!-- Pack fails on any change that would break code built against the published version. -->
+    <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
     <Title>PdfNetStack.Azure: compress PDF files in Azure Blob Storage</Title>
     <Description>Azure Blob Storage pipeline for PdfNetStack: reads a source blob, writes the optimized PDF to a separate container under a content-addressed name, with a provenance sidecar. Managed identity only, no account keys. By Jamal Abdelkhalek, JADEV.</Description>
     <PackageTags>pdf;pdf-compression;azure;azure-blob-storage;managed-identity;jadev</PackageTags>

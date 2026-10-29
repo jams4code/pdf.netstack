@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- New package `PdfNetStack.Html`: HTML and CSS to PDF in pure C#, without a browser.
+  `HtmlConverter.ConvertToPdf`, `ConvertToDocument` and `ConvertFileToDocument`, configured with
+  `HtmlConverterOptions` (base address, resource loader, fonts, page style, extra style sheet,
+  bookmarks).
+  - HTML parsed the way browsers repair it, with the legacy presentational attributes.
+  - CSS: cascade, inheritance, `var()`, Selectors Level 4, media queries for print, `@import`,
+    `@font-face`, `@page` with margin boxes, `calc()` and friends, CSS Color 4.
+  - Layout: blocks with margin collapsing, inline text with Unicode line breaking, bidi and
+    shaping, floats, relative, absolute and fixed positioning, tables in both border models,
+    flexbox, inline blocks, lists, counters and generated content.
+  - Paged media: page sizes and margins, `:first`, `:left` and `:right`, running headers and
+    footers with page counters, forced and avoided breaks, orphans and widows, table headers
+    repeated on every page.
+  - Painting: backgrounds with images and gradients, rounded borders, shadows, outlines,
+    transforms, `object-fit`, decorations; links and bookmarks; document metadata from the head.
+  - Safe by default for untrusted HTML: no network access without a loader, files only from
+    the base folder, and limits on nesting, selectors, `var()` expansion, spans and tiling.
+  - It depends on the exact `PdfNetStack` version it ships with.
+- The `PdfNetStack` and `PdfNetStack.Azure` packages are checked against 1.0.0 on every pack, so
+  a change that would break code built against the published version fails the build.
 - Public object model: `PdfObject`, `PdfNull`, `PdfBoolean`, `PdfNumber`, `PdfName`,
   `PdfString`, `PdfArray`, `PdfDictionary`, `PdfStream` and `PdfReference` in
   `PdfNetStack.Objects`, with `PdfDocument.Catalog`, `Resolve`, `AddObject` and

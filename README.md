@@ -1,7 +1,7 @@
 # PdfNetStack
 
-Compress, optimize and edit PDF files in .NET. Pure C#, MIT licensed, no native binaries, no
-dependencies on .NET 8 and later.
+Compress, optimize, edit and create PDF files in .NET, and convert HTML and CSS to PDF. Pure C#,
+MIT licensed, no native binaries, no dependencies on .NET 8 and later.
 
 [![CI](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml/badge.svg)](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/PdfNetStack.svg)](https://www.nuget.org/packages/PdfNetStack)
@@ -70,6 +70,7 @@ worth it, the pipeline stages are isolated enough to swap one out.
 dotnet add package PdfNetStack            # library
 dotnet tool install -g PdfNetStack.Tool   # command line: pdfnetstack
 dotnet add package PdfNetStack.Azure      # optional Blob Storage pipeline
+dotnet add package PdfNetStack.Html       # HTML and CSS to PDF
 ```
 
 ## Usage
@@ -302,6 +303,21 @@ New protection is written as AES-256 (revision 6) or AES-128 (revision 4). A doc
 only the user password can be read but not saved, and pages can be copied out of it only when
 its permissions allow copying.
 
+### HTML to PDF
+
+```csharp
+using PdfNetStack.Html;
+
+byte[] pdf = HtmlConverter.ConvertToPdf(html);                              // a string
+PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a file and its assets
+```
+
+A layout engine in C#, no browser: the CSS cascade, block, inline, table and flex layout,
+floats and positioning, paged media with `@page`, running headers and footers, page counters
+and repeated table headers, web fonts, right to left and Arabic text, links and bookmarks.
+Without a resource loader nothing is fetched from the network. Details, options and limits in the
+[package readme](eng/nuget/PdfNetStack.Html.md).
+
 ### Command line
 
 ```bash
@@ -454,7 +470,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
 | Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
 | Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | Done (next release) |
-| HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |
+| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table and flex layout, floats, positioning, paged media, web fonts | Done (next release) |
 
 ### Low level access
 

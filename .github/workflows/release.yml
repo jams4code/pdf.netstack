@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag such as v1.0.0 (or v1.1.0-preview.1) to publish all three packages to NuGet.
+# Push a tag such as v1.0.0 (or v1.1.0-preview.1) to publish every package in the solution to NuGet.
 #
 # Authentication, in order of preference:
 # - Trusted publishing: a policy on nuget.org for this repository, this workflow file and the

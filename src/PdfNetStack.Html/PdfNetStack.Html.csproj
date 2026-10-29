@@ -8,8 +8,6 @@
     <NoWarn>$(NoWarn);CS1573</NoWarn>
     <!-- Polyfills shared from the core through InternalsVisibleTo shadow identical framework types. Harmless. -->
     <NoWarn Condition="'$(TargetFramework)' == 'netstandard2.0'">$(NoWarn);CS1685</NoWarn>
-    <!-- Not published until the engine renders documents; remove when the first version is ready. -->
-    <IsPackable>false</IsPackable>
     <PackageId>PdfNetStack.Html</PackageId>
     <Title>PdfNetStack.Html: HTML and CSS to PDF in pure C#</Title>
     <Description>Convert HTML and CSS to PDF in .NET without a browser: an HTML5 parser, CSS cascade, block, inline, table and flex layout, paged media with headers, footers and page numbers, web fonts, right to left and Arabic text. Pure C#, MIT licensed, built on PdfNetStack. By Jamal Abdelkhalek, JADEV.</Description>
@@ -23,5 +21,16 @@
   <ItemGroup>
     <InternalsVisibleTo Include="PdfNetStack.Tests" />
   </ItemGroup>
+
+  <!--
+    The engine uses internals of the core (shaping, line breaking, bidi), so it must ship with
+    the core it was built against: the package depends on exactly that version, not that
+    version or later.
+  -->
+  <Target Name="PinCoreVersion" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)" ProjectVersion="[%(ProjectVersion)]" />
+    </ItemGroup>
+  </Target>
 
 </Project>
