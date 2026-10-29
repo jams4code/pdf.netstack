@@ -15,10 +15,12 @@ PdfNetStack gives .NET developers a PDF toolkit they can use anywhere without li
   is opt-in and documented as such.
 - **Broad reach.** One code base for .NET Framework 4.6.2 and later, Mono, Unity and modern .NET.
 
-The long term goal is feature parity with the PdfSharp family under MIT. The roadmap is in
+The long term goal is a complete PDF toolkit for .NET under MIT. The roadmap is in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
-Out of scope: rendering PDFs to images, OCR, and wrappers around native or external tools.
+Out of scope: rendering pages to images, browser engines, cloud integrations, and wrappers around
+external tools. The core packages stay pure managed code; native code is allowed only in optional
+add-ons, such as the ONNX Runtime behind OCR.
 
 ## Ways to help
 

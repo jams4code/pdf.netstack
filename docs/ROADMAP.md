@@ -1,175 +1,81 @@
 # Roadmap
 
-Ordered by value per unit of risk. Each item ships behind tests and, where it is not lossless,
-behind an explicit option that is off by default.
+PdfNetStack is a PDF library and nothing else. Work is ordered by value per unit of risk. Every
+item ships with tests, and anything that is not lossless sits behind an option that is off by
+default.
 
-## PdfSharp parity
+## Released
 
-Released in 1.0: document editing (pages, import, merge, split, info, outlines) and encryption
-(revisions 2 to 6 for reading, AES-256 and AES-128 for writing).
+**1.0** (on NuGet): the lossless optimizer with equivalence verification, document editing
+(open, create, merge, split, import, reorder, rotate and remove pages, document info, bookmarks),
+encryption (reads RC4, AES-128 and AES-256; writes AES-128 and AES-256 with permissions), and the
+`pdfnetstack` command line tool.
 
-1. **Public object model.** Done for 1.1: `PdfObject` and its subtypes, `PdfDocument.Catalog`,
-   `Resolve`, `AddObject`, `GetStreamData`, `PdfPage.Dictionary`. Anything the high level API
-   lacks can be done by hand.
-2. **Drawing canvas.** Done for 1.1. `PdfGraphics` on any page, new or existing: paths (lines, Bezier curves,
-   rectangles, rounded rectangles, ellipses, arcs, polygons), fill and stroke with even-odd or
-   nonzero rules, pens (width, caps, joins, dashes), DeviceRGB, DeviceGray and DeviceCMYK colors,
-   constant alpha, transforms and a state stack, clipping, linear and radial gradients. Drawing on
-   an existing page wraps its content so the page's own graphics state cannot leak into ours.
-3. **Fonts and text.** Done for 1.1. The 14 standard fonts with their metrics. TrueType and
-   OpenType (CFF, name-keyed and CID-keyed) from .ttf, .otf, collections and WOFF; subsetting
-   that keeps glyph ids; Type 0 embedding over CIDFontType2 or CIDFontType0 with Identity-H;
-   ToUnicode maps; measurement; pair kerning from GPOS or kern. `PdfFontCollection` for files,
-   directories and system fonts with CSS weight matching. Still to do: WOFF2 (needs Brotli on
-   .NET Standard), CFF2 variable fonts, named instances of variable fonts, optional hinting
-   removal for smaller subsets.
-4. **Text layout and complex scripts.** Done: the Unicode line breaking algorithm (UAX #14) and
-   bidirectional algorithm (UAX #9), both passing the full Unicode 16 conformance suites; an
-   OpenType shaper (GSUB and GPOS, all lookup types, contextual and chained lookups, Arabic
-   joining, marks, cursive attachment) that matches HarfBuzz glyph for glyph on the fonts we
-   compare; ActualText so shaped and right to left text copies back in logical order; paragraph
-   layout (`PdfParagraph`, `PdfTextLayout`) with wrapping, alignment, justification, rich text
-   runs, font fallback, CSS line height, soft hyphens and tabs. Later: Unicode normalization in
-   the shaper (pointed Hebrew in older fonts), Indic and other complex shapers, kashida
-   justification, dictionary hyphenation.
-5. **Images and Form XObjects.** Done for 1.1: JPEG passthrough with EXIF orientation, PNG
-   decoding (all color types and depths, interlacing, alpha into a soft mask), Form XObjects,
-   and pages of any PDF drawn as forms for overlays, watermarks, letterheads and n-up. Still to
-   do: GIF, BMP, TIFF and WebP input, aspect fitting helpers, image opacity.
-6. **Annotations.** Done for 1.1: links to URLs and pages, named destinations when reading,
-   notes, highlight, underline, strikeout, squiggly and free text, all with appearance streams;
-   blend modes on the canvas. Still to do: stamps, ink, shapes, file attachments, flattening.
-7. **AcroForm.** Done for 1.1: field tree, reading and setting values, appearance generation
-   for text, check box, radio and choice fields, flattening. Still to do: creating new fields,
-   importing fields together with their pages, JavaScript formatting actions.
-8. **Remaining document features.** Done for 1.1: viewer preferences, page layout and mode,
-   open action, right to left reading, page labels, language, custom properties, file
-   attachments.
-9. **Signatures and PDF/A.** PDF/A-2b, 2u, 3b and 3u output: done for 1.1 (checks, sRGB output
-   intent, XMP sync, associated files). PAdES B-B signing in an incremental update, RSA and
-   ECDSA, visible appearances, verification of every signature: done for 1.1. Next: veraPDF
-   validation in CI, Factur-X and ZUGFeRD XMP extension schemas, RFC 3161 timestamps (B-T),
-   long term validation data (B-LT, DSS), certificate chain and revocation checks.
+## Next release: 1.1
 
-## HTML and CSS to PDF
+Done and in the main branch:
 
-A layout engine in pure C#, in the spirit of WeasyPrint: no browser, no JavaScript, print
-quality output, built on the canvas, fonts and text layout above.
+| Area | Scope |
+|---|---|
+| Object model | Public `PdfObject` types, `Catalog`, `Resolve`, `AddObject`, `GetStreamData`, page dictionaries |
+| Drawing | Paths, pens, gray, RGB and CMYK colors, opacity, blend modes, gradients, transforms, clipping, on new and existing pages |
+| Fonts | Standard 14 fonts; TrueType, OpenType CFF, collections, WOFF and WOFF2; subsetting, Type 0 embedding, ToUnicode, kerning; font collections with CSS weight matching |
+| Text layout | Unicode line breaking (UAX #14) and bidi (UAX #9) passing the Unicode 16 suites; an OpenType shaper matching HarfBuzz on the fonts we compare; paragraphs with wrapping, alignment, justification, rich text and fallback |
+| Images | JPEG, PNG, GIF and SVG placement; Form XObjects; pages of other PDFs as overlays, letterheads and n-up |
+| Annotations | Links, named destinations (read and rename), notes, text markup, free text, stamps, ink, squares, circles, lines with endings, polygons, polylines and file attachments, with appearance streams; flattening of one annotation, a page or a document |
+| Forms | Creating text, check box, radio, choice, signature and button fields; reading, filling and flattening; fields travel with imported and merged pages; the Acrobat number, percent, date, time and special format actions applied in C# |
+| Document features | Viewer preferences, page labels, language, custom properties, file attachments |
+| Signatures and PDF/A | PAdES B-B signing and verification (RSA and ECDSA); PDF/A-2b, 2u, 3b and 3u output |
+| Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
+| Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
+| HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout, floats, positioning, paged media with margin boxes, named pages, running elements, web fonts, tagged PDF |
 
-1. **Parsing.** An HTML5 tokenizer and tree builder, a CSS Syntax Level 3 parser, selectors
-   Level 4 (minus dynamic pseudo classes), cascade, inheritance and computed values, `var()`.
-   Done: the HTML parser, the CSS tokenizer and rule parser (`@media`, `@page` with margin boxes,
-   `@font-face`, `@import`), selectors with all combinators, attribute operators, the `:nth-*`
-   family with `of S`, `:not`, `:is`, `:where`, `:lang`, `:dir`, pseudo-elements and
-   specificity. The cascade: origins and `!important`, style attributes, presentational
-   hints (`align`, `bgcolor`, `cellpadding` and the rest of the legacy table markup), media
-   queries for print with range syntax, shorthand expansion, `var()` with cycle detection and
-   an output budget, `calc()`, `min()`, `max()`, `clamp()`, inheritance and computed values in
-   CSS px, colors through CSS Color 4 (`oklch()`, `lab()`, `hwb()`). The box tree: display
-   types, `display: contents`, `::before`, `::after` and `::marker` with counters, `counters()`,
-   `attr()` and quotes, HTML list numbering (`start`, `reversed`, `value`), anonymous blocks,
-   inlines split around blocks, table and flex fix-ups, white space collapsing across inline
-   boundaries, images with alt text fallback.
-2. **Block and inline layout.** Done: block flow with margin collapsing (siblings, parent and
-   child, empty blocks), widths and auto margins with min and max, box-sizing, percentage
-   heights against definite containers, relative positioning; inline layout over the whole
-   paragraph with UAX #14 breaks, UAX #9 reordering, shaping, font fallback per character,
-   inline box edges, justification, soft hyphens, `overflow-wrap`, `word-break: break-all`,
-   line heights from the strut and `line-height`, every `vertical-align` value; inline
-   blocks shrink to fit, replaced elements keep their ratio under `max-width`, outside list
-   markers sit on the first baseline. Fonts: `@font-face` (with weight ranges and `local()`),
-   caller fonts, installed fonts, generic families as the standard 14 fonts, and installed
-   fonts with wide coverage as fallbacks. Floats: shrink-to-fit sizing, placement beside and
-   below earlier floats, line boxes shortened or moved down around them, `clear`, formatting
-   contexts that contain their floats and sit beside others. Positioning: `relative` offsets,
-   `absolute` against the nearest positioned ancestor's padding box (insets, auto sizes,
-   static position, centring, `z-index` below or above), `fixed` repeated on every page.
-3. **Paged media.** Done: `@page` with `:first`, `:left`, `:right`, named and custom sizes,
-   orientation and margins; margin boxes with text, `counter(page)` / `counter(pages)` and
-   `string()`; named pages (the `page` property on body children, each run laid out at its
-   page's width); `string-set` with strings, `content(text)` and `attr()`; breaks between
-   lines and blocks, forced with `break-before` / `break-after` (and the `page-break-*`
-   aliases), avoided with `break-inside`, orphans and widows; margins truncated at breaks;
-   table headers repeated per page. Next: running elements, `page` on nested elements.
-4. **Visual CSS.** Done: background colors (with `background-clip` and the root and body
-   background covering the page), solid, dashed, dotted and double borders, text decorations
-   in every style, opacity, `overflow` clipping, `visibility`; border radius with overlap
-   scaling (elliptical corners, mixed side colors, rounded clipping), background layers with
-   images (`background-size`, `-position`, `-repeat`, `-origin`, `-clip`) and linear and
-   radial gradients, box shadows with blur and spread, 2D transforms around
-   `transform-origin`, `object-fit` and `object-position`, outlines, text shadows.
-5. **Flexbox, tables, then grid.** Tables done: the auto width algorithm browsers share (min
-   and max per column, spanning cells, percentages, constrained columns, shrink to fit),
-   `table-layout: fixed`, row and column spans, header groups first and footer groups last,
-   `border-spacing` and `border-collapse` with conflict resolution between cells, rows, groups
-   and the table, vertical alignment in cells, captions, `empty-cells`, inline tables, the
-   legacy `cellpadding`, `cellspacing` and `border` attributes; rows never split, and header
-   rows repeat at the top of every page a table continues on. Flexbox done: rows and
-   columns, the reverse directions and right to left rows, wrapping with `gap`, flex base
-   sizes and the automatic minimum, flexible lengths with min and max freezing, auto margins,
-   `justify-content`, `align-items`, `align-self` (with baselines), `align-content`, `order`,
-   inline flex containers. Grid done: track lists with lengths, percentages, `fr`, `auto`,
-   `min-content`, `max-content`, `minmax()`, `fit-content()` and `repeat()` (counts and
-   `auto-fill`), implicit tracks, placement by lines (negative too), spans and named areas,
-   row-major auto-placement, gaps, `justify-items`, `align-items` and the `-self` forms,
-   inline grids; pages break between rows no item spans. Next: dense packing, column flow,
-   subgrid and named lines.
-6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
-   the base folder load, so untrusted HTML cannot reach the network or other files. Style
-   sheets from `<link>` and `@import`, images in JPEG, PNG and SVG (files, data URIs, inline
-   `<svg>` and CSS backgrounds, drawn as vectors).
-7. **Links and structure.** Done: links to URLs and internal anchors, bookmarks from
-   `bookmark-level` (headings by default), title, author, subject, keywords and language from
-   the head. Tagged PDF later.
+## Next
 
-`PdfNetStack.Chromium` is a separate, optional package for pages that need JavaScript or exact
-browser rendering: it drives headless Chrome and passes the result through the optimizer. The core
-packages never depend on it.
+**Core**
+- Image input in BMP, TIFF and WebP.
+- CFF2 and named instances of variable fonts.
 
-Fonts: no fonts ship in the MIT packages. The engine uses `@font-face`, fonts passed in by the
-caller, and installed system fonts, and falls back to the standard 14 fonts for Latin text.
+**Text**
+- Indic and other complex shapers, Unicode normalization in the shaper, kashida justification,
+  dictionary hyphenation.
 
-## OCR, queued
+**Signatures and PDF/A**
+- veraPDF validation in CI.
+- RFC 3161 timestamps (PAdES B-T), long term validation data (B-LT), certificate chain and
+  revocation checks.
+- Factur-X and ZUGFeRD metadata.
 
-`PdfNetStack.Ocr`, an optional package that makes scanned PDFs searchable: page images are
-recognized and an invisible text layer is written over them, so text can be selected, copied
-and searched. The core stays pure managed and MIT; the OCR engine and its models live only in
-the add-on. The design is in [OCR.md](OCR.md): ONNX Runtime with the PaddleOCR PP-OCRv5 models
-(Latin and Arabic), and the core work it needs first (pixel decoding for JPEG, CCITT and JBIG2
-images, a content stream walker that finds page images, and invisible text).
+**HTML and CSS**
+- The `page` property on nested elements.
+- Grid: dense packing, column flow, subgrid, named lines.
 
-## Optimizer, next
+**OCR**
+- A models package, then `PdfNetStack.Ocr` on NuGet.
+- Pages whose scan is made of several images.
 
-**Lossy image profile, continued.** JPEG requantization shipped in 0.2 (`JpegQuality`), with
-lossless Huffman optimization on by default. Next: a perceptual gate (SSIM on luminance, which
-needs an inverse DCT on top of the existing coefficient decoder) that keeps the original image
-when it fails; effective resolution per placement, then downsampling of oversampled photographs;
-progressive output where it is smaller than optimized baseline; and conversion of raw continuous
-tone images to JPEG, which needs a forward DCT and a classifier that leaves bilevel, indexed,
-line art and screenshot-like images alone.
+**Optimizer**
+- A perceptual quality gate for lossy JPEG, downsampling of oversampled photographs, and raw
+  continuous tone images to JPEG.
+- Pruning of unused fonts, XObjects and graphics states.
+- Content stream compaction and font program deduplication.
+- An opt-in Zopfli style Flate encoder for archival jobs.
 
-**Unused resource pruning.** Drop fonts, XObjects and graphics states listed in a resource
-dictionary but never named by the content that uses it. Needs a content stream tokenizer and
-care with inherited page resources and Form XObjects without their own resources.
-
-**Better Flate.** A Zopfli style encoder typically saves another 3 to 8% on Flate data at a
-large CPU cost. Opt-in, for archival jobs.
-
-## Later
-
-- Linearized output for fast web view.
-- Content stream compaction: whitespace and number normalization inside content streams.
-- Font program deduplication across subsets with identical glyph data.
+**Scale and performance**
+- Faster text extraction and HTML layout.
 - Streaming parse for files larger than memory.
-- Native AOT single file CLI builds for Linux, Windows and macOS on each release.
+- Linearized output for fast web view.
+- Native AOT builds of the command line tool for Linux, Windows and macOS.
 
-## Azure operations
+**Evidence**
+- A public benchmark corpus with redistributable licenses, with size, time, memory and render
+  checks in CI on every release.
 
-- Event Grid to Service Bus to a bounded Container Apps worker, with a dead letter queue.
-- Lifecycle tiering and a cost report from the sidecar files.
-- Load test and runbook.
+## Out of scope
 
-## Evidence
-
-- Publish a public benchmark corpus with licenses that allow redistribution, and run size,
-  time, memory and render checks against it in CI on every release.
+- Rendering pages to images.
+- Running JavaScript or embedding a browser engine.
+- Wrappers around external tools. The core packages stay pure managed code; native code is
+  allowed only in optional add-ons, such as the ONNX Runtime behind OCR.
+- Cloud or hosting integrations. PdfNetStack works on bytes and streams; where they come from is
+  up to the application.

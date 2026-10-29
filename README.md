@@ -22,9 +22,15 @@ Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
 
 ## Purpose
 
-PdfNetStack exists to give every .NET developer a PDF toolkit that is permissively licensed all
-the way down, safe to run on files from strangers, and honest about what it changes. It optimizes,
-edits, merges, splits and protects PDFs, and is growing toward full PdfSharp parity under MIT.
+PdfNetStack gives .NET developers a PDF toolkit that is permissively licensed all the way down,
+safe to run on files from strangers, and honest about what it changes. It optimizes, creates,
+edits, merges, splits and protects PDFs, extracts their text and images, and converts HTML and CSS
+to PDF.
+
+PdfNetStack is a greenfield project. Its code is original and written from the published
+specifications: ISO 32000 for PDF, OpenType, Unicode, and the HTML and CSS standards. See
+[Acknowledgements](#acknowledgements) for the tools that influenced it.
+
 It is created and maintained by Jamal Abdelkhalek at JADEV.
 
 ## Compatibility
@@ -69,7 +75,6 @@ worth it, the pipeline stages are isolated enough to swap one out.
 ```bash
 dotnet add package PdfNetStack            # library
 dotnet tool install -g PdfNetStack.Tool   # command line: pdfnetstack
-dotnet add package PdfNetStack.Azure      # optional Blob Storage pipeline
 dotnet add package PdfNetStack.Html       # HTML and CSS to PDF
 ```
 
@@ -122,10 +127,21 @@ PdfDocument merged = PdfDocument.Merge([PdfDocument.Open("a.pdf"), PdfDocument.O
 foreach (PdfDocument single in merged.Split()) { /* one document per page */ }
 ```
 
+Named destinations, the anchors bookmarks and links point at by name, list, resolve and rename
+in one call; every bookmark, link and GoTo action follows the new name:
+
+```csharp
+foreach (PdfOutline bookmark in doc.Outlines) Console.WriteLine($"{bookmark.Title}: {bookmark.DestinationName}");
+doc.NamedDestinations.Rename(new Dictionary<string, string> { ["_OPENTOPIC_TOC_PROCESSING_d64e6438"] = "GUID-1AAE" });
+```
+
 Inherited page attributes (resources, media box, rotation) are materialized on each page, so
 pages survive reordering and moving between documents. Annotations travel with their page and
 are copied fresh for every import; links to pages imported in the same call are remapped, links
-to pages left behind become empty. Editing a signed document invalidates its signatures.
+to pages left behind become empty. Form fields come along with their widgets and join the target
+form; a top level field whose name is already taken there is renamed `name_2`, `name_3` and so
+on, so merged copies of one form keep their own values. Editing a signed document invalidates
+its signatures.
 
 ### Drawing
 
@@ -154,7 +170,8 @@ Paths with lines, Bezier curves, arcs, ellipses, polygons and rounded rectangles
 corners sized like CSS `border-radius`); pens with caps, joins and dashes; gray, RGB and CMYK
 colors with opacity; linear and radial gradients; transforms, saved states and clipping.
 `CreateGraphics(PdfGraphicsLayer.Background)` draws underneath a page's existing content, for
-letterheads and watermarks. The API follows PdfSharp's `XGraphics` naming.
+letterheads and watermarks. Method names (`DrawLine`, `DrawString`, `MeasureString`) will feel
+familiar to System.Drawing users.
 
 `DrawInvisibleText(text, x, y, width, height)` writes text that is not drawn but selects, copies
 and searches, stretched to fill its box: put the words any OCR engine found over a scanned page
@@ -170,7 +187,7 @@ Any TrueType or OpenType font works too, embedded as a subset of the glyphs you 
 ```csharp
 using PdfNetStack.Fonts;
 
-PdfFont inter = PdfOpenTypeFont.Load("fonts/Inter-Regular.ttf");          // .ttf .otf .ttc .woff
+PdfFont inter = PdfOpenTypeFont.Load("fonts/Inter-Regular.ttf");          // .ttf .otf .ttc .woff .woff2
 PdfFont? title = PdfFontCollection.System.Find("Segoe UI", weight: 600);   // installed fonts
 
 var brand = new PdfFontCollection();
@@ -184,7 +201,7 @@ used, so a page in Inter costs a few KB. `PdfFontCollection` matches family, wei
 the way CSS does. Text can be filled with a gradient, outlined with a pen, or both;
 `MeasureString`, `Ascent`, `Descent` and `GetLineHeight` give the metrics for layout. Fonts are
 parsed defensively: a damaged file raises `FontFormatException`, and a font whose license
-forbids embedding (OS/2 fsType) is refused. Not supported yet: WOFF2, CFF2 variable fonts.
+forbids embedding (OS/2 fsType) is refused. Not supported yet: CFF2 variable fonts.
 
 Paragraphs wrap, align and justify, with rich text and right to left scripts:
 
@@ -233,7 +250,21 @@ page.Annotations.AddLink(72, 720, 120, 14, doc.Pages[3], top: 200);
 page.Annotations.AddTextMarkup(PdfTextMarkup.Highlight, 72, 100, 300, 16, comment: "Check");
 page.Annotations.AddNote(520, 40, "Please review", author: "Finance");
 g.AddLink(0, 0, 100, 20, new Uri("https://example.com"));   // follows the canvas transform
+
+page.Annotations.AddStamp(PdfStampName.Approved, 400, 40, 150, 45);
+page.Annotations.AddInk([[new(100, 300), new(140, 280), new(180, 310)]]);
+page.Annotations.AddSquare(72, 400, 120, 60, new PdfAnnotationOptions { InteriorColor = PdfColor.FromHex("#FEF3C7"), Opacity = 0.8 });
+page.Annotations.AddLine(new(72, 500), new(250, 480), new PdfAnnotationOptions { EndEnding = PdfLineEnding.ClosedArrow });
+page.Annotations.AddFileAttachment(520, 80, "figures.csv", csv, "text/csv");
+doc.FlattenAnnotations();                            // optional: appearances become page content
 ```
+
+Stamps (the fourteen standard ones, or any form or drawing), ink, squares, circles, lines with
+their endings, polygons, polylines and file attachments come with colors, border width and
+dashes, opacity, author and comment. Flattening draws an annotation's appearance where a viewer
+shows it (fitted by its bounding box and matrix, upright when it asks not to rotate) and removes
+it, for one annotation, a page or the document. Hidden annotations stay; links and form widgets
+stay unless `PdfFlattenOptions` asks for them.
 
 Fill and flatten forms:
 
@@ -252,7 +283,26 @@ signature) with fully qualified names, inherited attributes and widget pages. Se
 redraws the field's appearance from its border, background, font and color settings, with
 multiline wrapping, comb cells, password masking and automatic font size, so filled forms look
 the same in every viewer. A font the form embeds whole is reused; others map to the closest
-standard font.
+standard font. Format actions calling the Acrobat functions `AFNumber_Format`,
+`AFPercent_Format`, `AFDate_FormatEx`, `AFDate_Format`, `AFTime_Format`, `AFTime_FormatEx` and
+`AFSpecial_Format` are read and applied in C#, so "1234.5" shows as "$1,234.50" without running
+any JavaScript (`PdfTextField.FormattedText` gives the shown text).
+
+Create forms too, placed from the page's top left as drawing is:
+
+```csharp
+PdfAcroForm form = doc.Form;
+form.AddTextField(page, "name", 72, 100, 200, 20, options: new PdfFieldOptions { Required = true });
+form.AddCheckBox(page, "subscribe", 72, 130, 14, 14);
+form.AddRadioGroup("plan", [(page, 72, 160, 14, 14, "free"), (page, 120, 160, 14, 14, "pro")], "free");
+form.AddComboBox(page, "country", 72, 190, 150, 20, ["Belgium", "France", "Morocco"]);
+form.AddListBox(page, "tags", 72, 220, 150, 60, ["red", "green", "blue"], options: new PdfFieldOptions { MultiSelect = true });
+form.AddSignatureField(page, "signature", 72, 300, 200, 50);
+form.AddPushButton(page, "help", 72, 370, 80, 24, "Help", new Uri("https://example.com/help"));
+```
+
+Each new field gets its appearance, border, background, font (one of the standard fonts, which
+viewers type with), alignment, length limit, comb cells, tooltip, read only and required flags.
 
 Document settings: `doc.Viewer` (layout, panels, opening page, right to left reading),
 `doc.PageLabels` (i, ii, iii then 1, 2, 3), `doc.Attachments` (embedded files, as e-invoices
@@ -327,8 +377,55 @@ foreach (PdfPageImage image in doc.Pages[0].GetImages())
 
 `GetImages` walks the page content: image XObjects, inside forms too, and inline images, each
 with the matrix that places it. `Decode` gives 8 bit gray or RGB pixels for raw samples of 1 to 16
-bits, JPEGs (decoded as libjpeg does) and CCITT fax (Group 3 and 4, bit exact with libtiff), through DeviceGray, RGB and CMYK, Cal and ICC based
+bits, JPEGs (decoded as libjpeg does), JPEG 2000 (JP2 files and raw codestreams; lossless bit
+exact and lossy within one step of OpenJPEG), CCITT fax (Group 3 and 4, bit exact with libtiff)
+and JBIG2, through DeviceGray, RGB and CMYK, Cal and ICC based
 spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied.
+
+### Extracting text
+
+```csharp
+PdfDocument doc = PdfDocument.Open("report.pdf");
+Console.WriteLine(doc.Pages[0].ExtractText());               // lines top to bottom, words spaced
+foreach (PdfWord word in doc.Pages[0].GetWords())
+{
+    Console.WriteLine($"{word.Text} at {word.Bounds}");       // points, from the bottom left
+}
+
+foreach (PdfLetter letter in doc.Pages[0].GetLetters())       // every glyph, in content order
+{
+    Console.WriteLine($"{letter.Text} {letter.FontName} {letter.FontSize:0.#} pt");
+}
+```
+
+Text comes from the font's ToUnicode map, else from its encoding and glyph names (the Adobe Glyph
+List, with the built-in encoding of an embedded Type 1 or CFF program when the font names none),
+else for CJK fonts from Adobe's predefined CMaps and the CID to Unicode tables of the Japan1, GB1,
+CNS1, Korea1 and KR collections, else from an embedded TrueType cmap; spans marked with ActualText
+read as their replacement, so shaped and right to left text reads in logical order. Positions are in default
+user space, before the page's `/Rotate`. Lines follow each run of text's own baseline, so rotated
+text reads in order too, and vertical writing reads its columns from right to left.
+
+### Making scans searchable (OCR)
+
+```csharp
+using PdfNetStack.Ocr;   // src/PdfNetStack.Ocr; models: python tools/fetch_ocr_models.py models
+
+using var engine = OnnxOcrEngine.Load("models", new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
+PdfDocument doc = PdfDocument.Open("scan.pdf");
+PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { Languages = ["latin", "arabic"] }).MakeSearchable(doc);
+doc.Save("scan-searchable.pdf");             // looks the same, now selects, copies and searches
+Console.WriteLine(report.Text);
+```
+
+`PdfNetStack.Ocr` finds the image that is each page's scan, turns it upright from its placement and
+the page's `/Rotate`, reads it with the PP-OCRv5 mobile models (PaddleOCR, Apache-2.0) on ONNX
+Runtime, and lays every word over the scan with `DrawInvisibleText`. Latin and Arabic script
+(Arabic also covers Persian and Urdu), upside down lines turned by a line orientation model, word
+boxes in page space, pages that already have text left alone. Detection boxes, text decoding and
+right to left ordering are managed code: the native runtime only ever sees float tensors, never
+PDF bytes. Model files are checked against pinned SHA-256 hashes when loaded. `IOcrEngine` takes
+any other engine. The add-on is not on NuGet yet.
 
 ### HTML to PDF
 
@@ -341,7 +438,7 @@ PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a
 
 A layout engine in C#, no browser: the CSS cascade, block, inline, table, flex and grid layout,
 floats and positioning, paged media with `@page` and named pages, running headers and footers
-with page counters and named strings, repeated table headers, web fonts, right to left and Arabic text, links and bookmarks.
+with page counters and named strings, repeated table headers, tagged output for accessibility, web fonts, right to left and Arabic text, links and bookmarks.
 Without a resource loader nothing is fetched from the network. Details, options and limits in the
 [package readme](eng/nuget/PdfNetStack.Html.md).
 
@@ -364,19 +461,6 @@ pdfnetstack meta in.pdf out.pdf --title "Annual report" --author "Finance"
 pdfnetstack encrypt in.pdf out.pdf --user-password u --owner-password o --allow print,copy
 pdfnetstack decrypt in.pdf out.pdf --password o
 ```
-
-### Azure Blob Storage
-
-```csharp
-var pipeline = new BlobPdfOptimizer(new Uri("https://account.blob.core.windows.net"));
-BlobOptimizationOutcome outcome = await pipeline.OptimizeAsync("incoming", "docs/manual.pdf", "optimized");
-```
-
-Uses managed identity through `DefaultAzureCredential`, never account keys. The source blob is
-read at a pinned ETag and never modified. Output goes to a different container under
-`pdf/<sha256 prefix>/<sha256>.pdf` with a conditional write, so retries and concurrent workers
-are idempotent. A JSON sidecar records source URI, ETag, both hashes, sizes, disposition, reason,
-engine version and timings.
 
 ## What it does
 
@@ -479,26 +563,27 @@ object streams have little left to gain losslessly.
 | `MaxDecodedStreamBytes` | 256 MiB | Per stream decode ceiling |
 | `MaxDegreeOfParallelism` | CPU count | Lower it to cap memory on image heavy files |
 
-## Toward PdfSharp feature parity, then HTML to PDF
+## Feature status
 
-PdfNetStack is growing into a full MIT alternative to PdfSharp, then an HTML and CSS to PDF
-engine in pure C#, each step with the same test and corpus discipline as the optimizer. Details
+Every feature ships with the same test and corpus discipline as the optimizer. What comes next is
 in the [roadmap](docs/ROADMAP.md).
 
-| Step | Scope | Status |
+| Area | Scope | Status |
 |---|---|---|
-| Editing | Open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | Done (1.0) |
-| Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | Done (1.0) |
-| Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | Done (next release) |
-| Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | Done (next release) |
-| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF embedding with subsetting, kerning, font collections | Done (next release) |
-| Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | Done (next release) |
-| Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Done (next release) |
-| Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
-| Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
-| Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | Done (next release) |
-| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | Done (next release) |
-| Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | Done (next release) |
+| Editing | Open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | 1.0 |
+| Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | 1.0 |
+| Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | 1.1, unreleased |
+| Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1, unreleased |
+| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections | 1.1, unreleased |
+| Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | 1.1, unreleased |
+| Images and overlays | JPEG, PNG, GIF and SVG placement, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
+| Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1, unreleased |
+| Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1, unreleased |
+| Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | 1.1, unreleased |
+| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1, unreleased |
+| Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1, unreleased |
+| Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1, unreleased |
+| OCR | `PdfNetStack.Ocr` add-on: searchable scans, Latin and Arabic | Working, not on NuGet yet |
 
 ### Low level access
 
@@ -519,9 +604,23 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
-- Image extraction decodes raw samples, JPEGs and CCITT fax. JBIG2 and JPEG 2000 images come back
-  encoded (`GetEncodedData`), soft masks are not applied, and Separation and DeviceN colors
-  other than a Type 2 tint transform are approximated as gray.
+- Image extraction decodes raw samples, JPEGs, JPEG 2000, CCITT fax and JBIG2. Soft masks
+  (including JPEG 2000 SMaskInData alpha) are not applied, JPEG 2000 ICC profiles count only for
+  their number of components, HTJ2K (JPEG 2000 part 15) is not supported, and Separation and
+  DeviceN colors other than a Type 2 tint transform are approximated as gray.
+- Text extraction reads columns of prose one after the other (gutters of an em or more between
+  blocks of at least three lines of a dozen characters); narrower or shorter side by side text,
+  such as tables, reads row by row, which is what tables want. Predefined CMaps outside Adobe's
+  five CJK collections (such as the deprecated Hojo ones) give no CIDs, so their fonts use default
+  widths. Text without a Unicode mapping reads as U+FFFD. At most 500,000 letters are read per
+  page.
+- OCR reads pages whose scan is one image covering at least half the page, upright or turned by
+  quarter turns, and decodable; vector art is not rasterized. ONNX
+  Runtime's official builds send telemetry to Microsoft by default: the engine turns it off
+  before loading a model, and on Linux and macOS `ORT_DISABLE_TELEMETRY=1` must also be set
+  before the process starts for the runtime to send nothing at all. On .NET Framework the app must
+  run 64 bit and reference `Microsoft.ML.OnnxRuntime` itself, so its native runtime is copied next
+  to the app.
 - Linearized (fast web view) output is not produced; linearization is dropped.
 - The whole document is held in memory. Peak memory depends on decoded image sizes and on
   parallelism: plan for about 10 times the file size, more for image heavy files, or lower
@@ -534,6 +633,20 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+
+## Acknowledgements
+
+PdfNetStack is original work. Over years of building software, its author has used many PDF and
+document tools, and their strengths shaped the feature set and the API: PdfSharp and MigraDoc,
+PDFTron (now Apryse), iText, QuestPDF, wkhtmltopdf, WeasyPrint, PDFium, pdf.js, Poppler and qpdf.
+HarfBuzz, libjpeg, libtiff and PDFium also serve as reference implementations in the test suite,
+where outputs are compared.
+
+No source code from any of these projects is included. The few third party data tables the
+library does use, such as the Unicode character data and the Adobe Glyph List, are listed with
+their licenses in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Product names are trademarks
+of their respective owners and are mentioned for reference only, without affiliation or
+endorsement.
 
 ## License
 

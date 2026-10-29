@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+- Annotations: `PdfAnnotationCollection.AddStamp` (the fourteen standard stamps, or a custom one
+  from a `PdfForm` or a drawing callback), `AddInk`, `AddSquare`, `AddCircle`, `AddLine` (with
+  `PdfLineEnding` at either end), `AddPolygon`, `AddPolyline` and `AddFileAttachment` (the file
+  embedded behind an icon; `PdfAnnotation.Attachment` reads it back). `PdfAnnotationOptions`
+  sets the color, interior color, border width, dashes, opacity, comment, author and subject.
+  Each comes with a generated appearance; below full opacity the drawing is a transparency group
+  faded as a whole. PDF/A-3 output declares the files of file attachment annotations as
+  associated files, and PDF/A-2 refuses them.
+- Annotation flattening: `PdfAnnotationCollection.Flatten(annotation)`, `Flatten(options)` for a
+  page and `PdfDocument.FlattenAnnotations(options)` draw each annotation's normal appearance (or
+  the one its state selects) into the page content, fitted to its rectangle by bounding box and
+  matrix as ISO 32000-1, 12.5.5 describes, upright on rotated pages for NoRotate annotations and
+  inside its optional content group, then remove it with its pop up. Hidden and NoView
+  annotations stay; links and widgets stay unless `PdfFlattenOptions` asks for them, and a
+  flattened widget leaves the form. `PdfAcroForm.Flatten` uses the same placement.
+- Form fields travel with their pages: `Pages.Import`, `Merge` and `Split` copy each widget's
+  field and ancestors into the target form, with the source form's default appearance,
+  alignment, resources and calculation order. A top level field whose name the target already
+  uses is renamed with the first free suffix `_2`, `_3` and so on. Before, widgets were copied
+  without their fields.
+- Format actions: a field whose format action calls `AFNumber_Format`, `AFPercent_Format`,
+  `AFDate_FormatEx`, `AFDate_Format`, `AFTime_Format`, `AFTime_FormatEx` or `AFSpecial_Format`
+  shows its value formatted in the generated appearance (red for negative numbers when asked),
+  and `PdfTextField.FormattedText` returns it. The call is parsed and the formatting done in C#;
+  no JavaScript runs, and any other script leaves the value as it is.
+- Fixed: form flattening threw on a widget whose appearance entry was not a stream.
+
+- `PdfNetStack.Azure` is discontinued so the project can focus on PDF itself. Reading from and
+  writing to storage belongs to the application, around the stream APIs. Version 1.0.0 stays on
+  NuGet and keeps working.
+- Tagged PDF from HTML (`HtmlConverterOptions.Tagged`, on by default): headings, paragraphs,
+  lists, tables with header and data cells, figures with their alt text, links tied to their
+  annotations, sections and quotes form a structure tree in reading order (ISO 32000-1, 14.8);
+  backgrounds, borders, text shadows, repeated table headers, fixed boxes and page margins are
+  artifacts. The catalog is marked and viewers show the document title.
+- JPEG 2000 images decode (`PdfPageImage.Decode`, JPXDecode): JP2 files and raw codestreams,
+  ITU-T T.800 part 1. Every progression order and progression change, precincts, layers, tiles
+  and tile-parts, PPM, PPT, SOP and EPH, all code-block styles, ROI, the 5/3 and 9/7 wavelets,
+  RCT and ICT, subsampled, signed and 1 to 16 bit components, JP2 palettes and channel
+  definitions. The image dictionary's color space wins, otherwise the JP2 header's (ISO 32000-1,
+  7.4.9). Lossless images decode bit exact and lossy ones within one step of OpenJPEG. Sizes,
+  counts and work are bounded. SMaskInData is not applied; HTJ2K (part 15) and part 2 extensions
+  are not supported.
+- JBIG2 images decode (`PdfPageImage.Decode`, JBIG2Decode with JBIG2Globals): generic,
+  refinement, text and halftone regions with their symbol and pattern dictionaries and code
+  tables, arithmetic, Huffman and MMR coded, per ITU-T T.88. Output is bounded by the image's
+  size, and damaged data is a `PdfFormatException`. Tested bit for bit against PDFium on the T.88
+  Annex H test datastream and synthetic streams.
+- Named destinations: `PdfDocument.NamedDestinations` lists the names of the /Dests name tree
+  and the catalog's /Dests, resolves them to pages, and renames them with every bookmark, link
+  and GoTo action that refers to them, in their own string or name form, rewriting the name tree
+  as one sorted leaf; colliding renames are refused. `PdfOutline.DestinationName` gives the name
+  a bookmark points at.
+- GIF images: `PdfImage.Load` reads GIF 87a and 89a (the first frame, interlaced or not, with its
+  transparent color as a soft mask), so `DrawImage` and `<img>` in HTML take them too.
+- Form creation: `PdfAcroForm.AddTextField`, `AddCheckBox`, `AddRadioGroup` (buttons may span
+  pages), `AddComboBox`, `AddListBox`, `AddSignatureField` and `AddPushButton` (optionally opening a
+  web address), styled with `PdfFieldOptions` (standard font, size, colors, border, tooltip, read
+  only, required, alignment, multiline, password, length limit, comb, editable, multiple
+  selection). Every new field comes with its appearance and the print flag.
+- New project `PdfNetStack.Ocr` (not on NuGet yet): `PdfOcr.MakeSearchable` finds each page's
+  scan, turns it upright, reads it and lays the words over it as invisible text; `Recognize`
+  reports without changing the document. `OnnxOcrEngine` runs the PP-OCRv5 mobile models
+  (PaddleOCR, Apache-2.0) on ONNX Runtime for Latin and Arabic script, with DB box detection, line
+  orientation, CTC decoding, word boxes and right to left ordering in managed code, and model files
+  checked against pinned SHA-256 hashes (`tools/fetch_ocr_models.py`). ONNX Runtime's telemetry is
+  turned off before the first model loads. `IOcrEngine` plugs in any other engine.
+- Text extraction: `PdfPage.ExtractText()` returns a page's text in reading order,
+  `GetLetters()` each glyph with its text, bounds, baseline, font name, visible size and render
+  mode, and `GetWords()` the words with their bounds. Glyphs are placed as the specification
+  positions them (character, word and horizontal scaling, rise, TJ adjustments, forms, Type 3
+  font matrices, vertical writing). Text comes from ToUnicode maps (bfchar and bfrange, ligatures,
+  surrogate pairs, codes of 1 to 4 bytes), from the simple font encodings and /Differences with
+  the Adobe Glyph List, from embedded CMaps with usecmap, the Identity and Unicode predefined
+  CMaps, and embedded TrueType cmaps; spans marked with ActualText are replaced by their text, so
+  right to left text the library writes reads back in logical order. Lines follow each run's own
+  baseline, so rotated and vertical text read in order; columns of prose are found by XY cuts
+  and read one after the other, right to left for Arabic and Hebrew pages, while tables keep
+  reading row by row. CMaps, fonts and content are bounded and
+  never throw.
+- CJK text extraction: Adobe's predefined CMaps for the Adobe-Japan1, GB1, CNS1, Korea1 and KR
+  collections (all 180 of cmap-resources, among them every CJK CMap of ISO 32000-1 Table 118, such
+  as 90ms-RKSJ-H, GBK-EUC-H, B5pc-H, KSCms-UHC-H and the Uni...-UCS2, UTF16, UTF8 and UTF32 forms)
+  split codes and give CIDs, so widths and vertical metrics follow the CMap, and the CID to
+  Unicode tables of mapping-resources-pdf give text to composite fonts without a ToUnicode map,
+  by the CMap's collection or the CIDFont's /CIDSystemInfo (ISO 32000-1, 9.10.2). The data is
+  packed into one Brotli stream per collection (196 KB in all) and decompressed on first use.
+  Embedded CMaps that use a predefined one inherit its collection, and keep their own /WMode.
+- Simple fonts without /Encoding read their codes through the built-in encoding of an embedded
+  CFF program (FontFile3, Type1C or OpenType): the Standard and Expert encodings and custom
+  encodings of both formats with supplements, glyphs named through predefined or custom charsets.
 - `PdfGraphics.DrawInvisibleText`: invisible, searchable text stretched to a box, optionally
   rotated, for OCR text layers. A built in glyphless font (Type0, Identity-H, one empty glyph,
   identity ToUnicode) takes any script; right to left text and characters outside the BMP also
@@ -26,7 +117,10 @@
     lists, counters and generated content.
   - Paged media: page sizes and margins, `:first`, `:left` and `:right`, named pages laid out
     at their own size, running headers and footers with page counters and named strings
-    (`string-set`, `string()`), forced and avoided breaks, orphans and widows, table headers
+    (`string-set`, `string()`), running elements (`position: running()` shown with
+    `content: element()`, any content: logos, tables, styled text, changing with the page where
+    they stand, with page counters inside), margin boxes that widen when
+    their neighbours are empty, forced and avoided breaks, orphans and widows, table headers
     repeated on every page.
   - Painting: backgrounds with images and gradients, rounded borders, shadows, outlines,
     transforms, `object-fit`, decorations; links and bookmarks; document metadata from the head.
@@ -58,15 +152,22 @@
   the minus sign) get codes through /Differences. Symbol and ZapfDingbats take their Unicode
   characters. Control and format characters are skipped; a character the font lacks throws.
 - Embedded fonts: `PdfOpenTypeFont.Load` reads TrueType and OpenType (CFF) fonts from .ttf,
-  .otf, .ttc/.otc collections and WOFF files. Drawn text embeds a subset of the glyphs used as a
-  Type 0 font (CIDFontType2 or CIDFontType0C), with a W array and a ToUnicode map, so text is
-  searchable and copyable in any script. Pair kerning from GPOS (formats 1 and 2, extension
+  .otf, .ttc/.otc collections, WOFF and WOFF2 files. Drawn text embeds a subset of the glyphs
+  used as a Type 0 font (CIDFontType2 or CIDFontType0C), with a W array and a ToUnicode map, so
+  text is searchable and copyable in any script. Pair kerning from GPOS (formats 1 and 2, extension
   lookups) or the kern table. Line metrics follow browsers (typo metrics when the font sets
   USE_TYPO_METRICS, else hhea). Fonts whose fsType forbids embedding are refused; damaged fonts
   raise `FontFormatException`.
 - `PdfFontCollection`: add fonts, files and directories, or use `PdfFontCollection.System` for
   installed fonts; `Find(family, weight, italic)` matches as CSS does. Scanning reads only the
   name, OS/2 and head tables; fonts load on first use.
+- WOFF2 fonts: `PdfOpenTypeFont.Load`, `PdfFontCollection` (.woff2 files) and `@font-face` in
+  `PdfNetStack.Html` read WOFF 2.0, including transformed glyf, loca and hmtx tables and font
+  collections. Table checksums and head.checkSumAdjustment are recomputed. .NET 8 and later
+  decompress with the built-in Brotli decoder; .NET Standard 2.0 uses a managed Brotli decoder
+  (RFC 7932) with the static dictionary embedded. Lengths, offsets and counts are all checked, the
+  decompressed size is capped at 128 MB as for WOFF, and damaged files raise
+  `FontFormatException`.
 - `PdfFont` gains `StrikeoutPosition` and `StrikeoutThickness`.
 - Complex text: `DrawString` and `MeasureString` run the Unicode bidirectional algorithm and an
   OpenType shaper. Arabic and Persian join and take their contextual forms, ligatures form
