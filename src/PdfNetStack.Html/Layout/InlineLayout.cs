@@ -798,6 +798,7 @@ internal sealed class InlineLayout
                     Baseline = baseline + shift,
                     JustifySpace = perSpace,
                     Decorations = Decorations(_span[seg.Start]),
+                    Owner = _span[seg.Start] >= 0 ? _spans[_span[seg.Start]].Box : _containerBox,
                 };
                 content.Add(text);
                 cursor += text.Width;

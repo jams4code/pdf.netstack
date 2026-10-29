@@ -121,6 +121,9 @@ internal sealed class TextFragment(ComputedStyle style, PdfFont font, double siz
 
     public string Text { get; } = text;
 
+    /// <summary>The innermost inline box the text is in, else its block: where it sits in the document.</summary>
+    public Box? Owner { get; init; }
+
     public double Baseline { get; set; }
 
     /// <summary>Extra space added after each word space when the line is justified, in px.</summary>

@@ -73,7 +73,9 @@ public static class HtmlConverter
 
         var fonts = new FontResolver(options.Fonts, options.UseSystemFonts);
         fonts.AddFontFaces(resolver.FontFaces, resources.Load);
-        BlockBox root = new BoxBuilder(resolver, resources.LoadImage).Build(doc);
+        var builder = new BoxBuilder(resolver, resources.LoadImage);
+        BlockBox root = builder.Build(doc);
+        var running = new RunningElements(builder.Running, builder.PageCounters, resolver, fonts, resources.LoadImage);
         var master = new PageMaster(resolver, root.Style, options.PageStyle);
         List<PageRun> runs = LayoutRuns(root, master, fonts);
         int pageCount = runs.Sum(r => r.Slices.Count);
@@ -101,6 +103,8 @@ public static class HtmlConverter
         }
 
         List<StringAssignment> strings = Strings(runs);
+        Tagging? tags = options.Tagged ? new Tagging(pdf, doc.Html.GetAttribute("lang")) : null;
+        running.Place(runs);
         List<BoxFragment> fixedBoxes = [.. runs.SelectMany(r => r.Engine.Fixed)];
         (CssColor canvas, Box? propagated) = Painter.CanvasBackground(runs[0].Layout);
         for (int i = 0; i < pages.Count; i++)
@@ -111,8 +115,10 @@ public static class HtmlConverter
             using PdfGraphics graphics = pages[i].CreateGraphics();
             double pageWidth = g.Width * PointsPerPixel, pageHeight = g.Height * PointsPerPixel;
             CssColor pageColor = g.Style.Color("background-color");
+            if ((pageColor.A > 0 || canvas.A > 0) && tags is not null) graphics.BeginArtifact();
             if (pageColor.A > 0) graphics.DrawRectangle(null, new PdfSolidBrush(Painter.ToPdf(pageColor)), 0, 0, pageWidth, pageHeight);
             if (canvas.A > 0) graphics.DrawRectangle(null, new PdfSolidBrush(Painter.ToPdf(canvas)), 0, 0, pageWidth, pageHeight);
+            if ((pageColor.A > 0 || canvas.A > 0) && tags is not null) graphics.EndMarkedContent();
 
             using (graphics.Save())
             {
@@ -126,7 +132,8 @@ public static class HtmlConverter
                     using (graphics.Save())
                     {
                         graphics.TranslateTransform(0, offset - header.Header.Y);
-                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage).Paint(header.Header);
+                        // A header repeated on a later page is pagination, not content (ISO 32000-1, 14.8.2.2).
+                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage, tags, artifact: true).Paint(header.Header);
                     }
 
                     offset += header.Advance;
@@ -136,7 +143,7 @@ public static class HtmlConverter
 
                 // The page shows its slice; content may overflow sideways into the margins.
                 graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
-                new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage).Paint(layout);
+                new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage, tags).Paint(layout);
             }
 
             // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
@@ -146,15 +153,19 @@ public static class HtmlConverter
                 {
                     graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
                     graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
-                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage).Paint(fixedBox);
+                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage, tags, artifact: true).Paint(fixedBox);
                 }
             }
 
             int page = i;
-            MarginBoxes(graphics, master, run.Engine, i, pages.Count, run.Name, (name, policy) => StringValue(strings, name, policy, page));
+            // Running headers and footers are pagination artifacts, as readers skip them.
+            if (tags is not null) graphics.BeginArtifact();
+            MarginBoxes(graphics, master, run.Engine, i, pages.Count, run.Name, (name, policy) => StringValue(strings, name, policy, page), running);
+            if (tags is not null) graphics.EndMarkedContent();
         }
 
         if (options.Bookmarks) Bookmarks(pdf, runs, pages);
+        tags?.Finish();
         return pdf;
     }
 
@@ -254,6 +265,7 @@ public static class HtmlConverter
                 PageStyle = options.PageStyle,
                 StyleSheet = options.StyleSheet,
                 Bookmarks = options.Bookmarks,
+                Tagged = options.Tagged,
             };
         }
 
@@ -369,15 +381,25 @@ public static class HtmlConverter
     }
 
     /// <summary>Running headers and footers (CSS Paged Media 3, 5): text with page counters, in the page margins.</summary>
-    private static void MarginBoxes(PdfGraphics graphics, PageMaster master, LayoutEngine engine, int index, int count, string? pageName, Func<string, string, string> strings)
+    private static void MarginBoxes(PdfGraphics graphics, PageMaster master, LayoutEngine engine, int index, int count, string? pageName, Func<string, string, string> strings, RunningElements running)
     {
         PageGeometry g = master.Geometry(index, pageName);
-        foreach ((string name, ComputedStyle style, List<CssValue> content) in master.MarginBoxes(index, pageName))
+        List<(string Name, ComputedStyle Style, List<CssValue> Content)> boxes = master.MarginBoxes(index, pageName);
+        var present = new HashSet<string>(boxes.Select(b => b.Name), StringComparer.Ordinal);
+        foreach ((string name, ComputedStyle style, List<CssValue> content) in boxes)
         {
+            (double x, double y, double w, double h)? area = MarginArea(name, g, present);
+            if (area is not (double ax, double ay, double aw, double ah) || aw <= 0 || ah <= 0) continue;
+
+            // content: element(name) shows a running element, laid out at the box's width.
+            if (content.FirstOrDefault(v => v.Function == "element") is CssValue element)
+            {
+                running.Draw(graphics, element, style, index, count, ax, ay, aw, ah);
+                continue;
+            }
+
             string text = MarginText(content, index + 1, count, strings);
             if (text.Length == 0) continue;
-            (double x, double y, double w, double h)? area = MarginArea(name, g);
-            if (area is not (double ax, double ay, double aw, double ah) || aw <= 0 || ah <= 0) continue;
 
             var box = new TextBox(style, text);
             var inline = new InlineLayout(engine, style, null, [box], aw);
@@ -392,6 +414,102 @@ public static class HtmlConverter
                 graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
                 new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, _ => null, null).PaintLines(lines);
             }
+        }
+    }
+
+    /// <summary>
+    /// Running elements (CSS Generated Content for Paged Media 3, 2.3): elements taken out of the
+    /// flow with position: running(name), shown in margin boxes with content: element(name). A
+    /// block-level element shows from the page its anchor falls on; element() picks among those of
+    /// a page as string() does. An inline one, which has no anchor, shows on every page.
+    /// </summary>
+    private sealed class RunningElements(Dictionary<string, Box> unanchored, List<(TextBox Box, string Counter, string Style)> pageCounters, StyleResolver resolver, FontResolver fonts, Func<string, HtmlImage?> images)
+    {
+        private readonly Dictionary<(Box, double, int), BoxFragment> _laidOut = [];
+        private readonly Dictionary<Box, List<(TextBox Box, string Counter, string Style)>> _counters = [];
+        private readonly List<(string Name, int Page, Box Box)> _placed = [];
+
+        /// <summary>Finds every anchor, in document order, and the page it falls on.</summary>
+        public void Place(List<PageRun> runs)
+        {
+            foreach (PageRun run in runs)
+            {
+                foreach (BoxFragment f in Walk(run.Layout).OfType<BoxFragment>())
+                {
+                    if (f.Box is RunningAnchorBox anchor) _placed.Add((anchor.Name, run.FirstPage + PageOf(run.Slices, f.Y), anchor.Running));
+                }
+            }
+        }
+
+        public void Draw(PdfGraphics graphics, CssValue element, ComputedStyle style, int page, int pages, double x, double y, double width, double height)
+        {
+            List<CssValue> args = [.. element.Children.Where(c => c.IsToken && c.Token.Type == CssTokenType.Ident)];
+            if (args.Count == 0) return;
+            string name = args[0].Token.Value, policy = args.Count > 1 ? args[1].Token.Value.ToLowerInvariant() : "first";
+            Box? box = Choose(name, policy, page);
+            if (box is null) return;
+
+            // Page counters inside take this page's numbers, and the layout is then the page's own.
+            List<(TextBox Box, string Counter, string Style)> counters = Counters(box);
+            foreach ((TextBox text, string counter, string counterStyle) in counters) text.Text = CounterStyle.Format(counter == "page" ? page + 1 : pages, counterStyle);
+            (Box, double, int) key = (box, width, counters.Count > 0 ? page : -1);
+            if (!_laidOut.TryGetValue(key, out BoxFragment? fragment))
+            {
+                // An anonymous block in the margin box's style holds the element, whatever its display;
+                // its own engine, since the page's keeps the state of the page's layout.
+                var holder = new BlockBox(resolver.Anonymous(style, "block"), null) { IsAnonymous = true };
+                holder.SetChildren([box]);
+                fragment = new LayoutEngine(fonts).Layout(holder, width);
+                _laidOut[key] = fragment;
+            }
+
+            // Vertically centred in its area, as margin boxes are by default.
+            using (graphics.Save())
+            {
+                graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
+                graphics.TranslateTransform(x, y + ((height - fragment.Height) / 2));
+                new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, _ => null, null, images).Paint(fragment);
+            }
+        }
+
+        /// <summary>The page counters in an element, found once.</summary>
+        private List<(TextBox Box, string Counter, string Style)> Counters(Box box)
+        {
+            if (_counters.TryGetValue(box, out List<(TextBox, string, string)>? found)) return found;
+            var inside = new HashSet<Box>();
+            var stack = new Stack<Box>([box]);
+            while (stack.Count > 0)
+            {
+                Box b = stack.Pop();
+                if (!inside.Add(b)) continue;
+                foreach (Box c in b.Children) stack.Push(c);
+                if (b is BlockBox { Marker: Box marker }) stack.Push(marker);
+            }
+
+            return _counters[box] = [.. pageCounters.Where(c => inside.Contains(c.Box))];
+        }
+
+        /// <summary>The element a page shows, chosen as for string(): first, start, last or first-except.</summary>
+        private Box? Choose(string name, string policy, int page)
+        {
+            Box? before = null, first = null, last = null;
+            bool any = false;
+            foreach ((string n, int p, Box b) in _placed)
+            {
+                if (n != name) continue;
+                any = true;
+                if (p < page) before = b;
+                else if (p == page) (first, last) = (first ?? b, b);
+            }
+
+            if (!any) return unanchored.TryGetValue(name, out Box? only) ? only : null;
+            return policy switch
+            {
+                "start" => before ?? first,
+                "last" => last ?? before,
+                "first-except" => first is null ? before : null,
+                _ => first ?? before,
+            };
         }
     }
 
@@ -511,31 +629,58 @@ public static class HtmlConverter
         };
     }
 
-    /// <summary>The area of a margin box in page px; the three boxes of a side share it evenly.</summary>
-    private static (double X, double Y, double W, double H)? MarginArea(string name, PageGeometry g)
+    /// <summary>
+    /// The area of a margin box in page px. The three boxes along a side share it as CSS Paged
+    /// Media 3, 5.3.2 resolves them for boxes without set widths: a center box alone takes the whole
+    /// side, beside others a third; without a center box, a start or end box alone takes the whole
+    /// side and two take half each.
+    /// </summary>
+    private static (double X, double Y, double W, double H)? MarginArea(string name, PageGeometry g, ICollection<string> present)
     {
         Edges m = g.Margin;
         double cw = g.Width - m.Horizontal, ch = g.Height - m.Vertical;
-        double third = cw / 3, thirdH = ch / 3;
-        return name switch
+        (double Offset, double Length) Slot(string side, string start, string middle, string end, string slot, double span)
         {
-            "top-left-corner" => (0, 0, m.Left, m.Top),
-            "top-left" => (m.Left, 0, third, m.Top),
-            "top-center" => (m.Left + third, 0, third, m.Top),
-            "top-right" => (m.Left + (2 * third), 0, third, m.Top),
-            "top-right-corner" => (g.Width - m.Right, 0, m.Right, m.Top),
-            "bottom-left-corner" => (0, g.Height - m.Bottom, m.Left, m.Bottom),
-            "bottom-left" => (m.Left, g.Height - m.Bottom, third, m.Bottom),
-            "bottom-center" => (m.Left + third, g.Height - m.Bottom, third, m.Bottom),
-            "bottom-right" => (m.Left + (2 * third), g.Height - m.Bottom, third, m.Bottom),
-            "bottom-right-corner" => (g.Width - m.Right, g.Height - m.Bottom, m.Right, m.Bottom),
-            "left-top" => (0, m.Top, m.Left, thirdH),
-            "left-middle" => (0, m.Top + thirdH, m.Left, thirdH),
-            "left-bottom" => (0, m.Top + (2 * thirdH), m.Left, thirdH),
-            "right-top" => (g.Width - m.Right, m.Top, m.Right, thirdH),
-            "right-middle" => (g.Width - m.Right, m.Top + thirdH, m.Right, thirdH),
-            "right-bottom" => (g.Width - m.Right, m.Top + (2 * thirdH), m.Right, thirdH),
-            _ => null,
-        };
+            bool hasStart = present.Contains(side + start), hasMiddle = present.Contains(side + middle), hasEnd = present.Contains(side + end);
+            if (hasMiddle)
+            {
+                if (!hasStart && !hasEnd) return slot == middle ? (0, span) : (0, 0);
+                return slot == start ? (0, span / 3) : slot == middle ? (span / 3, span / 3) : (2 * span / 3, span / 3);
+            }
+
+            if (hasStart && hasEnd) return slot == start ? (0, span / 2) : (span / 2, span / 2);
+            return (0, span);
+        }
+
+        (double Offset, double Length) Across(string side, string slot) => Slot(side, "-left", "-center", "-right", slot, cw);
+        (double Offset, double Length) Down(string side, string slot) => Slot(side, "-top", "-middle", "-bottom", slot, ch);
+        switch (name)
+        {
+            case "top-left-corner": return (0, 0, m.Left, m.Top);
+            case "top-right-corner": return (g.Width - m.Right, 0, m.Right, m.Top);
+            case "bottom-left-corner": return (0, g.Height - m.Bottom, m.Left, m.Bottom);
+            case "bottom-right-corner": return (g.Width - m.Right, g.Height - m.Bottom, m.Right, m.Bottom);
+        }
+
+        int dash = name.IndexOf('-');
+        if (dash < 0) return null;
+        string side = name.Substring(0, dash), slot = name.Substring(dash);
+        switch (side)
+        {
+            case "top" or "bottom":
+            {
+                (double offset, double length) = Across(side, slot);
+                return (m.Left + offset, side == "top" ? 0 : g.Height - m.Bottom, length, side == "top" ? m.Top : m.Bottom);
+            }
+
+            case "left" or "right":
+            {
+                (double offset, double length) = Down(side, slot);
+                return (side == "left" ? 0 : g.Width - m.Right, m.Top + offset, side == "left" ? m.Left : m.Right, length);
+            }
+
+            default:
+                return null;
+        }
     }
 }

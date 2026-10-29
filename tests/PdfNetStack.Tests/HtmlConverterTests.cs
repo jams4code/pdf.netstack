@@ -116,6 +116,84 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void ShowsRunningElementsInTheMargins()
+    {
+        PdfDocument doc = Convert("""
+            <style>
+              @page { margin: 2cm; @top-center { content: element(head) } @bottom-center { content: element(foot) } }
+              header { position: running(head); font-weight: bold }
+              footer { position: running(foot) }
+            </style>
+            <header>Running <i>Head</i></header>
+            <footer><table><tr><td>Left cell</td><td>Right cell</td></tr></table></footer>
+            <p>first</p><p style="break-before: page">second</p>
+            """);
+        Assert.HasCount(2, doc.Pages);
+        for (int page = 0; page < 2; page++)
+        {
+            string text = Text(doc, page);
+            Assert.HasCount(1, Regex.Matches(text, "Running"), $"page {page + 1}");
+            StringAssert.Contains(text, "Head");
+            StringAssert.Contains(text, "Left cell");
+        }
+
+        // Taken out of the flow: the first paragraph is the body's first content.
+        StringAssert.StartsWith(Text(doc, 0), "first");
+    }
+
+    [TestMethod]
+    public void ChangesRunningElementsWithThePage()
+    {
+        PdfDocument doc = Convert("""
+            <style>
+              @page { @top-center { content: element(chapter) } @bottom-center { content: element(chapter, first-except) } }
+              .chapter { position: running(chapter) }
+            </style>
+            <div class=chapter>Chapter One</div><p>a</p>
+            <p style="break-before: page">b</p>
+            <p style="break-before: page">c</p><div class=chapter>Chapter Two</div>
+            """);
+        Assert.HasCount(3, doc.Pages);
+
+        // Page two carries the first chapter over; page three sets the second.
+        Assert.HasCount(1, Regex.Matches(Text(doc, 0), "Chapter One"));
+        Assert.DoesNotContain("Chapter Two", Text(doc, 0));
+        Assert.HasCount(2, Regex.Matches(Text(doc, 1), "Chapter One"), "first, and first-except on a page that sets none");
+        Assert.HasCount(1, Regex.Matches(Text(doc, 2), "Chapter Two"));
+        Assert.DoesNotContain("Chapter One", Text(doc, 2));
+    }
+
+    [TestMethod]
+    public void NumbersPagesInsideRunningElements()
+    {
+        PdfDocument doc = Convert("""
+            <style>
+              @page { @bottom-center { content: element(foot) } }
+              footer { position: running(foot) }
+              footer .n::after { content: "Page " counter(page) " of " counter(pages, upper-roman) }
+            </style>
+            <footer><b>JADEV</b> <span class=n></span></footer>
+            <p>a</p><p style="break-before: page">b</p><p style="break-before: page">c</p>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        for (int page = 0; page < 3; page++) StringAssert.Contains(Text(doc, page), $"Page {page + 1} of III");
+    }
+
+    [TestMethod]
+    public void SizesMarginBoxesByTheirNeighbours()
+    {
+        // 70 characters at 16px are about 500px: three lines in a third of the side, one line alone.
+        string heading = string.Concat(Enumerable.Repeat("Heading ", 9));
+        int Lines(string rules) =>
+            Regex.Matches(Content(Convert($"<style>@page {{ margin: 2cm; {rules} }} body {{ margin: 0 }}</style><p></p>"), 0), @"\bBT\b").Cast<Match>().Count();
+        Assert.AreEqual(1, Lines($"@top-left {{ content: \"{heading}\" }}"), "alone, it takes the whole side");
+        Assert.AreEqual(1, Lines($"@top-center {{ content: \"{heading}\" }}"), "a center box alone too");
+
+        // Beside a center box (one line of its own), the left box wraps in its third.
+        Assert.IsGreaterThan(3, Lines($"@top-left {{ content: \"{heading}\" }} @top-center {{ content: \"x\" }}"));
+    }
+
+    [TestMethod]
     public void LaysOutNamedPagesAtTheirOwnSize()
     {
         // 25 words of Helvetica 16px are about 980px: two lines on A4 portrait (794px), one on landscape (1123px).

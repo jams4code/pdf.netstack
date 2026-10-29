@@ -172,3 +172,14 @@ internal sealed class TableWrapperBox(TableBox table) : Box(table.Style, table.E
 
     public override bool IsBlockLevel => Table.IsBlockLevel;
 }
+
+/// <summary>
+/// Where a block-level running element stood in the flow: an empty block, no height, so the page
+/// it falls on says from which page the element shows (CSS Generated Content for Paged Media 3, 2.3).
+/// </summary>
+internal sealed class RunningAnchorBox(ComputedStyle style, string name, Box running) : BlockBox(style, null)
+{
+    public string Name { get; } = name;
+
+    public Box Running { get; } = running;
+}

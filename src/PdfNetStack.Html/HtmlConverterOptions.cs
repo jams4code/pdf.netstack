@@ -41,4 +41,12 @@ public sealed class HtmlConverterOptions
 
     /// <summary>Headings become bookmarks (the bookmark-level property). Default true.</summary>
     public bool Bookmarks { get; init; } = true;
+
+    /// <summary>
+    /// Writes a tagged PDF (ISO 32000-1, 14.8): headings, paragraphs, lists, tables, figures with
+    /// their alt text and links in a structure tree, in reading order, with backgrounds, borders,
+    /// repeated headers and page margins marked as artifacts, so screen readers and reflow work.
+    /// Default true.
+    /// </summary>
+    public bool Tagged { get; init; } = true;
 }

@@ -27,6 +27,21 @@ internal sealed class BoxBuilder
         _loadImage = loadImage;
     }
 
+    /// <summary>Text of counter(page) and counter(pages) in generated content, with the counter and its style.</summary>
+    public List<(TextBox Box, string Counter, string Style)> PageCounters { get; } = [];
+
+    /// <summary>Running elements by name: the first element that declares each name, for those without an anchor.</summary>
+    public Dictionary<string, Box> Running { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The name in position: running(name), or null.</summary>
+    private static string? RunningName(ComputedStyle style)
+    {
+        List<CssValue> position = style["position"];
+        if (position.Count != 1 || position[0].Function != "running") return null;
+        CssValue? name = position[0].Children.FirstOrDefault(c => c.IsToken && c.Token.Type == CssTokenType.Ident);
+        return name?.Token.Value;
+    }
+
     /// <summary>Builds the tree for a document; the root box belongs to the html element.</summary>
     public BlockBox Build(HtmlDocument document)
     {
@@ -86,6 +101,16 @@ internal sealed class BoxBuilder
             {
                 if (style.Keyword("list-style-position") == "inside") list.Insert(0, marker);
                 else list.Marker = marker;
+            }
+
+            // position: running(name) takes the element out of the flow, for margin boxes to show
+            // with content: element(name) (CSS Generated Content for Paged Media 3, 2.3).
+            if (RunningName(style) is string name)
+            {
+                if (!Running.ContainsKey(name)) Running[name] = box;
+
+                // A block keeps an empty anchor where it stood, to place it on its page.
+                return box.IsBlockLevel ? [new RunningAnchorBox(_resolver.Anonymous(parentStyle ?? style, "block"), name, box) { IsAnonymous = true }] : [];
             }
 
             return [box];
@@ -345,7 +370,15 @@ internal sealed class BoxBuilder
                 List<CssValue> args = v.Children.Where(c => !c.IsWhitespace && !(c.IsToken && c.Token.Type == CssTokenType.Comma)).ToList();
                 if (args.Count == 0 || !args[0].IsToken) continue;
                 string name = args[0].Token.Value;
-                if (v.Function == "counter")
+                if (v.Function == "counter" && name is "page" or "pages")
+                {
+                    // Known only per page: a box of its own, its text set when a page shows it.
+                    FlushText();
+                    var counter = new TextBox(style, "0");
+                    boxes.Add(counter);
+                    PageCounters.Add((counter, name, args.Count > 1 && args[1].IsToken ? args[1].Token.Value : "decimal"));
+                }
+                else if (v.Function == "counter")
                 {
                     string counterStyle = args.Count > 1 && args[1].IsToken ? args[1].Token.Value : "decimal";
                     text.Append(CounterStyle.Format(_counters.Value(name), counterStyle));

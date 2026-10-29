@@ -17,6 +17,8 @@ internal sealed partial class Painter
     private readonly Func<string, (PdfPage Page, double Top)?> _anchor;
     private readonly Box? _skipBackground;
     private readonly Func<string, HtmlImage?>? _images;
+    private readonly Tagging? _tags;
+    private readonly bool _artifact;
 
     /// <param name="graphics">The canvas, already scaled to px with the slice at the top of the page area.</param>
     /// <param name="top">The slice of the canvas this page shows.</param>
@@ -24,9 +26,13 @@ internal sealed partial class Painter
     /// <param name="anchor">Finds the page and position of an element id, for internal links.</param>
     /// <param name="skipBackground">The box whose background was propagated to the page and is not painted again.</param>
     /// <param name="images">Loads background images by URL; null to draw none.</param>
-    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, HtmlImage?>? images = null)
+    /// <param name="tags">The structure tree content is tagged into, or null for an untagged document.</param>
+    /// <param name="artifact">Everything drawn is an artifact: repeated headers, fixed boxes, page margins.</param>
+    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, HtmlImage?>? images = null, Tagging? tags = null, bool artifact = false)
     {
         _images = images;
+        _tags = tags;
+        _artifact = artifact;
         _g = graphics;
         _top = top;
         _bottom = bottom;
@@ -61,15 +67,23 @@ internal sealed partial class Painter
         if (transformed) Transform(f);
         if (visible && Visible(f))
         {
-            if (decorated)
+            if (decorated && Decorates(f.Style, f.Border))
             {
+                BeginArtifact();
                 Shadows(f.Style, f.X, f.Y, f.Width, f.Height, radii, opacity);
                 if (!ReferenceEquals(f.Box, _skipBackground)) Background(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, f.Padding, opacity, radii);
                 Borders(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, true, true, opacity, f.CollapsedBorders, radii);
+                Outline(f.Style, f.X, f.Y, f.Width, f.Height, opacity);
+                End();
             }
 
-            if (f.Box is ReplacedBox image) Image(f, image, radii);
-            if (decorated) Outline(f.Style, f.X, f.Y, f.Width, f.Height, opacity);
+            if (f.Box is ReplacedBox image)
+            {
+                BeginContent(Owner(f.Box));
+                Image(f, image, radii);
+                End();
+            }
+
             Link(f.Box.Element, f.X, f.Y, f.Width, f.Height);
         }
 
@@ -79,7 +93,7 @@ internal sealed partial class Painter
             _g.IntersectClip(Shape(f.X + f.Border.Left, f.Y + f.Border.Top, f.Width - f.Border.Horizontal, f.Height - f.Border.Vertical, Inset(radii, f.Border)));
         }
 
-        if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity);
+        if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity, f.Box.Element);
         foreach (Fragment child in f.Children)
         {
             if (child is BoxFragment b) Paint(b, opacity);
@@ -93,7 +107,47 @@ internal sealed partial class Painter
         foreach (LineFragment line in lines) PaintLine(line, 1);
     }
 
-    private void PaintLine(LineFragment line, double opacity)
+    /// <summary>Whether a box draws anything of its own: background, borders, shadow or outline.</summary>
+    private static bool Decorates(ComputedStyle s, Edges border) =>
+        s.Color("background-color").A > 0 || s.Keyword("background-image") != "none" || border.Top + border.Right + border.Bottom + border.Left > 0
+        || s.Keyword("box-shadow") != "none" || s.Keyword("outline-style") is not ("none" or "");
+
+    /// <summary>The element content belongs to: the box's own, else its nearest ancestor's.</summary>
+    private static Dom.HtmlElement? Owner(Box? box)
+    {
+        for (Box? b = box; b is not null; b = b.Parent)
+        {
+            if (b.Element is not null) return b.Element;
+        }
+
+        return null;
+    }
+
+    /// <summary>Opens the marked content of a structure element, or an artifact in an artifact painter.</summary>
+    private void BeginContent(Dom.HtmlElement? owner)
+    {
+        if (_tags is null || _g.Page is not PdfPage page) return;
+        if (_artifact)
+        {
+            _g.BeginArtifact();
+            return;
+        }
+
+        int mcid = _tags.Content(page, owner);
+        _g.BeginMarkedContent(_tags.TagOf(owner), mcid);
+    }
+
+    private void BeginArtifact()
+    {
+        if (_tags is not null && _g.Page is not null) _g.BeginArtifact();
+    }
+
+    private void End()
+    {
+        if (_tags is not null && _g.Page is not null) _g.EndMarkedContent();
+    }
+
+    private void PaintLine(LineFragment line, double opacity, Dom.HtmlElement? fallbackOwner = null)
     {
         foreach (Fragment item in line.Items)
         {
@@ -101,12 +155,18 @@ internal sealed partial class Painter
             {
                 case InlineFragment inline when inline.Box.Style.Keyword("visibility") == "visible":
                     double o = opacity * Opacity(inline.Box.Style);
-                    Background(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.Padding, o, default);
-                    Borders(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.StartEdge, inline.EndEdge, o);
+                    if (Decorates(inline.Box.Style, inline.Border))
+                    {
+                        BeginArtifact();
+                        Background(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.Padding, o, default);
+                        Borders(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.StartEdge, inline.EndEdge, o);
+                        End();
+                    }
+
                     Link(inline.Box.Element, inline.X, inline.Y, inline.Width, inline.Height);
                     break;
                 case TextFragment text when text.Style.Keyword("visibility") == "visible":
-                    Text(text, opacity);
+                    Text(text, opacity, Owner(text.Owner) ?? fallbackOwner);
                     break;
                 case BoxFragment atomic:
                     Paint(atomic, opacity);
@@ -186,7 +246,7 @@ internal sealed partial class Painter
         }
     }
 
-    private void Text(TextFragment t, double opacity)
+    private void Text(TextFragment t, double opacity, Dom.HtmlElement? owner)
     {
         if (!Visible(t) || t.Glyphs.Count == 0) return;
         CssColor color = t.Style.Color();
@@ -199,12 +259,23 @@ internal sealed partial class Painter
                 glyphs = glyphs.Select(g => t.Text.Length > 0 && g.CodePoint is ' ' or 0xA0 ? g with { Advance = g.Advance + extra } : g).ToList();
             }
 
-            TextShadows(t, glyphs, opacity);
+            // A shadow repeats the text: an artifact, so the text reads once.
+            if (t.Style.Keyword("text-shadow") != "none")
+            {
+                BeginArtifact();
+                TextShadows(t, glyphs, opacity);
+                End();
+            }
 
+            BeginContent(owner);
             _g.DrawGlyphs(glyphs, t.Font, t.Size, null, new PdfSolidBrush(ToPdf(color, opacity)), t.X, t.Baseline, t.Text);
+            End();
         }
 
+        if (t.Decorations.Count == 0) return;
+        BeginArtifact();
         foreach (ComputedStyle d in t.Decorations) Decorate(t, d, opacity);
+        End();
     }
 
     /// <summary>Underline, overline and line-through (CSS Text Decoration 3), in the decorating box's color.</summary>
@@ -245,11 +316,16 @@ internal sealed partial class Painter
         href = href.Trim();
         if (href.Length > 0 && href[0] == '#')
         {
-            if (_anchor(Uri.UnescapeDataString(href.Remove(0, 1))) is (PdfPage page, double top)) _g.AddLink(x, y, w, h, page, top);
+            if (_anchor(Uri.UnescapeDataString(href.Remove(0, 1))) is (PdfPage page, double top)) Tag(_g.AddLink(x, y, w, h, page, top), element);
         }
         else if (Uri.TryCreate(href, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https" or "mailto" or "tel" or "ftp")
         {
-            _g.AddLink(x, y, w, h, uri);
+            Tag(_g.AddLink(x, y, w, h, uri), element);
         }
+    }
+
+    private void Tag(PdfAnnotation annotation, Dom.HtmlElement link)
+    {
+        if (_tags is not null && !_artifact && _g.Page is PdfPage page) _tags.Annotation(annotation, page, link);
     }
 }

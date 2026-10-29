@@ -76,10 +76,29 @@ h1 { string-set: chapter content(text) }
 
 `string()` takes `first` (the default), `start`, `last` or `first-except`.
 
+Running elements put any content in the margins, a logo and a table as much as text:
+
+```css
+header { position: running(header) }
+@page { @top-center { content: element(header) } }
+```
+
+Each page shows the element that stands on it, else the last one before, so chapter headers follow
+the chapters; `element()` takes `first`, `start`, `last` or `first-except` as `string()` does, and
+`counter(page)` and `counter(pages)` in a running element's generated content show the page's
+numbers. A
+margin box alone on its side takes the whole side, beside others its share, so a running header
+spans the page.
+
 Table header rows repeat at the top of every page a table continues on. `position: fixed`
 boxes repeat on every page, for letterheads and watermarks.
 
 ## What it supports
+
+- **Accessibility.** Output is a tagged PDF: headings, paragraphs, lists, tables, figures with
+  their `alt` text and links form a structure tree in reading order, and decoration, repeated
+  table headers and page margins are marked as artifacts, so screen readers read the document and
+  skip the furniture. `Tagged = false` turns it off.
 
 - **HTML.** A tolerant parser that repairs markup as browsers do: implied elements, misnested
   tags, tables, character references. The legacy attributes old templates rely on (`align`,
@@ -124,8 +143,8 @@ finite document rather than a hang or a crash.
 
 ## Fonts
 
-No fonts ship in the package. The engine uses `@font-face` (TrueType, OpenType, WOFF), fonts
-you pass in `Fonts`, and installed fonts. The generic families map to the standard PDF fonts,
+No fonts ship in the package. The engine uses `@font-face` (TrueType, OpenType, WOFF and
+WOFF2), fonts you pass in `Fonts`, and installed fonts. The generic families map to the standard PDF fonts,
 so a document that asks only for `serif`, `sans-serif` or `monospace` needs no embedded font.
 Installed fonts with wide coverage stand in for characters the chosen fonts lack.
 
@@ -134,14 +153,12 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
 - No JavaScript: pages must be rendered HTML, not built in the browser.
 - No multi-column layout or vertical writing modes yet. Grid has no dense packing, column
   flow, subgrid or named lines.
-- Images: JPEG, PNG and SVG (drawn as vectors, without filters, masks or patterns). GIF and WebP
-  do not load yet.
-- The `page` property is read on the children of `body`, where sections usually sit. Running
-  elements (`position: running()`) are not supported; margin boxes take text, page counters and
-  named strings.
+- Images: JPEG, PNG, GIF (the first frame) and SVG (drawn as vectors, without filters, masks or
+  patterns). WebP does not load yet.
+- The `page` property is read on the children of `body`, where sections usually sit. An inline
+  running element shows on every page rather than from where it stands.
 - Box shadow blur is approximated, `text-shadow` blur is not drawn, and group opacity is applied
   per element.
-- WOFF2 fonts are not read.
 
 ## Links
 
