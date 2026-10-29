@@ -13,6 +13,9 @@ internal sealed class CssProperty
 
     public string Name { get; }
 
+    /// <summary>The property's index in <see cref="CssProperties.ById"/> and in computed styles.</summary>
+    public int Id { get; internal set; }
+
     public bool Inherited { get; }
 
     public List<CssValue> Initial { get; }
@@ -168,6 +171,16 @@ internal static class CssProperties
     };
 
     public static readonly Dictionary<string, CssProperty> All = Build();
+
+    /// <summary>The properties by id, so computed styles are arrays rather than dictionaries.</summary>
+    public static readonly CssProperty[] ById = Number(All);
+
+    private static CssProperty[] Number(Dictionary<string, CssProperty> all)
+    {
+        CssProperty[] byId = [.. all.Values];
+        for (int i = 0; i < byId.Length; i++) byId[i].Id = i;
+        return byId;
+    }
 
     public static bool IsCustom(string name) => name.StartsWith("--", StringComparison.Ordinal);
 

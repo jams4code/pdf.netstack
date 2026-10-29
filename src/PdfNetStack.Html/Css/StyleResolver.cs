@@ -9,6 +9,31 @@ internal enum CssOrigin
     Author,
 }
 
+/// <summary>A value for every property, indexed by property id or name.</summary>
+internal sealed class PropertyValues : IEnumerable<KeyValuePair<string, List<CssValue>>>
+{
+    private readonly List<CssValue>[] _values = new List<CssValue>[CssProperties.ById.Length];
+
+    public List<CssValue> this[int id]
+    {
+        get => _values[id];
+        set => _values[id] = value;
+    }
+
+    public List<CssValue> this[string property]
+    {
+        get => _values[CssProperties.All[property].Id];
+        set => _values[CssProperties.All[property].Id] = value;
+    }
+
+    public IEnumerator<KeyValuePair<string, List<CssValue>>> GetEnumerator()
+    {
+        for (int i = 0; i < _values.Length; i++) yield return new(CssProperties.ById[i].Name, _values[i]);
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 /// <summary>
 /// The computed style of an element or pseudo-element: every property has a value, lengths are in
 /// CSS px, font-size and font-weight are numbers. Percentages, auto and math with percentages are
@@ -29,7 +54,7 @@ internal sealed class ComputedStyle
 
     public string? PseudoElement { get; }
 
-    internal Dictionary<string, List<CssValue>> Values { get; } = new(StringComparer.Ordinal);
+    internal PropertyValues Values { get; } = new();
 
     /// <summary>Custom properties, shared with the parent until this element sets its own.</summary>
     internal Dictionary<string, List<CssValue>> Custom { get; set; }
@@ -103,6 +128,7 @@ internal sealed class StyleResolver
     private const int MaxVarOutput = 50_000;
 
     private readonly CssMedia _media;
+    private readonly List<CssValue>[] _initial;
     private readonly List<Entry> _universal = [];
     private readonly Dictionary<string, List<Entry>> _byId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<Entry>> _byClass = new(StringComparer.Ordinal);
@@ -114,6 +140,10 @@ internal sealed class StyleResolver
     public StyleResolver(CssMedia media)
     {
         _media = media;
+
+        // Initial values hold no relative units, so they compute once per resolver.
+        var probe = new ComputedStyle(null, null);
+        _initial = [.. CssProperties.ById.Select(p => ComputeValue(probe, null, p.Name, p.Initial))];
         AddStyleSheet(UserAgent.StyleSheet, CssOrigin.UserAgent);
     }
 
@@ -203,6 +233,31 @@ internal sealed class StyleResolver
         foreach (Entry x in _universal) yield return x;
     }
 
+    private readonly Dictionary<string, List<CssDeclaration>> _inline = new(StringComparer.Ordinal);
+
+    /// <summary>A style attribute's declarations, parsed once per distinct text: generated documents repeat the same few.</summary>
+    private List<CssDeclaration> InlineDeclarations(string text)
+    {
+        if (!_inline.TryGetValue(text, out List<CssDeclaration>? declarations))
+        {
+            declarations = CssParser.ParseDeclarations(text).SelectMany(d => CssProperties.Expand(d) ?? []).ToList();
+            if (_inline.Count < 10_000) _inline[text] = declarations;
+        }
+
+        return declarations;
+    }
+
+    /// <summary>Whether a rule targets this pseudo-element of the element: without one it generates nothing, and its style need not be computed.</summary>
+    public bool HasRulesFor(HtmlElement element, string pseudoElement)
+    {
+        foreach (Entry entry in Candidates(element))
+        {
+            if (entry.Selector.PseudoElement == pseudoElement && entry.Selector.Matches(element)) return true;
+        }
+
+        return false;
+    }
+
     /// <summary>Computes the style of an element, or of one of its pseudo-elements such as before.</summary>
     public ComputedStyle Compute(HtmlElement element, ComputedStyle? parent, string? pseudoElement = null)
     {
@@ -230,23 +285,15 @@ internal sealed class StyleResolver
             foreach (CssDeclaration d in PresentationalHints(element)) Consider(d, 1, default, 0);
             if (element.GetAttribute("style") is string inline)
             {
-                foreach (CssDeclaration d in CssParser.ParseDeclarations(inline).SelectMany(d => CssProperties.Expand(d) ?? []))
-                {
-                    Consider(d, d.Important ? 4 : 2, default, 0);
-                }
+                foreach (CssDeclaration d in InlineDeclarations(inline)) Consider(d, d.Important ? 4 : 2, default, 0);
             }
         }
 
         var style = new ComputedStyle(parent, pseudoElement);
         ResolveCustomProperties(style, parent, winners);
 
-        // font-size first: em units in every other property depend on it.
-        Compute(style, parent, winners, "font-size");
+        Fill(style, parent, winners);
         if (parent is null && pseudoElement is null) _rootFontSize = style.FontSize;
-        foreach (string property in CssProperties.All.Keys)
-        {
-            if (property != "font-size") Compute(style, parent, winners, property);
-        }
 
         Blockify(style, element, parent);
         return style;
@@ -268,11 +315,7 @@ internal sealed class StyleResolver
 
         var style = new ComputedStyle(parent, null);
         ResolveCustomProperties(style, parent, winners);
-        Compute(style, parent, winners, "font-size");
-        foreach (string property in CssProperties.All.Keys)
-        {
-            if (property != "font-size") Compute(style, parent, winners, property);
-        }
+        Fill(style, parent, winners);
 
         return style;
     }
@@ -285,15 +328,29 @@ internal sealed class StyleResolver
         if (_anonymous.TryGetValue((parent, display), out ComputedStyle? cached)) return cached;
         var style = new ComputedStyle(parent, null);
         var none = new Dictionary<string, (CssDeclaration Declaration, long Rank)>(StringComparer.Ordinal);
-        Compute(style, parent, none, "font-size");
-        foreach (string property in CssProperties.All.Keys)
-        {
-            if (property != "font-size") Compute(style, parent, none, property);
-        }
+        Fill(style, parent, none);
 
         style.Values["display"] = [new CssValue(new CssToken(CssTokenType.Ident, display))];
         _anonymous[(parent, display)] = style;
         return style;
+    }
+
+    /// <summary>
+    /// Gives every property its computed value. Undeclared properties take the parent's value or
+    /// the initial one without going through the cascade, so styling stays cheap for documents
+    /// with many elements; only declared properties are resolved one by one, font-size first since
+    /// em units depend on it.
+    /// </summary>
+    private void Fill(ComputedStyle style, ComputedStyle? parent, Dictionary<string, (CssDeclaration Declaration, long Rank)> winners)
+    {
+        CssProperty[] all = CssProperties.ById;
+        for (int i = 0; i < all.Length; i++) style.Values[i] = all[i].Inherited && parent is not null ? parent.Values[i] : _initial[i];
+        style.FontSize = parent?.FontSize ?? 16;
+        if (winners.ContainsKey("font-size")) Compute(style, parent, winners, "font-size");
+        foreach (string property in winners.Keys)
+        {
+            if (property != "font-size" && CssProperties.All.ContainsKey(property)) Compute(style, parent, winners, property);
+        }
     }
 
     private void Compute(ComputedStyle style, ComputedStyle? parent, Dictionary<string, (CssDeclaration Declaration, long Rank)> winners, string property)

@@ -197,6 +197,8 @@ internal sealed class BoxBuilder
 
     private Box? Generated(HtmlElement e, ComputedStyle style, string pseudo)
     {
+        // content does not inherit and starts as none: no rule, no box.
+        if (!_resolver.HasRulesFor(e, pseudo)) return null;
         ComputedStyle ps = _resolver.Compute(e, style, pseudo);
         List<CssValue> content = ps["content"];
         string display = ps.Keywords("display");
