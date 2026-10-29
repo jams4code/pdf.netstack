@@ -5,7 +5,7 @@ namespace PdfNetStack.Imaging;
 
 /// <summary>
 /// Turns an image XObject or inline image into gray or RGB pixels (ISO 32000-1, 8.9): general
-/// filters undone, DCTDecode and CCITTFaxDecode decoded, samples of 1 to 16 bits unpacked, the Decode array applied
+/// filters undone, DCTDecode, CCITTFaxDecode, JBIG2Decode and JPXDecode decoded, samples of 1 to 16 bits unpacked, the Decode array applied
 /// and the color space converted. Masks become black on white. Soft masks are not applied.
 /// </summary>
 internal static class ImageSamples
@@ -45,10 +45,11 @@ internal static class ImageSamples
         if (width <= 0 || height <= 0 || (long)width * height > MaxPixels) throw new PdfFormatException("Image size is invalid or too large.");
         bool mask = doc.Resolve(dict["ImageMask"]) is PdfBoolean { Value: true };
         string? encoding = Encoding(doc, dict);
-        if (encoding is not (null or "DCTDecode" or "CCITTFaxDecode")) return null;
+        if (encoding == "JPXDecode") return DecodeJpx(doc, dict, raw, resources, mask);
+        if (encoding is not (null or "DCTDecode" or "CCITTFaxDecode" or "JBIG2Decode")) return null;
 
         byte[] data = EncodedData(doc, dict, raw);
-        int bpc = mask || encoding == "CCITTFaxDecode" ? 1 : encoding == "DCTDecode" ? 8 : Int(doc, dict["BitsPerComponent"]);
+        int bpc = mask || encoding is "CCITTFaxDecode" or "JBIG2Decode" ? 1 : encoding == "DCTDecode" ? 8 : Int(doc, dict["BitsPerComponent"]);
         ColorSpace? space = mask ? ColorSpace.Gray : ColorSpace.Read(doc, doc.Resolve(dict["ColorSpace"]), resources, 0);
 
         if (encoding == "CCITTFaxDecode")
@@ -68,6 +69,12 @@ internal static class ImageSamples
                 throw new PdfFormatException("CCITT image parameters are invalid: " + e.Message, e);
             }
 
+            space ??= ColorSpace.Gray;
+        }
+
+        if (encoding == "JBIG2Decode")
+        {
+            data = Jbig2(doc, LastParms(doc, dict), data, width, height);
             space ??= ColorSpace.Gray;
         }
 
@@ -106,6 +113,55 @@ internal static class ImageSamples
         long ceiling = Math.Min(doc.DecodeLimit, Compat.MaxArrayLength);
         if (rowBytes * height > ceiling || outputBytes > ceiling) throw new PdfFormatException("Image exceeds the decode limit.");
         return Convert(data, width, height, bpc, rowBytes, space, decode, mask);
+    }
+
+    /// <summary>
+    /// Decodes JBIG2 data after the segments of its JBIG2Globals stream. T.88 codes black as 1, but
+    /// the filter's output is read as samples in which 0 is black, as pdf.js and PDFium read it, so
+    /// the bits are inverted (ISO 32000-1, 7.4.7).
+    /// </summary>
+    private static byte[] Jbig2(PdfDocument doc, PdfDictionary? parms, byte[] data, int width, int height)
+    {
+        // The work bound scales with the size, so a size over the limit is refused before decoding.
+        long ceiling = Math.Min(doc.DecodeLimit, Compat.MaxArrayLength);
+        if ((long)width * height > ceiling) throw new PdfFormatException("Image exceeds the decode limit.");
+        byte[]? globals = doc.Resolve(parms?["JBIG2Globals"]) is PdfStream stream ? doc.GetStreamData(stream) : null;
+        byte[] page;
+        try
+        {
+            page = Jbig2Decoder.Decode(data, globals, width, height);
+        }
+        catch (Jbig2FormatException e)
+        {
+            throw new PdfFormatException("JBIG2 image cannot be decoded: " + e.Message, e);
+        }
+
+        for (int i = 0; i < page.Length; i++) page[i] = (byte)~page[i];
+        return page;
+    }
+
+    /// <summary>
+    /// JPXDecode. The dictionary's color space wins, else the JP2 header's (ISO 32000-1, 7.4.9);
+    /// the data's own size wins over Width and Height. Samples arrive as 8 bits per component.
+    /// SMaskInData is not applied: opacity channels in the data are left out.
+    /// </summary>
+    private static Raster? DecodeJpx(PdfDocument doc, PdfDictionary dict, ReadOnlyMemory<byte> raw, PdfDictionary? resources, bool mask)
+    {
+        byte[] data = EncodedData(doc, dict, raw);
+        ColorSpace? space = mask ? ColorSpace.Gray : ColorSpace.Read(doc, doc.Resolve(dict["ColorSpace"]), resources, 0);
+        Raster? jpx;
+        try
+        {
+            (jpx, space) = Jpeg2000Decoder.DecodeForPdf(data, space, doc.DecodeLimit);
+        }
+        catch (Jpeg2000FormatException e)
+        {
+            throw new PdfFormatException("JPEG 2000 image cannot be decoded: " + e.Message, e);
+        }
+
+        if (jpx is null || space is null) return null;
+        if ((long)jpx.Width * jpx.Height * (space.IsGray ? 1 : 3) > Math.Min(doc.DecodeLimit, Compat.MaxArrayLength)) throw new PdfFormatException("Image exceeds the decode limit.");
+        return Convert(jpx.Samples, jpx.Width, jpx.Height, 8, (long)jpx.Width * jpx.Channels, space, DecodeArray(doc, dict, space, 8, mask), mask);
     }
 
     /// <summary>The decode parameters of the last filter, the image codec.</summary>

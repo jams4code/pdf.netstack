@@ -11,10 +11,13 @@ public enum PdfImageFormat
 
     /// <summary>PNG, embedded as Flate compressed samples, with its alpha channel as a soft mask.</summary>
     Png,
+
+    /// <summary>GIF, its first frame embedded as palette samples, its transparent color as a soft mask.</summary>
+    Gif,
 }
 
 /// <summary>
-/// A JPEG or PNG image to draw with <see cref="PdfGraphics.DrawImage(PdfImage, double, double, double, double)"/>.
+/// A JPEG, PNG or GIF image to draw with <see cref="PdfGraphics.DrawImage(PdfImage, double, double, double, double)"/>.
 /// The image is written once per document however often it is drawn, and can be shared between
 /// documents and threads.
 /// </summary>
@@ -68,7 +71,7 @@ public sealed class PdfImage
     /// <summary>EXIF orientation, 1 (as stored) to 8.</summary>
     internal int Orientation { get; }
 
-    /// <summary>Loads a JPEG or PNG file.</summary>
+    /// <summary>Loads a JPEG, PNG or GIF file.</summary>
     /// <exception cref="FormatException">The data is not a supported image.</exception>
     public static PdfImage Load(string path)
     {
@@ -76,7 +79,7 @@ public sealed class PdfImage
         return Load(File.ReadAllBytes(path));
     }
 
-    /// <summary>Loads a JPEG or PNG image from a stream, read to its end.</summary>
+    /// <summary>Loads a JPEG, PNG or GIF image from a stream, read to its end.</summary>
     /// <exception cref="FormatException">The data is not a supported image.</exception>
     public static PdfImage Load(Stream stream)
     {
@@ -86,14 +89,15 @@ public sealed class PdfImage
         return Load(copy.ToArray());
     }
 
-    /// <summary>Loads a JPEG or PNG image from its bytes. The array is used directly; do not change it afterwards.</summary>
+    /// <summary>Loads a JPEG, PNG or GIF image from its bytes. The array is used directly; do not change it afterwards.</summary>
     /// <exception cref="FormatException">The data is not a supported image.</exception>
     public static PdfImage Load(byte[] data)
     {
         Compat.ThrowIfNull(data, nameof(data));
         if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8) return Jpeg(data);
         if (data.Length >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G') return Png(data);
-        throw new FormatException("Only JPEG and PNG images are supported.");
+        if (GifDecoder.IsGif(data)) return Gif(data);
+        throw new FormatException("Only JPEG, PNG and GIF images are supported.");
     }
 
     /// <summary>Writes the image XObject, and its soft mask, into a document.</summary>
@@ -144,6 +148,40 @@ public sealed class PdfImage
             // Adobe applications write CMYK JPEGs inverted; every reader undoes it this way.
             if (h.Components == 4 && h.Adobe) dict.Set("Decode", PdfArray.Of(1, 0, 1, 0, 1, 0, 1, 0));
             return doc.AddObject(new PdfStream(dict, data));
+        });
+    }
+
+    /// <summary>A GIF's first frame: 8 bit palette indexes under an Indexed color space, transparency as a soft mask.</summary>
+    private static PdfImage Gif(byte[] data)
+    {
+        GifImage gif = GifDecoder.Read(data);
+        return new PdfImage(PdfImageFormat.Gif, gif.Width, gif.Height, 0, 0, 1, gif.Alpha is not null, doc =>
+        {
+            int entries = Math.Max(1, Math.Min(256, gif.Palette.Length / 3));
+            var dict = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(gif.Width),
+                ["Height"] = PdfNumber.FromInteger(gif.Height),
+                ["ColorSpace"] = PdfArray.Of(new PdfName("Indexed"), new PdfName("DeviceRGB"), PdfNumber.FromInteger(entries - 1), new PdfString(gif.Palette.AsSpan(0, 3 * entries))),
+                ["BitsPerComponent"] = PdfNumber.FromInteger(8),
+            };
+            if (gif.Alpha is byte[] alpha)
+            {
+                var mask = new PdfDictionary
+                {
+                    ["Type"] = new PdfName("XObject"),
+                    ["Subtype"] = new PdfName("Image"),
+                    ["Width"] = PdfNumber.FromInteger(gif.Width),
+                    ["Height"] = PdfNumber.FromInteger(gif.Height),
+                    ["ColorSpace"] = new PdfName("DeviceGray"),
+                    ["BitsPerComponent"] = PdfNumber.FromInteger(8),
+                };
+                dict.Set("SMask", doc.AddObject(PdfStream.FromData(alpha, mask)));
+            }
+
+            return doc.AddObject(PdfStream.FromData(gif.Indexes, dict));
         });
     }
 

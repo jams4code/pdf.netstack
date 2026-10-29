@@ -278,13 +278,13 @@ public sealed class ImageExtractionTests
     [TestMethod]
     public void LeavesCodecsItDoesNotDecode()
     {
-        PdfStream jbig2 = Image(8, 8, 1, new PdfName("DeviceGray"), [1, 2, 3], ("Filter", new PdfName("JBIG2Decode")));
+        PdfStream jpx = Image(8, 8, 8, new PdfName("DeviceGray"), [1, 2, 3], ("Filter", new PdfName("UnknownDecode")));
         PdfDocument doc = PdfDocument.Create();
         PdfPage page = doc.Pages.Add(PdfRectangle.A4);
-        page.Dictionary.Set("Resources", XObjects(doc, ("J", jbig2)));
+        page.Dictionary.Set("Resources", XObjects(doc, ("J", jpx)));
         page.Dictionary.Set("Contents", doc.AddObject(PdfStream.FromData("/J Do"u8)));
         PdfPageImage image = Reopen(doc).Pages[0].GetImages().Single();
-        Assert.AreEqual("JBIG2Decode", image.Encoding);
+        Assert.AreEqual("UnknownDecode", image.Encoding);
         Assert.IsNull(image.Decode());
         CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, image.GetEncodedData());
     }

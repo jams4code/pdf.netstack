@@ -234,11 +234,11 @@ internal static class CcittDecoder
         return count;
     }
 
-    private const int Pass = 10;
-    private const int Horizontal = 11;
+    internal const int Pass = 10;
+    internal const int Horizontal = 11;
 
     /// <summary>The 2D mode codes (ITU-T T.4, Table 4): vertical offsets -3 to 3, pass, horizontal.</summary>
-    private static int ReadMode(ref BitReader bits)
+    internal static int ReadMode(ref BitReader bits)
     {
         int peek = bits.Peek(7);
         if ((peek & 0b1000000) != 0) return Consume(ref bits, 1, 0);
@@ -262,7 +262,7 @@ internal static class CcittDecoder
     }
 
     /// <summary>A run of one color: make-up codes, then a terminating code.</summary>
-    private static int ReadRun(ref BitReader bits, bool white)
+    internal static int ReadRun(ref BitReader bits, bool white)
     {
         Dictionary<int, int> table = white ? White : Black;
         int total = 0;
@@ -302,12 +302,15 @@ internal static class CcittDecoder
     }
 
     /// <summary>Most significant bit first; reading past the end gives zeros.</summary>
-    private ref struct BitReader
+    internal ref struct BitReader
     {
         private readonly ReadOnlySpan<byte> _data;
         private long _position;
 
         public BitReader(ReadOnlySpan<byte> data) => _data = data;
+
+        /// <summary>Bits read so far.</summary>
+        public readonly long Position => _position;
 
         public readonly bool AtEnd => _position >= (long)_data.Length * 8;
 
