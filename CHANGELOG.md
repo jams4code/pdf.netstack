@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `PdfGraphics.DrawInvisibleText`: invisible, searchable text stretched to a box, optionally
+  rotated, for OCR text layers. A built in glyphless font (Type0, Identity-H, one empty glyph,
+  identity ToUnicode) takes any script; right to left text and characters outside the BMP also
+  carry ActualText.
 - Image extraction: `PdfPage.GetImages()` lists the images a page draws (XObjects, inside forms
   too, and inline images) with their placement, bounds and resolution. `PdfPageImage.Decode()`
   returns a `PdfBitmap` of 8 bit gray or RGB pixels from raw samples of 1 to 16 bits, from

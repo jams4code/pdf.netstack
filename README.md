@@ -156,6 +156,11 @@ colors with opacity; linear and radial gradients; transforms, saved states and c
 `CreateGraphics(PdfGraphicsLayer.Background)` draws underneath a page's existing content, for
 letterheads and watermarks. The API follows PdfSharp's `XGraphics` naming.
 
+`DrawInvisibleText(text, x, y, width, height)` writes text that is not drawn but selects, copies
+and searches, stretched to fill its box: put the words any OCR engine found over a scanned page
+and the page becomes searchable. Any script works, without a font to embed beyond a tiny built in
+one, and the result passes PDF/A-2u.
+
 The 14 standard PDF fonts (Helvetica, Times, Courier with their bold and italic styles,
 Symbol, ZapfDingbats) need no embedding, so a page of text weighs about 2 KB. They cover Western
 and Central European languages (Windows-1252 plus Ł, ő, č and the like).

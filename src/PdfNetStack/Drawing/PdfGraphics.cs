@@ -89,6 +89,7 @@ public sealed class PdfGraphics : IDisposable
     private readonly Dictionary<(string Key, double Value), string> _alphaStates = new();
     private readonly HashSet<string> _ownCategories = new(StringComparer.Ordinal);
     private readonly Dictionary<FontResource, string> _fontNames = new();
+    private string? _glyphlessName;
     private PdfDictionary? _resources;
     private State _state = new();
     private bool _disposed;
@@ -464,17 +465,86 @@ public sealed class PdfGraphics : IDisposable
         }
     }
 
+    /// <summary>
+    /// Draws text that is invisible but selectable and searchable, stretched to fill a box: the
+    /// text layer of a scanned page. The box's top left corner is at (x, y); the text's baseline
+    /// runs along its bottom edge and its height is the font size. Any script works, unshaped,
+    /// since nothing is drawn.
+    /// </summary>
+    /// <param name="text">The text, in logical order.</param>
+    /// <param name="x">Left edge of the box.</param>
+    /// <param name="y">Top edge of the box.</param>
+    /// <param name="width">Width the text is stretched or squeezed to.</param>
+    /// <param name="height">Height of the box: the font size.</param>
+    /// <example>
+    /// <code>
+    /// // A word an OCR engine found at 100,200 to 180,214 points on the page.
+    /// graphics.DrawInvisibleText("Invoice", 100, 200, 80, 14);
+    /// </code>
+    /// </example>
+    public void DrawInvisibleText(string text, double x, double y, double width, double height) => DrawInvisibleText(text, x, y, width, height, 0);
+
+    /// <summary>Draws invisible, searchable text in a box rotated clockwise about its top left corner.</summary>
+    /// <param name="text">The text, in logical order.</param>
+    /// <param name="x">Left edge of the box, before rotation.</param>
+    /// <param name="y">Top edge of the box, before rotation.</param>
+    /// <param name="width">Width the text is stretched or squeezed to.</param>
+    /// <param name="height">Height of the box: the font size.</param>
+    /// <param name="angle">Rotation in degrees, clockwise, about (x, y).</param>
+    public void DrawInvisibleText(string text, double x, double y, double width, double height, double angle)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(text, nameof(text));
+        if (!(width > 0) || !(height > 0) || double.IsInfinity(width) || double.IsInfinity(height)) return;
+        byte[] codes = GlyphlessFont.Encode(text, out bool lossy);
+        if (codes.Length == 0) return;
+        _glyphlessName ??= AddResource("Font", "F", GlyphlessFont.For(_doc));
+
+        // Every glyph advances half an em: the horizontal scaling makes the run exactly as wide as the box.
+        double natural = codes.Length / 2 * GlyphlessFont.Advance / 1000.0 * height;
+        // Copying follows the codes, one per UTF-16 unit; right to left text and characters
+        // outside the BMP also carry ActualText, so they copy back in order and whole.
+        bool actualText = lossy || HasRightToLeft(text);
+
+        // Tf, Tr and Tz are set inside q ... Q, so the tracked text state outside is unchanged.
+        using (Save())
+        {
+            TranslateTransform(x, y);
+            if (angle != 0) RotateTransform(angle);
+            if (actualText) BeginActualText(text);
+            _w.Op("BT");
+            _w.Name(_glyphlessName).Number(height).Op("Tf");
+            _w.Number(3).Op("Tr");
+            _w.Number(Math.Round(width / natural * 100, 4)).Op("Tz");
+            _w.Numbers(1, 0, 0, -1).Numbers(0, height).Op("Tm");
+            _w.HexString(codes).Op("Tj");
+            _w.Op("ET");
+            if (actualText) _w.Op("EMC");
+        }
+    }
+
     private static bool NeedsActualText(string text, List<ShapedGlyph> glyphs)
     {
+        if (HasRightToLeft(text)) return true;
         int visible = 0;
         for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
-            if (PdfFont.IsInvisible(text, i)) continue;
-            visible++;
-            if (Text.UnicodeData.Bidi(char.ConvertToUtf32(text, i)) is Text.BidiClass.R or Text.BidiClass.AL or Text.BidiClass.AN) return true;
+            if (!PdfFont.IsInvisible(text, i)) visible++;
         }
 
         return visible != glyphs.Count || glyphs.Any(g => g.XOffset != 0 || g.YOffset != 0);
+    }
+
+    private static bool HasRightToLeft(string text)
+    {
+        for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
+        {
+            // A lone surrogate has no code point to classify.
+            if (char.IsSurrogate(text[i]) && !char.IsSurrogatePair(text, i)) continue;
+            if (Text.UnicodeData.Bidi(char.ConvertToUtf32(text, i)) is Text.BidiClass.R or Text.BidiClass.AL or Text.BidiClass.AN) return true;
+        }
+
+        return false;
     }
 
     private void BeginActualText(string text)
