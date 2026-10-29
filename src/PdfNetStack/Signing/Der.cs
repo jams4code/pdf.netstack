@@ -3,7 +3,8 @@ namespace PdfNetStack.Signing;
 /// <summary>DER encoding (ITU-T X.690) of the few ASN.1 types CMS signatures need.</summary>
 internal static class Der
 {
-    public const byte Integer = 0x02, OctetString = 0x04, Null = 0x05, ObjectIdentifier = 0x06, Sequence = 0x30, Set = 0x31;
+    public const byte Boolean = 0x01, Integer = 0x02, BitString = 0x03, OctetString = 0x04, Null = 0x05, ObjectIdentifier = 0x06,
+        Enumerated = 0x0A, Sequence = 0x30, Set = 0x31, UtcTime = 0x17, GeneralizedTime = 0x18;
 
     public static byte[] Tlv(byte tag, ReadOnlySpan<byte> content)
     {
@@ -70,6 +71,20 @@ internal static class Der
     public static byte[] Octets(ReadOnlySpan<byte> content) => Tlv(OctetString, content);
 
     public static byte[] NullValue() => [Null, 0];
+
+    public static byte[] Bool(bool value) => [Boolean, 1, value ? (byte)0xFF : (byte)0];
+
+    /// <summary>A BIT STRING of whole bytes.</summary>
+    public static byte[] Bits(ReadOnlySpan<byte> content)
+    {
+        var b = new byte[content.Length + 1];
+        content.CopyTo(b.AsSpan(1));
+        return Tlv(BitString, b);
+    }
+
+    /// <summary>A GeneralizedTime in UTC to the second, as DER requires (YYYYMMDDHHMMSSZ).</summary>
+    public static byte[] Time(DateTimeOffset value) =>
+        Tlv(GeneralizedTime, System.Text.Encoding.ASCII.GetBytes(value.UtcDateTime.ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture) + "Z"));
 
     /// <summary>A context specific tag around content: constructed for EXPLICIT tagging and for IMPLICIT constructed types.</summary>
     public static byte[] Context(int number, bool constructed, ReadOnlySpan<byte> content) =>
@@ -168,6 +183,86 @@ internal sealed class DerNode
         }
 
         return children;
+    }
+
+    /// <summary>The child at an index of a constructed element.</summary>
+    /// <exception cref="FormatException">There is no such child.</exception>
+    public DerNode At(int index)
+    {
+        List<DerNode> children = Children();
+        if (index >= children.Count) throw new FormatException("ASN.1 element is missing a part.");
+        return children[index];
+    }
+
+    /// <summary>The bytes of a BIT STRING of whole bytes.</summary>
+    public byte[] BitStringValue()
+    {
+        if (Tag != Der.BitString || Content.Length == 0) throw new FormatException("Expected a bit string.");
+        return Content.Slice(1).ToArray();
+    }
+
+    /// <summary>A small INTEGER or ENUMERATED value.</summary>
+    public long SmallInteger()
+    {
+        if ((Tag != Der.Integer && Tag != Der.Enumerated) || Content.Length is 0 or > 8) throw new FormatException("Expected a small integer.");
+        long v = (sbyte)Content[0];
+        for (int i = 1; i < Content.Length; i++) v = v << 8 | Content[i];
+        return v;
+    }
+
+    /// <summary>A UTCTime or GeneralizedTime in UTC, with optional fractional seconds.</summary>
+    public DateTimeOffset TimeValue()
+    {
+        string text = System.Text.Encoding.ASCII.GetString(Content.ToArray());
+        if (Tag == Der.UtcTime)
+        {
+            if (text.Length != 13 || text[12] != 'Z') throw new FormatException("UTCTime is not in DER form.");
+            int yy = Digits(text, 0, 2);
+
+            // RFC 5280: two digit years from 50 are 19xx, below 50 are 20xx.
+            text = (yy >= 50 ? "19" : "20") + text;
+        }
+        else if (Tag != Der.GeneralizedTime)
+        {
+            throw new FormatException("Expected a time.");
+        }
+
+        if (text.Length < 15 || text[text.Length - 1] != 'Z') throw new FormatException("GeneralizedTime is not in UTC.");
+        DateTimeOffset time;
+        try
+        {
+            time = new DateTimeOffset(Digits(text, 0, 4), Digits(text, 4, 2), Digits(text, 6, 2), Digits(text, 8, 2), Digits(text, 10, 2), Digits(text, 12, 2), TimeSpan.Zero);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new FormatException("Time is out of range.");
+        }
+
+        if (text.Length > 15)
+        {
+            int count = text.Length - 16;
+            if (text[14] != '.' || count is < 1 or > 9) throw new FormatException("GeneralizedTime fraction is invalid.");
+
+            // Ticks are 100 ns: seven fraction digits.
+            int used = Math.Min(count, 7);
+            long ticks = Digits(text, 15, used);
+            for (int i = used; i < 7; i++) ticks *= 10;
+            time = time.AddTicks(ticks);
+        }
+
+        return time;
+    }
+
+    private static int Digits(string text, int start, int count)
+    {
+        int v = 0;
+        for (int i = start; i < start + count; i++)
+        {
+            if (i >= text.Length || text[i] is < '0' or > '9') throw new FormatException("Time has a non-digit.");
+            v = v * 10 + (text[i] - '0');
+        }
+
+        return v;
     }
 
     public string OidValue()

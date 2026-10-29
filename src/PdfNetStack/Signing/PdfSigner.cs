@@ -64,9 +64,15 @@ public sealed record PdfSignatureOptions
 
     /// <summary>The signing time recorded in the signature dictionary; null for now.</summary>
     public DateTimeOffset? SigningTime { get; init; }
+
+    /// <summary>
+    /// A time stamp authority to timestamp the signature value (PAdES B-T); null for none (B-B).
+    /// The token goes in the CMS signature as an unsigned attribute.
+    /// </summary>
+    public PdfTimestampClient? Timestamp { get; init; }
 }
 
-/// <summary>What <see cref="PdfSigner.Verify"/> found about one signature.</summary>
+/// <summary>What <see cref="PdfSigner.Verify(byte[])"/> found about one signature or document timestamp.</summary>
 public sealed class PdfSignatureInfo
 {
     internal PdfSignatureInfo()
@@ -76,10 +82,10 @@ public sealed class PdfSignatureInfo
     /// <summary>The signature field's fully qualified name.</summary>
     public string FieldName { get; internal set; } = "";
 
-    /// <summary>The signer's common name, from the certificate.</summary>
+    /// <summary>The signer's common name, from the certificate; the authority's for a document timestamp.</summary>
     public string? SignerName { get; internal set; }
 
-    /// <summary>The signing certificate, for the caller's trust decision.</summary>
+    /// <summary>The signing certificate, for the caller's trust decision; the authority's for a document timestamp.</summary>
     public X509Certificate2? Certificate { get; internal set; }
 
     /// <summary>The time the signer's software recorded (/M), not a trusted timestamp.</summary>
@@ -91,8 +97,11 @@ public sealed class PdfSignatureInfo
     /// <summary>The location given.</summary>
     public string? Location { get; internal set; }
 
-    /// <summary>The signature format, such as ETSI.CAdES.detached or adbe.pkcs7.detached.</summary>
+    /// <summary>The signature format, such as ETSI.CAdES.detached, adbe.pkcs7.detached, or ETSI.RFC3161 for a document timestamp.</summary>
     public string? SubFilter { get; internal set; }
+
+    /// <summary>True for a document timestamp (/DocTimeStamp): an RFC 3161 token over the document, with no signer.</summary>
+    public bool IsDocumentTimestamp { get; internal set; }
 
     /// <summary>True when the signed bytes still hash to the value the signature covers.</summary>
     public bool DigestMatches { get; internal set; }
@@ -103,6 +112,16 @@ public sealed class PdfSignatureInfo
     /// <summary>True when the signature covers the whole file: nothing was appended after it.</summary>
     public bool CoversWholeDocument { get; internal set; }
 
+    /// <summary>The signature timestamp (PAdES B-T), or the token of a document timestamp; null when there is none.</summary>
+    public PdfTimestampInfo? Timestamp { get; internal set; }
+
+    /// <summary>
+    /// The signer's certificate checks: chain, validity, usage and revocation. Null unless
+    /// <see cref="PdfSigner.Verify(byte[], PdfValidationOptions)"/> was given options. For a
+    /// document timestamp, the authority's checks.
+    /// </summary>
+    public PdfCertificateValidation? Validation { get; internal set; }
+
     /// <summary>Why verification failed, or null.</summary>
     public string? Problem { get; internal set; }
 
@@ -111,21 +130,23 @@ public sealed class PdfSignatureInfo
 }
 
 /// <summary>
-/// PAdES baseline signatures (ETSI EN 319 142-1, B-B level): the document is signed in an
-/// incremental update, so earlier signatures stay valid, with a CAdES detached CMS signature.
+/// PAdES baseline signatures (ETSI EN 319 142-1): B-B with a CAdES detached CMS signature, B-T
+/// with an RFC 3161 signature timestamp, B-LT with validation data in the document security
+/// store, and B-LTA with a document timestamp over it all. Every step is an incremental update,
+/// so earlier signatures stay valid.
 /// </summary>
 /// <remarks>
 /// The private key may be RSA or ECDSA, from a file or any key store X509Certificate2 can reach
 /// (Windows certificate store, smart cards through their providers). Encrypted documents are not
-/// supported.
+/// supported. Time stamp authorities and revocation data are reached through the application;
+/// the library never opens a network connection.
 /// </remarks>
 public static class PdfSigner
 {
-    private const int ByteRangeDigits = 10;
-
     /// <summary>Signs <paramref name="pdf"/> and returns the signed file.</summary>
     /// <exception cref="ArgumentException">The certificate has no usable private key.</exception>
     /// <exception cref="NotSupportedException">The document is encrypted.</exception>
+    /// <exception cref="CryptographicException">A timestamp was requested and the authority refused it or replied with an invalid token.</exception>
     public static byte[] Sign(byte[] pdf, X509Certificate2 certificate, PdfSignatureOptions? options = null)
     {
         Compat.ThrowIfNull(pdf, nameof(pdf));
@@ -133,113 +154,184 @@ public static class PdfSigner
         options ??= new PdfSignatureOptions();
         if (!certificate.HasPrivateKey) throw new ArgumentException("The certificate has no private key.", nameof(certificate));
 
-        PdfFile file = PdfFile.Open(pdf, 256L << 20);
-        if (file.Trailer["Encrypt"] is not null and not PdfNull) throw new NotSupportedException("Signing encrypted documents is not supported.");
-        PdfDocument doc = PdfDocument.Open(pdf);
-        int size = file.Trailer["Size"] is PdfNumber { IsInteger: true } s ? (int)Math.Min(s.IntegerValue, int.MaxValue) : doc.NextNumber;
-        int firstNew = Math.Max(size, doc.NextNumber);
-        doc.NextNumber = firstNew;
-        var changed = new SortedSet<int>();
+        var update = new IncrementalUpdate(pdf);
+        PdfDocument doc = update.Doc;
         DateTimeOffset when = options.SigningTime ?? DateTimeOffset.UtcNow;
 
         // The signature value is written by hand; reserve its number.
         int signatureNumber = doc.NextNumber++;
         PdfPage page = doc.Pages[Math.Max(0, Math.Min(options.Appearance?.PageIndex ?? 0, doc.Pages.Count - 1))];
-        string fieldName = options.FieldName ?? UniqueFieldName(doc);
-        var widget = new PdfDictionary
-        {
-            ["Type"] = new PdfName("Annot"),
-            ["Subtype"] = new PdfName("Widget"),
-            ["FT"] = new PdfName("Sig"),
-            ["T"] = PdfString.FromText(fieldName),
-            ["V"] = new PdfReference(signatureNumber, 0),
-            ["F"] = PdfNumber.FromInteger(132), // print, locked
-            ["P"] = new PdfReference(page.Number, 0),
-            ["Rect"] = PdfArray.Of(0, 0, 0, 0),
-        };
+        PdfDictionary widget = Widget(options.FieldName ?? UniqueFieldName(doc, "Signature"), signatureNumber, page);
         if (options.Appearance is PdfSignatureAppearance look) Appear(doc, page, widget, look, certificate, options, when);
-        PdfReference widgetRef = doc.AddObject(widget);
-
-        // The page lists the widget; the form lists the field and says signatures exist.
-        if (page.Dictionary["Annots"] is PdfReference annotsRef && doc.Resolve(annotsRef) is PdfArray annots)
-        {
-            annots.Add(widgetRef);
-            changed.Add(annotsRef.Number);
-        }
-        else
-        {
-            var list = doc.Resolve(page.Dictionary["Annots"]) as PdfArray ?? new PdfArray();
-            var copy = new PdfArray();
-            foreach (PdfObject o in list) copy.Add(o);
-            copy.Add(widgetRef);
-            page.Dictionary.Set("Annots", copy);
-            changed.Add(page.Number);
-        }
-
-        PdfDictionary form;
-        if (doc.Catalog["AcroForm"] is PdfReference formRef && doc.Resolve(formRef) is PdfDictionary existingForm)
-        {
-            form = existingForm;
-            changed.Add(formRef.Number);
-        }
-        else
-        {
-            form = doc.Resolve(doc.Catalog["AcroForm"]) as PdfDictionary ?? new PdfDictionary();
-            doc.Catalog.Set("AcroForm", form);
-            changed.Add(doc.CatalogNumber);
-        }
-
-        if (form["Fields"] is PdfReference fieldsRef && doc.Resolve(fieldsRef) is PdfArray fieldsArray)
-        {
-            fieldsArray.Add(widgetRef);
-            changed.Add(fieldsRef.Number);
-        }
-        else
-        {
-            var fields = new PdfArray();
-            if (doc.Resolve(form["Fields"]) is PdfArray old)
-            {
-                foreach (PdfObject o in old) fields.Add(o);
-            }
-
-            fields.Add(widgetRef);
-            form.Set("Fields", fields);
-        }
-
-        form.Set("SigFlags", PdfNumber.FromInteger(3));
-        doc.FinishFonts();
-
-        // Everything new is written, plus the existing objects that changed.
-        var objects = new SortedDictionary<int, PdfObject>();
-        foreach (int n in changed) objects[n] = doc.Objects[n];
-        foreach (KeyValuePair<int, PdfObject> o in doc.Objects)
-        {
-            if (o.Key >= firstNew) objects[o.Key] = o.Value;
-        }
+        update.AddField(page, doc.AddObject(widget));
 
         byte[][] chain = [.. options.Chain.Select(c => c.RawData)];
-        int reserve = 8192 + certificate.RawData.Length + chain.Sum(c => c.Length);
-        (byte[] output, int byteRangeAt, int contentsStart, int contentsEnd) = WriteUpdate(pdf, file, objects, signatureNumber, reserve, options, certificate, when);
-
-        // The byte range covers everything but the Contents hex string, delimiters included.
-        long[] range = [0, contentsStart, contentsEnd, output.Length - contentsEnd];
-        byte[] digits = Encoding.ASCII.GetBytes(string.Join(" ", range.Select(r => r.ToString("D" + ByteRangeDigits, CultureInfo.InvariantCulture))));
-        digits.CopyTo(output, byteRangeAt);
-
+        int reserve = 8192 + certificate.RawData.Length + chain.Sum(c => c.Length) + (options.Timestamp?.ReservedSize ?? 0);
         HashAlgorithmName hash = HashName(options.Digest);
-        byte[] digest = Hash(hash, output, contentsStart, contentsEnd);
-        byte[] cms = Cms.Sign(digest, hash, certificate, chain);
-        if (2 * cms.Length > contentsEnd - contentsStart - 2) throw new InvalidOperationException("The signature is larger than the space reserved for it.");
-        byte[] hex = Encoding.ASCII.GetBytes(Compat.ToHex(cms));
-        hex.CopyTo(output, contentsStart + 1);
-        return output;
+        PdfTimestampClient? tsa = options.Timestamp;
+        Func<byte[], byte[]>? stamp = tsa is null ? null : value => tsa.GetToken(value);
+        return update.Seal(
+            new IncrementalUpdate.Placeholder(signatureNumber, "/Type/Sig/Filter/Adobe.PPKLite/SubFilter/ETSI.CAdES.detached", reserve, sink =>
+            {
+                sink.WriteAscii("/M");
+                PdfSerializer.WriteString(sink, Encoding.ASCII.GetBytes(Documents.PdfText.FormatDate(when)));
+                WriteText(sink, "Name", certificate.GetNameInfo(X509NameType.SimpleName, false));
+                WriteText(sink, "Reason", options.Reason);
+                WriteText(sink, "Location", options.Location);
+                WriteText(sink, "ContactInfo", options.ContactInfo);
+            }),
+            hash,
+            digest => Cms.Sign(digest, hash, certificate, chain, stamp));
     }
 
-    /// <summary>Checks every signature of a file.</summary>
-    public static IReadOnlyList<PdfSignatureInfo> Verify(byte[] pdf)
+    /// <summary>
+    /// Adds a document timestamp (/DocTimeStamp, an RFC 3161 token with SubFilter ETSI.RFC3161)
+    /// over the whole file in an incremental update. After <see cref="AddValidationData"/> this
+    /// makes a PAdES B-LTA document; repeating both later extends its life before the algorithms
+    /// or certificates involved weaken or expire.
+    /// </summary>
+    /// <param name="pdf">The document, signed or not.</param>
+    /// <param name="timestampAuthority">The authority to ask.</param>
+    /// <param name="fieldName">The timestamp field's name; null picks Timestamp1, Timestamp2 and so on.</param>
+    /// <exception cref="NotSupportedException">The document is encrypted.</exception>
+    /// <exception cref="CryptographicException">The authority refused the request or replied with an invalid token.</exception>
+    public static byte[] AddDocumentTimestamp(byte[] pdf, PdfTimestampClient timestampAuthority, string? fieldName = null)
+    {
+        Compat.ThrowIfNull(pdf, nameof(pdf));
+        Compat.ThrowIfNull(timestampAuthority, nameof(timestampAuthority));
+        var update = new IncrementalUpdate(pdf);
+        PdfDocument doc = update.Doc;
+        int number = doc.NextNumber++;
+        PdfPage page = doc.Pages[0];
+        update.AddField(page, doc.AddObject(Widget(fieldName ?? UniqueFieldName(doc, "Timestamp"), number, page)));
+        return update.Seal(
+            new IncrementalUpdate.Placeholder(number, "/Type/DocTimeStamp/Filter/Adobe.PPKLite/SubFilter/ETSI.RFC3161", timestampAuthority.ReservedSize, null),
+            HashName(timestampAuthority.Digest),
+            timestampAuthority.GetTokenForDigest);
+    }
+
+    /// <summary>
+    /// Adds long term validation data (PAdES B-LT) in an incremental update: the document
+    /// security store (DSS) receives the certificate chains of every signature and timestamp in
+    /// the file, with OCSP responses and CRLs for each certificate, and a VRI entry per signature.
+    /// Chains are built from the certificates in the signatures, in the store already, and in
+    /// <paramref name="certificates"/>, up to a self-signed root. Revocation data comes from
+    /// <paramref name="revocation"/> and is kept only when it matches the certificate and is
+    /// signed by its issuer or the issuer's OCSP responder.
+    /// </summary>
+    /// <param name="pdf">A signed or timestamped document.</param>
+    /// <param name="revocation">Supplies OCSP responses and CRLs; <see cref="PdfRevocationValues.None"/> to embed certificates only.</param>
+    /// <param name="certificates">Extra certificates for the chains, such as intermediate and root CAs.</param>
+    /// <exception cref="InvalidOperationException">The document has no readable signature or timestamp.</exception>
+    /// <exception cref="NotSupportedException">The document is encrypted.</exception>
+    /// <exception cref="PdfFormatException">The document's certificates and validation data need an unreasonable number of signature checks.</exception>
+    public static byte[] AddValidationData(byte[] pdf, IPdfRevocationSource revocation, IReadOnlyList<X509Certificate2>? certificates = null)
+    {
+        Compat.ThrowIfNull(pdf, nameof(pdf));
+        Compat.ThrowIfNull(revocation, nameof(revocation));
+        try
+        {
+            return CollectValidationData(pdf, revocation, certificates, new SignatureChecks());
+        }
+        catch (SignatureChecks.ExhaustedException e)
+        {
+            throw new PdfFormatException(e.Message);
+        }
+    }
+
+    private static byte[] CollectValidationData(byte[] pdf, IPdfRevocationSource revocation, IReadOnlyList<X509Certificate2>? certificates, SignatureChecks checks)
+    {
+        var update = new IncrementalUpdate(pdf);
+        PdfDocument doc = update.Doc;
+
+        // Every signature and timestamp, with the certificates its chains start from.
+        var signatures = new List<(string Key, List<X509Certificate2> Leaves)>();
+        var pool = new List<X509Certificate2>(certificates ?? []);
+        foreach (PdfSignatureField field in doc.Form.Fields.OfType<PdfSignatureField>())
+        {
+            if (doc.Resolve(field.Dictionary["V"]) is not PdfDictionary sig || doc.Resolve(sig["Contents"]) is not PdfString contents) continue;
+            try
+            {
+                var leaves = new List<X509Certificate2>();
+                CmsSignedData cms = CmsSignedData.Parse(contents.Value);
+                pool.AddRange(cms.Certificates);
+                if (cms.Signer is X509Certificate2 signer) leaves.Add(signer);
+                if (cms.TimestampToken is byte[] token)
+                {
+                    CmsSignedData tsa = CmsSignedData.Parse(token);
+                    pool.AddRange(tsa.Certificates);
+                    if (tsa.Signer is X509Certificate2 authority) leaves.Add(authority);
+                }
+
+                // VRI names follow common practice: the whole Contents of a CMS signature, the token itself for a document timestamp.
+                bool timestamp = sig.GetName("SubFilter") == "ETSI.RFC3161";
+                signatures.Add((VriKey(timestamp ? cms.Encoded : contents.Value), leaves));
+            }
+            catch (FormatException)
+            {
+                // A damaged signature gets no validation data; the others still do.
+            }
+        }
+
+        if (signatures.Count == 0) throw new InvalidOperationException("The document has no readable signature or timestamp.");
+        pool.AddRange(SecurityStore.Read(doc).Certificates);
+
+        var store = new DssWriter(doc);
+        var fetched = new Dictionary<string, (List<PdfObject> Ocsps, List<PdfObject> Crls, List<X509Certificate2> Responders)>();
+        foreach ((string key, List<X509Certificate2> leaves) in signatures)
+        {
+            var certs = new List<PdfObject>();
+            var ocsps = new List<PdfObject>();
+            var crls = new List<PdfObject>();
+            var pending = new Queue<X509Certificate2>(leaves);
+            var seen = new HashSet<string>();
+            while (pending.Count > 0)
+            {
+                List<X509Certificate2> chain = CertificateValidator.BuildChain(pending.Dequeue(), pool, Pkix.IsSelfIssued, [], checks);
+                for (int i = 0; i < chain.Count; i++)
+                {
+                    X509Certificate2 cert = chain[i];
+                    string id = Compat.ToHex(Pkix.Hash(HashAlgorithmName.SHA256, cert.RawData));
+                    if (!seen.Add(id)) continue;
+                    certs.Add(store.Add("Certs", cert.RawData));
+                    if (i + 1 >= chain.Count || Pkix.IsSelfIssued(cert) || Pkix.HasExtension(cert, Pkix.OcspNoCheck)) continue;
+
+                    if (!fetched.TryGetValue(id, out var found))
+                    {
+                        found = Fetch(store, revocation, cert, chain[i + 1], pool, checks);
+                        fetched[id] = found;
+                    }
+
+                    ocsps.AddRange(found.Ocsps);
+                    crls.AddRange(found.Crls);
+
+                    // A delegated OCSP responder needs validation data too: its chain and, unless exempt, its status.
+                    foreach (X509Certificate2 responder in found.Responders) pending.Enqueue(responder);
+                }
+            }
+
+            store.Vri(key, certs, ocsps, crls);
+        }
+
+        store.WriteTo(update);
+        return update.Write();
+    }
+
+    /// <summary>Checks every signature of a file: byte range, digest and cryptographic validity, and any timestamp.</summary>
+    public static IReadOnlyList<PdfSignatureInfo> Verify(byte[] pdf) => Verify(pdf, null);
+
+    /// <summary>
+    /// Checks every signature and document timestamp of a file and, with
+    /// <paramref name="options"/>, validates the certificates of signers and time stamp
+    /// authorities: chain to a trust anchor, validity, usage and revocation from the document
+    /// security store and supplied data. Certificates are checked at the time of a valid
+    /// timestamp when there is one, else now, unless the options set a time.
+    /// </summary>
+    public static IReadOnlyList<PdfSignatureInfo> Verify(byte[] pdf, PdfValidationOptions? options)
     {
         Compat.ThrowIfNull(pdf, nameof(pdf));
         PdfDocument doc = PdfDocument.Open(pdf);
+        CertificateValidator? validator = options is null ? null : new CertificateValidator(options, options.UseDocumentSecurityStore ? SecurityStore.Read(doc) : new SecurityStore());
         var results = new List<PdfSignatureInfo>();
         foreach (PdfSignatureField field in doc.Form.Fields.OfType<PdfSignatureField>())
         {
@@ -252,6 +344,7 @@ public static class PdfSigner
                 Location = doc.Resolve(sig["Location"]) is PdfString l ? l.ToText() : null,
                 SigningTime = doc.Resolve(sig["M"]) is PdfString m ? Documents.PdfText.ParseDate(m.ToText()) : null,
             };
+            info.IsDocumentTimestamp = info.SubFilter == "ETSI.RFC3161";
             results.Add(info);
             try
             {
@@ -274,15 +367,131 @@ public static class PdfSigner
                 }
 
                 info.CoversWholeDocument = range[2] + range[3] == pdf.Length;
-                Cms.Verify(fromGap, pdf, (int)range[1], (int)range[2], (int)(range[2] + range[3]), info);
+                int end = (int)(range[2] + range[3]);
+                CmsSignedData cms;
+                TimestampToken? token = null;
+                if (info.IsDocumentTimestamp)
+                {
+                    token = TimestampToken.Parse(fromGap);
+                    cms = token.Cms;
+                    info.Certificate = cms.Signer;
+                    info.SignerName = cms.Signer?.GetNameInfo(X509NameType.SimpleName, false);
+                    info.DigestMatches = Hash(token.ImprintHash, pdf, (int)range[1], (int)range[2], end).AsSpan().SequenceEqual(token.Imprint);
+                    info.Timestamp = Describe(token, info.DigestMatches);
+                    info.SignatureValid = info.Timestamp.SignatureValid;
+                    if (!info.DigestMatches) info.Problem = "The document changed after it was timestamped.";
+                    else if (!info.SignatureValid) info.Problem = info.Timestamp.Problem;
+                }
+                else
+                {
+                    cms = Cms.Verify(fromGap, pdf, (int)range[1], (int)range[2], end, info);
+                    if (cms.TimestampToken is byte[] bytes)
+                    {
+                        try
+                        {
+                            token = TimestampToken.Parse(bytes);
+                            info.Timestamp = Describe(token, Pkix.Hash(token.ImprintHash, cms.SignatureValue).AsSpan().SequenceEqual(token.Imprint));
+                        }
+                        catch (FormatException e)
+                        {
+                            info.Timestamp = new PdfTimestampInfo { Problem = "The signature timestamp cannot be read: " + e.Message };
+                        }
+                    }
+                }
+
+                if (validator is not null) Validate(info, cms, token, validator, options!);
             }
-            catch (Exception e) when (e is FormatException or InvalidCastException or CryptographicException or NullReferenceException)
+            catch (Exception e) when (e is FormatException or InvalidCastException or CryptographicException or NullReferenceException or ArgumentOutOfRangeException)
             {
                 info.Problem = "The signature cannot be read: " + e.Message;
             }
         }
 
         return results;
+    }
+
+    /// <summary>The VRI key of a signature: the uppercase hex SHA-1 of its bytes, as PAdES names it.</summary>
+    internal static string VriKey(byte[] signature)
+    {
+        // PAdES defines the name with SHA-1; it identifies, it does not sign.
+        return Compat.ToHex(Pkix.Hash(HashAlgorithmName.SHA1, signature));
+    }
+
+    /// <summary>The OCSP responses and CRLs for one certificate that match it and verify, added to the store.</summary>
+    private static (List<PdfObject> Ocsps, List<PdfObject> Crls, List<X509Certificate2> Responders) Fetch(
+        DssWriter store, IPdfRevocationSource source, X509Certificate2 cert, X509Certificate2 issuer, List<X509Certificate2> pool, SignatureChecks checks)
+    {
+        var ocsps = new List<PdfObject>();
+        var crls = new List<PdfObject>();
+        var responders = new List<X509Certificate2>();
+        PdfRevocationValues values = source.GetRevocationValues(new PdfRevocationRequest(cert, issuer)) ?? PdfRevocationValues.None;
+        foreach (byte[] data in values.OcspResponses)
+        {
+            if (data is null || Ocsp.TryParse(data) is not Ocsp response || response.Find(cert, issuer) is null) continue;
+            if (response.Signer(issuer, pool, checks) is not X509Certificate2 signer) continue;
+            ocsps.Add(store.Add("OCSPs", response.Encoded));
+            if (!CertificateValidator.Same(signer, issuer) && !responders.Any(r => CertificateValidator.Same(r, signer)))
+            {
+                responders.Add(signer);
+                pool.Add(signer);
+            }
+        }
+
+        foreach (byte[] data in values.Crls)
+        {
+            if (data is null || Crl.TryParse(data) is not Crl crl || crl.CriticalExtension is not null || !crl.IsFrom(cert) || !crl.IsSignedBy(issuer, checks)) continue;
+            crls.Add(store.Add("CRLs", crl.Encoded));
+        }
+
+        return (ocsps, crls, responders);
+    }
+
+    private static PdfTimestampInfo Describe(TimestampToken token, bool imprintMatches)
+    {
+        var info = new PdfTimestampInfo
+        {
+            Time = token.GenTime,
+            Certificate = token.Cms.Signer,
+            AuthorityName = token.Cms.Signer?.GetNameInfo(X509NameType.SimpleName, false),
+            PolicyOid = token.Policy,
+            SerialNumber = Compat.ToHex(token.SerialNumber),
+            ImprintMatches = imprintMatches,
+            SignatureValid = token.Verify(),
+        };
+        if (!info.ImprintMatches) info.Problem = "The timestamp does not cover what it is attached to.";
+        else if (!info.SignatureValid) info.Problem = "The timestamp's signature is invalid" + (token.Cms.Problem is string p ? ": " + p : ".");
+        return info;
+    }
+
+    /// <summary>Validates the authority's certificates at the timestamp's time, then the signer's at the best time available.</summary>
+    private static void Validate(PdfSignatureInfo info, CmsSignedData cms, TimestampToken? token, CertificateValidator validator, PdfValidationOptions options)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        PdfCertificateValidation? authority = null;
+        if (token is not null && info.Timestamp is { Certificate: X509Certificate2 tsa } stamp)
+        {
+            (DateTimeOffset time, PdfValidationTimeSource source) = options.ValidationTime is DateTimeOffset v ? (v, PdfValidationTimeSource.Caller)
+                : stamp.IsIntact ? (stamp.Time, PdfValidationTimeSource.Timestamp) : (now, PdfValidationTimeSource.Current);
+
+            // A signature timestamp may lean on certificates the signature carries, such as a shared intermediate.
+            IEnumerable<X509Certificate2> embedded = info.IsDocumentTimestamp ? token.Cms.Certificates : token.Cms.Certificates.Concat(cms.Certificates);
+            authority = validator.Validate(tsa, embedded, CertificateRole.TimestampAuthority, time, source);
+            stamp.Validation = authority;
+        }
+
+        if (info.IsDocumentTimestamp)
+        {
+            info.Validation = authority;
+            return;
+        }
+
+        if (info.Certificate is not X509Certificate2 signer) return;
+
+        // The timestamp proves when the signature existed, unless its own authority failed validation.
+        bool timestamped = info.Timestamp is { IsIntact: true } && authority?.Status != PdfCheckStatus.Failed;
+        (DateTimeOffset at, PdfValidationTimeSource from) = options.ValidationTime is DateTimeOffset given ? (given, PdfValidationTimeSource.Caller)
+            : timestamped ? (info.Timestamp!.Time, PdfValidationTimeSource.Timestamp) : (now, PdfValidationTimeSource.Current);
+        info.Validation = validator.Validate(signer, cms.Certificates, CertificateRole.Signer, at, from);
     }
 
     /// <summary>The bytes of a hex string spanning exactly [start, end), or null when the span is anything else.</summary>
@@ -318,14 +527,27 @@ public static class PdfSigner
         return [.. bytes];
     }
 
-    private static string UniqueFieldName(PdfDocument doc)
+    private static string UniqueFieldName(PdfDocument doc, string prefix)
     {
         var names = new HashSet<string>(doc.Form.Fields.Select(f => f.Name));
         for (int i = 1; ; i++)
         {
-            if (!names.Contains("Signature" + i)) return "Signature" + i;
+            if (!names.Contains(prefix + i)) return prefix + i;
         }
     }
+
+    /// <summary>A signature field merged with its widget, invisible until an appearance is set.</summary>
+    private static PdfDictionary Widget(string fieldName, int signatureNumber, PdfPage page) => new()
+    {
+        ["Type"] = new PdfName("Annot"),
+        ["Subtype"] = new PdfName("Widget"),
+        ["FT"] = new PdfName("Sig"),
+        ["T"] = PdfString.FromText(fieldName),
+        ["V"] = new PdfReference(signatureNumber, 0),
+        ["F"] = PdfNumber.FromInteger(132), // print, locked
+        ["P"] = new PdfReference(page.Number, 0),
+        ["Rect"] = PdfArray.Of(0, 0, 0, 0),
+    };
 
     private static void Appear(PdfDocument doc, PdfPage page, PdfDictionary widget, PdfSignatureAppearance look, X509Certificate2 cert, PdfSignatureOptions options, DateTimeOffset when)
     {
@@ -345,20 +567,156 @@ public static class PdfSigner
         widget.Set("AP", new PdfDictionary { ["N"] = appearance.Reference });
     }
 
-    /// <summary>Appends the objects, the signature value with placeholders, and a cross-reference section matching the file's style.</summary>
-    private static (byte[] Output, int ByteRangeAt, int ContentsStart, int ContentsEnd) WriteUpdate(
-        byte[] original, PdfFile file, SortedDictionary<int, PdfObject> objects, int signatureNumber, int reserve,
-        PdfSignatureOptions options, X509Certificate2 certificate, DateTimeOffset when)
+    private static void WriteText(ByteSink sink, string key, string? value)
     {
-        var sink = new ByteSink(original.Length + reserve * 2 + 16384);
-        sink.Write(original);
+        if (string.IsNullOrEmpty(value)) return;
+        PdfSerializer.WriteName(sink, key);
+        PdfSerializer.WriteString(sink, PdfString.FromText(value!).Value);
+    }
+
+    internal static HashAlgorithmName HashName(PdfDigestAlgorithm digest) => digest switch
+    {
+        PdfDigestAlgorithm.Sha384 => HashAlgorithmName.SHA384,
+        PdfDigestAlgorithm.Sha512 => HashAlgorithmName.SHA512,
+        _ => HashAlgorithmName.SHA256,
+    };
+
+    /// <summary>The hash of the file outside the Contents hex string.</summary>
+    internal static byte[] Hash(HashAlgorithmName name, byte[] data, int gapStart, int gapEnd, int? end = null)
+    {
+        using IncrementalHash hash = IncrementalHash.CreateHash(name);
+        hash.AppendData(data, 0, gapStart);
+        hash.AppendData(data, gapEnd, (end ?? data.Length) - gapEnd);
+        return hash.GetHashAndReset();
+    }
+}
+
+/// <summary>
+/// An incremental update of a file (ISO 32000-1, 7.5.6): changed and new objects appended after
+/// the original bytes, with a cross-reference section in the file's own style, and optionally a
+/// signature dictionary whose byte range and contents are filled in last.
+/// </summary>
+internal sealed class IncrementalUpdate
+{
+    private const int ByteRangeDigits = 10;
+    private readonly byte[] _original;
+    private readonly PdfFile _file;
+    private readonly int _firstNew;
+    private readonly SortedSet<int> _changed = [];
+
+    /// <exception cref="NotSupportedException">The document is encrypted.</exception>
+    public IncrementalUpdate(byte[] pdf)
+    {
+        _original = pdf;
+        _file = PdfFile.Open(pdf, 256L << 20);
+        if (_file.Trailer["Encrypt"] is not null and not PdfNull) throw new NotSupportedException("Signing encrypted documents is not supported.");
+        Doc = PdfDocument.Open(pdf);
+        int size = _file.Trailer["Size"] is PdfNumber { IsInteger: true } s ? (int)Math.Min(s.IntegerValue, int.MaxValue) : Doc.NextNumber;
+        _firstNew = Math.Max(size, Doc.NextNumber);
+        Doc.NextNumber = _firstNew;
+    }
+
+    public PdfDocument Doc { get; }
+
+    /// <summary>Marks an existing object as changed, so the update writes it again.</summary>
+    public void Changed(int number) => _changed.Add(number);
+
+    /// <summary>Lists a signature widget on its page and in the form, and says the form has signatures.</summary>
+    public void AddField(PdfPage page, PdfReference widgetRef)
+    {
+        if (page.Dictionary["Annots"] is PdfReference annotsRef && Doc.Resolve(annotsRef) is PdfArray annots)
+        {
+            annots.Add(widgetRef);
+            Changed(annotsRef.Number);
+        }
+        else
+        {
+            var list = Doc.Resolve(page.Dictionary["Annots"]) as PdfArray ?? new PdfArray();
+            var copy = new PdfArray();
+            foreach (PdfObject o in list) copy.Add(o);
+            copy.Add(widgetRef);
+            page.Dictionary.Set("Annots", copy);
+            Changed(page.Number);
+        }
+
+        PdfDictionary form;
+        if (Doc.Catalog["AcroForm"] is PdfReference formRef && Doc.Resolve(formRef) is PdfDictionary existingForm)
+        {
+            form = existingForm;
+            Changed(formRef.Number);
+        }
+        else
+        {
+            form = Doc.Resolve(Doc.Catalog["AcroForm"]) as PdfDictionary ?? new PdfDictionary();
+            Doc.Catalog.Set("AcroForm", form);
+            Changed(Doc.CatalogNumber);
+        }
+
+        if (form["Fields"] is PdfReference fieldsRef && Doc.Resolve(fieldsRef) is PdfArray fieldsArray)
+        {
+            fieldsArray.Add(widgetRef);
+            Changed(fieldsRef.Number);
+        }
+        else
+        {
+            var fields = new PdfArray();
+            if (Doc.Resolve(form["Fields"]) is PdfArray old)
+            {
+                foreach (PdfObject o in old) fields.Add(o);
+            }
+
+            fields.Add(widgetRef);
+            form.Set("Fields", fields);
+        }
+
+        form.Set("SigFlags", PdfNumber.FromInteger(3));
+    }
+
+    /// <summary>Writes the update with no signature.</summary>
+    public byte[] Write() => WriteUpdate(null).Output;
+
+    /// <summary>
+    /// Writes the update with a signature dictionary, fills its byte range, hashes the file
+    /// outside the contents, and writes what <paramref name="contents"/> makes of the digest.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The contents are larger than the space reserved.</exception>
+    public byte[] Seal(Placeholder placeholder, HashAlgorithmName hash, Func<byte[], byte[]> contents)
+    {
+        (byte[] output, int byteRangeAt, int contentsStart, int contentsEnd) = WriteUpdate(placeholder);
+
+        // The byte range covers everything but the Contents hex string, delimiters included.
+        long[] range = [0, contentsStart, contentsEnd, output.Length - contentsEnd];
+        byte[] digits = Encoding.ASCII.GetBytes(string.Join(" ", range.Select(r => r.ToString("D" + ByteRangeDigits, CultureInfo.InvariantCulture))));
+        digits.CopyTo(output, byteRangeAt);
+
+        byte[] value = contents(PdfSigner.Hash(hash, output, contentsStart, contentsEnd));
+        if (2 * value.Length > contentsEnd - contentsStart - 2) throw new InvalidOperationException("The signature is larger than the space reserved for it.");
+        Encoding.ASCII.GetBytes(Compat.ToHex(value)).CopyTo(output, contentsStart + 1);
+        return output;
+    }
+
+    /// <summary>Appends the objects, the signature dictionary with placeholders, and a cross-reference section matching the file's style.</summary>
+    private (byte[] Output, int ByteRangeAt, int ContentsStart, int ContentsEnd) WriteUpdate(Placeholder? placeholder)
+    {
+        Doc.FinishFonts();
+
+        // Everything new is written, plus the existing objects that changed.
+        var objects = new SortedDictionary<int, PdfObject>();
+        foreach (int n in _changed) objects[n] = Doc.Objects[n];
+        foreach (KeyValuePair<int, PdfObject> o in Doc.Objects)
+        {
+            if (o.Key >= _firstNew) objects[o.Key] = o.Value;
+        }
+
+        var sink = new ByteSink(_original.Length + (placeholder?.Reserve ?? 0) * 2 + 16384);
+        sink.Write(_original);
         if (sink.LastByte is not ((byte)'\n' or (byte)'\r')) sink.Write((byte)'\n');
         var serializer = new PdfSerializer(r => r.Number) { KeepGenerations = true };
         var offsets = new SortedDictionary<int, (long Offset, int Generation)>();
 
         foreach ((int number, PdfObject obj) in objects)
         {
-            int generation = file.Exists(number) ? file.GenerationOf(number) : 0;
+            int generation = _file.Exists(number) ? _file.GenerationOf(number) : 0;
             offsets[number] = (sink.Length, generation);
             sink.WriteAscii($"{number} {generation} obj\n");
             if (obj is PdfStream stream)
@@ -378,36 +736,35 @@ public static class PdfSigner
             sink.Write("\nendobj\n"u8);
         }
 
-        offsets[signatureNumber] = (sink.Length, 0);
-        sink.WriteAscii($"{signatureNumber} 0 obj\n<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/ETSI.CAdES.detached/ByteRange[");
-        int byteRangeAt = sink.Length;
-        sink.WriteAscii(string.Join(" ", Enumerable.Repeat(new string('0', ByteRangeDigits), 4)));
-        sink.WriteAscii("]/Contents");
-        int contentsStart = sink.Length;
-        sink.Write((byte)'<');
-        for (int i = 0; i < 2 * reserve; i++) sink.Write((byte)'0');
-        sink.Write((byte)'>');
-        int contentsEnd = sink.Length;
-        sink.WriteAscii("/M");
-        PdfSerializer.WriteString(sink, Encoding.ASCII.GetBytes(Documents.PdfText.FormatDate(when)));
-        WriteText(sink, "Name", certificate.GetNameInfo(X509NameType.SimpleName, false));
-        WriteText(sink, "Reason", options.Reason);
-        WriteText(sink, "Location", options.Location);
-        WriteText(sink, "ContactInfo", options.ContactInfo);
-        sink.Write(">>\nendobj\n"u8);
+        int byteRangeAt = 0, contentsStart = 0, contentsEnd = 0;
+        if (placeholder is Placeholder p)
+        {
+            offsets[p.Number] = (sink.Length, 0);
+            sink.WriteAscii($"{p.Number} 0 obj\n<<{p.Head}/ByteRange[");
+            byteRangeAt = sink.Length;
+            sink.WriteAscii(string.Join(" ", Enumerable.Repeat(new string('0', ByteRangeDigits), 4)));
+            sink.WriteAscii("]/Contents");
+            contentsStart = sink.Length;
+            sink.Write((byte)'<');
+            for (int i = 0; i < 2 * p.Reserve; i++) sink.Write((byte)'0');
+            sink.Write((byte)'>');
+            contentsEnd = sink.Length;
+            p.Tail?.Invoke(sink);
+            sink.Write(">>\nendobj\n"u8);
+        }
 
         int maxNumber = offsets.Keys.Max();
         PdfDictionary trailer = new()
         {
-            ["Size"] = PdfNumber.FromInteger(Math.Max(maxNumber + (file.UsesXrefStreams ? 2 : 1), file.Trailer["Size"] is PdfNumber { IsInteger: true } sz ? sz.IntegerValue : 0)),
-            ["Root"] = file.Trailer["Root"]!,
-            ["Prev"] = PdfNumber.FromInteger(LastStartXref(original)),
+            ["Size"] = PdfNumber.FromInteger(Math.Max(maxNumber + (_file.UsesXrefStreams ? 2 : 1), _file.Trailer["Size"] is PdfNumber { IsInteger: true } sz ? sz.IntegerValue : 0)),
+            ["Root"] = _file.Trailer["Root"]!,
+            ["Prev"] = PdfNumber.FromInteger(LastStartXref(_original)),
         };
-        if (file.Trailer["Info"] is PdfObject info) trailer.Set("Info", info);
-        if (file.Resolve(file.Trailer["ID"]) is PdfArray id) trailer.Set("ID", id);
+        if (_file.Trailer["Info"] is PdfObject info) trailer.Set("Info", info);
+        if (_file.Resolve(_file.Trailer["ID"]) is PdfArray id) trailer.Set("ID", id);
 
         long xref = sink.Length;
-        if (file.UsesXrefStreams)
+        if (_file.UsesXrefStreams)
         {
             int xrefNumber = maxNumber + 1;
             offsets[xrefNumber] = (xref, 0);
@@ -460,13 +817,6 @@ public static class PdfSigner
         return (sink.ToArray(), byteRangeAt, contentsStart, contentsEnd);
     }
 
-    private static void WriteText(ByteSink sink, string key, string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return;
-        PdfSerializer.WriteName(sink, key);
-        PdfSerializer.WriteString(sink, PdfString.FromText(value!).Value);
-    }
-
     private static IEnumerable<(int Start, int Count)> Runs(IEnumerable<int> numbers)
     {
         int start = -1, previous = -2;
@@ -495,19 +845,6 @@ public static class PdfSigner
         return value;
     }
 
-    internal static HashAlgorithmName HashName(PdfDigestAlgorithm digest) => digest switch
-    {
-        PdfDigestAlgorithm.Sha384 => HashAlgorithmName.SHA384,
-        PdfDigestAlgorithm.Sha512 => HashAlgorithmName.SHA512,
-        _ => HashAlgorithmName.SHA256,
-    };
-
-    /// <summary>The hash of the file outside the Contents hex string.</summary>
-    internal static byte[] Hash(HashAlgorithmName name, byte[] data, int gapStart, int gapEnd, int? end = null)
-    {
-        using IncrementalHash hash = IncrementalHash.CreateHash(name);
-        hash.AppendData(data, 0, gapStart);
-        hash.AppendData(data, gapEnd, (end ?? data.Length) - gapEnd);
-        return hash.GetHashAndReset();
-    }
+    /// <summary>A signature or timestamp dictionary written by hand: its number, its entries before ByteRange, the bytes reserved for Contents, and entries after Contents.</summary>
+    public readonly record struct Placeholder(int Number, string Head, int Reserve, Action<ByteSink>? Tail);
 }

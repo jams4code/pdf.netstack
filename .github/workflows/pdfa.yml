@@ -1,0 +1,142 @@
+name: PDF/A validation
+
+# Builds PDF/A files with the library (the PdfASampleTests test writes them when
+# PDFNETSTACK_PDFA_SAMPLES is set) and validates each one with the veraPDF command line tool
+# against the flavour its file name starts with: 2b, 2u, 3b or 3u.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  VERAPDF_VERSION: 1.28.2
+
+jobs:
+  verapdf:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Locate veraPDF
+        run: echo "VERAPDF_HOME=$HOME/verapdf" >> "$GITHUB_ENV"
+
+      - name: Cache veraPDF
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/verapdf
+          key: verapdf-greenfield-${{ env.VERAPDF_VERSION }}-${{ runner.os }}
+
+      # The release installer is an IzPack jar; an automated installation file picks the packs
+      # (https://docs.verapdf.org/install/). The application jar ships in the "veraPDF GUI" pack
+      # and the verapdf launcher in the scripts pack, so both are needed for the command line.
+      - name: Install veraPDF
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          minor="${VERAPDF_VERSION%.*}"
+          work="$RUNNER_TEMP/verapdf-installer"
+          mkdir -p "$work"
+          curl -fsSL -o "$work/installer.zip" "https://software.verapdf.org/rel/${minor}/verapdf-greenfield-${VERAPDF_VERSION}-installer.zip"
+          unzip -q "$work/installer.zip" -d "$work"
+          jar="$(find "$work" -name 'verapdf-izpack-installer-*.jar' | head -n 1)"
+          cat > "$work/auto-install.xml" <<EOF
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+              <installpath>${VERAPDF_HOME}</installpath>
+            </com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+              <pack index="0" name="veraPDF GUI" selected="true"/>
+              <pack index="1" name="veraPDF Mac and *nix Scripts" selected="true"/>
+              <pack index="2" name="veraPDF Validation model" selected="false"/>
+              <pack index="3" name="veraPDF Documentation" selected="false"/>
+              <pack index="4" name="veraPDF Sample Plugins" selected="false"/>
+            </com.izforge.izpack.panels.packs.PacksPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+            <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+          </AutomatedInstallation>
+          EOF
+          java -jar "$jar" "$work/auto-install.xml"
+          test -x "$VERAPDF_HOME/verapdf"
+
+      - name: veraPDF version
+        run: '"$VERAPDF_HOME/verapdf" --version'
+
+      - name: Build PDF/A samples
+        env:
+          PDFNETSTACK_PDFA_SAMPLES: ${{ runner.temp }}/pdfa
+        run: dotnet test tests/PdfNetStack.Tests -c Release -f net10.0 --filter "FullyQualifiedName~PdfASampleTests"
+
+      - name: Validate with veraPDF
+        env:
+          SAMPLES: ${{ runner.temp }}/pdfa
+          REPORTS: ${{ runner.temp }}/pdfa-reports
+        run: |
+          set -uo pipefail
+          mkdir -p "$REPORTS"
+          shopt -s nullglob
+          files=("$SAMPLES"/*.pdf)
+          if [ ${#files[@]} -eq 0 ]; then echo "No samples were written."; exit 1; fi
+          for file in "${files[@]}"; do
+            name="$(basename "$file" .pdf)"
+            flavour="${name%%-*}"
+            # The exit code is not documented, so the XML report decides.
+            "$VERAPDF_HOME/verapdf" --flavour "$flavour" --format xml "$file" > "$REPORTS/$name.xml" || true
+          done
+          python3 - "$REPORTS" <<'EOF'
+          import pathlib, sys
+          import xml.etree.ElementTree as ET
+
+          failed = 0
+          for report in sorted(pathlib.Path(sys.argv[1]).glob("*.xml")):
+              try:
+                  root = ET.parse(report).getroot()
+              except ET.ParseError as e:
+                  print(f"FAIL {report.stem}: the report cannot be read ({e})")
+                  failed += 1
+                  continue
+              results = [e for e in root.iter() if e.tag.endswith("validationReport")]
+              if not results:
+                  print(f"FAIL {report.stem}: no validation result (the file could not be parsed)")
+                  failed += 1
+                  continue
+              for result in results:
+                  profile = result.get("profileName", "")
+                  if result.get("isCompliant") == "true":
+                      print(f"PASS {report.stem}: {profile}")
+                      continue
+                  failed += 1
+                  print(f"FAIL {report.stem}: {profile}")
+                  for rule in result.iter():
+                      if rule.tag.endswith("rule") and rule.get("status") == "failed":
+                          description = next((d.text for d in rule if d.tag.endswith("description")), "")
+                          print(f"  {rule.get('specification', '')} {rule.get('clause', '')}-{rule.get('testNumber', '')}: {description}")
+          sys.exit(1 if failed else 0)
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pdfa-samples-and-reports
+          path: |
+            ${{ runner.temp }}/pdfa
+            ${{ runner.temp }}/pdfa-reports

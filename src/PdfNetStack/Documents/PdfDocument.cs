@@ -56,6 +56,9 @@ public sealed class PdfDocument
 
     /// <summary>True once drawing or images used DeviceCMYK, which PDF/A with an RGB intent forbids.</summary>
     internal bool UsesDeviceCmyk { get; set; }
+
+    /// <summary>The Factur-X invoice attached with <see cref="PdfInvoice.Attach"/>, written to the PDF/A-3 metadata on save.</summary>
+    internal InvoiceMetadata? Invoice { get; set; }
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -255,6 +258,11 @@ public sealed class PdfDocument
         // everything drawn, so they are written now.
         foreach (Fonts.FontResource font in _fonts.Values) font.Finish();
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
+        if (Invoice is not null && options.Conformance == PdfConformance.None)
+        {
+            throw new InvalidOperationException("A Factur-X or ZUGFeRD invoice must be saved as PDF/A-3: set PdfSaveOptions.Conformance to PdfA3B or PdfA3U.");
+        }
+
         if (options.Conformance != PdfConformance.None) PdfArchive.Prepare(this, options.Conformance);
         Security.RequireOwner();
 

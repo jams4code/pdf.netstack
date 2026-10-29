@@ -394,7 +394,8 @@ public sealed class PdfAttachmentCollection : IReadOnlyList<PdfAttachment>
     private List<PdfAttachment> Read() =>
         [.. Entries().Select(e => (e.Name, Spec: _doc.Resolve(e.Spec) as PdfDictionary)).Where(e => e.Spec is not null).Select(e => new PdfAttachment(_doc, e.Name, e.Spec!))];
 
-    private List<(string Name, PdfObject Spec)> Entries()
+    /// <summary>The name tree's entries as stored: names with references to file specifications, or direct dictionaries.</summary>
+    internal List<(string Name, PdfObject Spec)> Entries()
     {
         var entries = new List<(string, PdfObject)>();
         if (_doc.Resolve(_doc.Catalog["Names"]) is not PdfDictionary names || _doc.Resolve(names["EmbeddedFiles"]) is not PdfDictionary tree) return entries;

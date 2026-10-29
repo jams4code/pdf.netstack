@@ -45,13 +45,14 @@ internal static class PdfArchive
         CheckScripts(doc, problems);
         CheckAnnotations(doc, problems);
         PrepareAttachments(doc, part, problems);
+        InvoiceMetadata? invoice = part == 3 ? PdfInvoice.Check(doc, problems) : null;
         if (problems.Count > 0)
         {
             throw new InvalidOperationException("The document cannot be saved as PDF/A-" + part + (unicode ? "u" : "b") + ":\n- " + string.Join("\n- ", problems.Distinct()));
         }
 
         AddOutputIntent(doc);
-        WriteMetadata(doc, part, unicode ? "U" : "B");
+        WriteMetadata(doc, part, unicode ? "U" : "B", invoice);
     }
 
     private static void CheckFonts(PdfDocument doc, List<string> problems, bool unicode)
@@ -187,7 +188,12 @@ internal static class PdfArchive
     private static void PrepareAttachments(PdfDocument doc, int part, List<string> problems)
     {
         var specs = new List<(PdfDictionary Spec, PdfObject? Reference)>();
-        foreach (PdfAttachment attachment in doc.Attachments) specs.Add((attachment.Dictionary, null));
+        // Attachment entries keep their references, so the associated file is the same object, not a copy.
+        foreach ((string _, PdfObject entry) in doc.Attachments.Entries())
+        {
+            if (doc.Resolve(entry) is PdfDictionary spec) specs.Add((spec, entry as PdfReference));
+        }
+
         foreach (PdfPage page in doc.Pages)
         {
             if (doc.Resolve(page.Dictionary["Annots"]) is not PdfArray annots) continue;
@@ -251,7 +257,7 @@ internal static class PdfArchive
     }
 
     /// <summary>XMP with the PDF/A identification and the same values as the information dictionary.</summary>
-    private static void WriteMetadata(PdfDocument doc, int part, string conformance)
+    private static void WriteMetadata(PdfDocument doc, int part, string conformance, InvoiceMetadata? invoice)
     {
         PdfDocumentInfo info = doc.Info;
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -282,7 +288,9 @@ internal static class PdfArchive
         x.Append("<xmp:MetadataDate>").Append(Iso(now)).Append("</xmp:MetadataDate>\n");
         x.Append("<xmpMM:DocumentID>uuid:").Append(uuid).Append("</xmpMM:DocumentID>\n");
         x.Append("<xmpMM:InstanceID>uuid:").Append(Guid.NewGuid()).Append("</xmpMM:InstanceID>\n");
-        x.Append("</rdf:Description>\n</rdf:RDF>\n</x:xmpmeta>\n");
+        x.Append("</rdf:Description>\n");
+        if (invoice is not null) AppendInvoice(x, invoice);
+        x.Append("</rdf:RDF>\n</x:xmpmeta>\n");
         x.Append(' ', 2000).Append("\n<?xpacket end=\"w\"?>");
 
         // Metadata stays uncompressed so archival tools can read it without decoding.
@@ -290,6 +298,42 @@ internal static class PdfArchive
         stream.Dictionary.Set("Type", new PdfName("Metadata"));
         stream.Dictionary.Set("Subtype", new PdfName("XML"));
         doc.Catalog.Set("Metadata", doc.AddObject(stream));
+    }
+
+    /// <summary>
+    /// The Factur-X properties and, as PDF/A requires for any schema outside its predefined list,
+    /// the extension schema that declares them (ISO 19005-3, 6.6.2.3; Factur-X 1.0, 6.2.2).
+    /// </summary>
+    private static void AppendInvoice(StringBuilder x, InvoiceMetadata invoice)
+    {
+        x.Append("<rdf:Description rdf:about=\"\" xmlns:fx=\"").Append(PdfInvoice.Namespace).Append("\">\n");
+        x.Append("<fx:DocumentType>INVOICE</fx:DocumentType>\n");
+        x.Append("<fx:DocumentFileName>").Append(Escape(invoice.FileName)).Append("</fx:DocumentFileName>\n");
+        x.Append("<fx:Version>").Append(Escape(invoice.Version)).Append("</fx:Version>\n");
+        x.Append("<fx:ConformanceLevel>").Append(Escape(invoice.ConformanceLevel)).Append("</fx:ConformanceLevel>\n");
+        x.Append("</rdf:Description>\n");
+        x.Append("<rdf:Description rdf:about=\"\" xmlns:pdfaExtension=\"http://www.aiim.org/pdfa/ns/extension/\"");
+        x.Append(" xmlns:pdfaSchema=\"http://www.aiim.org/pdfa/ns/schema#\" xmlns:pdfaProperty=\"http://www.aiim.org/pdfa/ns/property#\">\n");
+        x.Append("<pdfaExtension:schemas>\n<rdf:Bag>\n<rdf:li rdf:parseType=\"Resource\">\n");
+        x.Append("<pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>\n");
+        x.Append("<pdfaSchema:namespaceURI>").Append(PdfInvoice.Namespace).Append("</pdfaSchema:namespaceURI>\n");
+        x.Append("<pdfaSchema:prefix>fx</pdfaSchema:prefix>\n");
+        x.Append("<pdfaSchema:property>\n<rdf:Seq>\n");
+        Property("DocumentFileName", "The name of the embedded XML document");
+        Property("DocumentType", "The type of the hybrid document in capital letters, such as INVOICE or ORDER");
+        Property("Version", "The version of the standard applying to the embedded XML document");
+        Property("ConformanceLevel", "The conformance level of the embedded XML document");
+        x.Append("</rdf:Seq>\n</pdfaSchema:property>\n</rdf:li>\n</rdf:Bag>\n</pdfaExtension:schemas>\n</rdf:Description>\n");
+
+        void Property(string name, string description)
+        {
+            x.Append("<rdf:li rdf:parseType=\"Resource\">\n");
+            x.Append("<pdfaProperty:name>").Append(name).Append("</pdfaProperty:name>\n");
+            x.Append("<pdfaProperty:valueType>Text</pdfaProperty:valueType>\n");
+            x.Append("<pdfaProperty:category>external</pdfaProperty:category>\n");
+            x.Append("<pdfaProperty:description>").Append(description).Append("</pdfaProperty:description>\n");
+            x.Append("</rdf:li>\n");
+        }
     }
 
     private static string Iso(DateTimeOffset d) => d.ToString("yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture)
