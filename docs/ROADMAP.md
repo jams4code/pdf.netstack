@@ -46,9 +46,10 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    open action, right to left reading, page labels, language, custom properties, file
    attachments.
 9. **Signatures and PDF/A.** PDF/A-2b, 2u, 3b and 3u output: done for 1.1 (checks, sRGB output
-   intent, XMP sync, associated files). Next: veraPDF validation in CI, Factur-X and ZUGFeRD
-   XMP extension schemas, PAdES baseline signing with incremental save, and a signature
-   validation report.
+   intent, XMP sync, associated files). PAdES B-B signing in an incremental update, RSA and
+   ECDSA, visible appearances, verification of every signature: done for 1.1. Next: veraPDF
+   validation in CI, Factur-X and ZUGFeRD XMP extension schemas, RFC 3161 timestamps (B-T),
+   long term validation data (B-LT, DSS), certificate chain and revocation checks.
 
 ## HTML and CSS to PDF
 

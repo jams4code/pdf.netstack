@@ -95,6 +95,9 @@ internal sealed class PdfSerializer
     /// <summary>Applied to every string before it is written; used for encryption of in-file objects.</summary>
     public Func<byte[], byte[]>? StringTransform { get; set; }
 
+    /// <summary>Write each reference's own generation, for incremental updates that keep object numbers.</summary>
+    public bool KeepGenerations { get; set; }
+
     public void Write(ByteSink sink, PdfObject obj)
     {
         switch (obj)
@@ -133,7 +136,9 @@ internal sealed class PdfSerializer
                 {
                     Separate(sink);
                     sink.WriteInteger(target);
-                    sink.Write(" 0 R"u8);
+                    sink.Write((byte)' ');
+                    sink.WriteInteger(KeepGenerations ? r.Generation : 0);
+                    sink.Write(" R"u8);
                 }
 
                 break;

@@ -65,6 +65,11 @@
   repaired are listed together in one exception; the output gets an sRGB output intent with a
   profile the library generates, XMP metadata synchronized with the document information,
   printable annotations, and PDF/A-3 associated file entries for attachments.
+- Digital signatures: `PdfSigner.Sign` adds a PAdES B-B signature (ETSI.CAdES.detached, SHA-256,
+  384 or 512, RSA or ECDSA, ESS signing certificate v2) in an incremental update, matching the
+  file's cross-reference style, optionally with a visible appearance. `PdfSigner.Verify` checks
+  each signature's byte range, digest and signature and reports the signer certificate. The CMS
+  structure is encoded by the library; no new dependency.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

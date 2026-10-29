@@ -49,6 +49,16 @@ internal static class Compat
 #endif
     }
 
+    /// <summary>A certificate from its DER encoding (no private key).</summary>
+    public static System.Security.Cryptography.X509Certificates.X509Certificate2 LoadCertificate(byte[] der)
+    {
+#if NET9_0_OR_GREATER
+        return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(der);
+#else
+        return new System.Security.Cryptography.X509Certificates.X509Certificate2(der);
+#endif
+    }
+
     public static void ThrowIfNegative(int value, string name)
     {
 #if NET8_0_OR_GREATER

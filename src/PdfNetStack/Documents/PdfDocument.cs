@@ -451,6 +451,13 @@ public sealed class PdfDocument
         return reference;
     }
 
+    /// <summary>Writes the widths, encodings and subsets of the fonts used so far.</summary>
+    internal void FinishFonts()
+    {
+        foreach (Drawing.PdfGraphics g in _openGraphics.ToArray()) g.Dispose();
+        foreach (Fonts.FontResource font in _fonts.Values) font.Finish();
+    }
+
     /// <summary>The document's resource for <paramref name="font"/>, created on first use.</summary>
     internal Fonts.FontResource GetFontResource(Fonts.PdfFont font)
     {
