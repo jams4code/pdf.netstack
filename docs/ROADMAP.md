@@ -69,9 +69,17 @@ quality output, built on the canvas, fonts and text layout above.
    types, `display: contents`, `::before`, `::after` and `::marker` with counters, `counters()`,
    `attr()` and quotes, HTML list numbering (`start`, `reversed`, `value`), anonymous blocks,
    inlines split around blocks, table and flex fix-ups, white space collapsing across inline
-   boundaries, images with alt text fallback. Next: block and inline layout.
-2. **Block and inline layout.** The box model, block formatting, inline formatting with the text
-   engine (fonts, bidi, Arabic), floats, positioning, margins and collapsing, overflow clipping.
+   boundaries, images with alt text fallback.
+2. **Block and inline layout.** Done: block flow with margin collapsing (siblings, parent and
+   child, empty blocks), widths and auto margins with min and max, box-sizing, percentage
+   heights against definite containers, relative positioning; inline layout over the whole
+   paragraph with UAX #14 breaks, UAX #9 reordering, shaping, font fallback per character,
+   inline box edges, justification, soft hyphens, `overflow-wrap`, `word-break: break-all`,
+   line heights from the strut and `line-height`, every `vertical-align` value; inline
+   blocks shrink to fit, replaced elements keep their ratio under `max-width`, outside list
+   markers sit on the first baseline. Fonts: `@font-face` (with weight ranges and `local()`),
+   caller fonts, installed fonts, generic families as the standard 14 fonts, and installed
+   fonts with wide coverage as fallbacks. Next: floats, absolute positioning, overflow.
 3. **Paged media.** `@page` sizes and margins, margin boxes for running headers and footers,
    page counters, `break-before`, `break-after`, `break-inside`, orphans and widows.
 4. **Visual CSS.** Backgrounds and background images, borders with radius, box shadows,
