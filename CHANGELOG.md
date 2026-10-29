@@ -139,6 +139,10 @@
 - Kashida justification (`PdfParagraph.Kashida`, off by default): justified Arabic lines elongate
   one join per word with tatweel, at the point Arabic typography prefers, up to three tatweel
   widths, before spaces widen. Tatweels carry no text, so copying gives the original words.
+- Fixed: a mark drawn with a vertical offset (Arabic dots and vowels in many fonts) moved every
+  glyph after it by its horizontal offset, so letters failed to join and lines came out wider
+  than measured. Spaces at the edge of a right to left run are now written outside its
+  ActualText, so viewers no longer read them on the wrong side of the neighboring run.
 - Tagged PDF from HTML (`HtmlConverterOptions.Tagged`, on by default): headings, paragraphs,
   lists, tables with header and data cells, figures with their alt text, links tied to their
   annotations, sections and quotes form a structure tree in reading order (ISO 32000-1, 14.8);

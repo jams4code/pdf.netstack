@@ -432,6 +432,14 @@ public sealed class PdfGraphics : IDisposable
         // Right to left text, ligatures and positioned marks do not copy back in order from the
         // glyphs alone; ActualText carries the original text for copying and search.
         bool actualText = NeedsActualText(text, glyphs);
+        if (actualText && SplitEdgeSpaces(glyphs, text, size, x, out var parts))
+        {
+            // Spaces at the run's edges are written as themselves, where they are seen: inside
+            // the span, a logical leading space of right to left text would read on the wrong side.
+            foreach ((List<ShapedGlyph> part, double px, string partText) in parts) DrawGlyphs(part, font, size, pen, brush, px, y, partText);
+            return;
+        }
+
         if (actualText) BeginActualText(text);
         try
         {
@@ -557,6 +565,35 @@ public sealed class PdfGraphics : IDisposable
     {
         ThrowIfDisposed();
         _w.Op("EMC");
+    }
+
+    /// <summary>
+    /// Splits a run into the spaces at its visual left, the rest, and the spaces at its visual
+    /// right, with each part's pen position. False when there are none, or when the spaces are not
+    /// also at the ends of the text.
+    /// </summary>
+    private static bool SplitEdgeSpaces(List<ShapedGlyph> glyphs, string text, double size, double x, out List<(List<ShapedGlyph> Glyphs, double X, string Text)> parts)
+    {
+        parts = [];
+        static bool IsSpace(ShapedGlyph g) => g.CodePoint == ' ' && (g.Text ?? " ") == " ";
+        int left = 0;
+        while (left < glyphs.Count && IsSpace(glyphs[left])) left++;
+        int right = glyphs.Count;
+        while (right > left && IsSpace(glyphs[right - 1])) right--;
+        string inner = text.Trim(' ');
+        int spaces = left + glyphs.Count - right;
+        if (spaces == 0 || right == left || text.Length - inner.Length != spaces) return false;
+
+        double at = x;
+        foreach ((int start, int end, string partText) in new[] { (0, left, new string(' ', left)), (left, right, inner), (right, glyphs.Count, new string(' ', glyphs.Count - right)) })
+        {
+            if (end == start) continue;
+            List<ShapedGlyph> part = glyphs.GetRange(start, end - start);
+            parts.Add((part, at, partText));
+            at += part.Sum(g => g.Advance) * size / 1000;
+        }
+
+        return true;
     }
 
     private static bool NeedsActualText(string text, List<ShapedGlyph> glyphs)
@@ -841,11 +878,12 @@ public sealed class PdfGraphics : IDisposable
 
         _w.Op("ET");
 
+        // A rise change ends the TJ array; the adjustment still owed (the previous glyph's offset
+        // and width difference) carries into the next one, so the pen is never lost.
         void Flush()
         {
             if (run.Count > 0) parts.Add(([.. run], 0));
             run.Clear();
-            pending = 0;
             if (parts.Count == 0) return;
             if (parts.Count == 1 && parts[0].Adjust == 0)
             {
