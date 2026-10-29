@@ -101,6 +101,57 @@ public sealed class PdfPage
         finder.Run(this);
         return finder.Images;
     }
+
+    /// <summary>
+    /// The page's text in reading order: lines top to bottom, words separated by a space, lines by
+    /// a line feed. Damaged content and fonts are read as far as they go.
+    /// </summary>
+    /// <remarks>
+    /// Lines follow each run of text's own baseline, so rotated text and vertical writing read in
+    /// order too. Columns are not detected: side by side columns whose lines share a baseline read
+    /// as one line. A character the font gives no Unicode value for reads as U+FFFD; see
+    /// <see cref="GetLetters"/> for what is decoded.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// using PdfDocument doc = PdfDocument.Open("report.pdf");
+    /// foreach (PdfPage page in doc.Pages)
+    /// {
+    ///     Console.WriteLine(page.ExtractText());
+    /// }
+    ///
+    /// // Words with where they are, for search or redaction.
+    /// foreach (PdfWord word in doc.Pages[0].GetWords())
+    /// {
+    ///     Console.WriteLine($"{word.Text}: {word.Bounds}");
+    /// }
+    /// </code>
+    /// </example>
+    public string ExtractText() => Text.Extraction.TextLayout.Text(GetLetters());
+
+    /// <summary>
+    /// The glyphs the page draws, in content order, with their text, box, baseline and font. Text
+    /// inside form XObjects is included. Coordinates are in default user space, before /Rotate.
+    /// </summary>
+    /// <remarks>
+    /// Text comes from the font's /ToUnicode map, else from its encoding and glyph names (Adobe
+    /// Glyph List, uniXXXX and uXXXX names), else from an embedded TrueType program's cmap. Spans
+    /// marked with /ActualText are one letter holding that text. Composite fonts with a predefined
+    /// CJK CMap other than Identity-H, Identity-V and the Unicode CMaps rely on /ToUnicode for their
+    /// text and use the default width for spacing. At most 500,000 letters are read per page.
+    /// </remarks>
+    public IReadOnlyList<PdfLetter> GetLetters()
+    {
+        var extractor = new Text.Extraction.TextExtractor(Owner);
+        extractor.Run(this);
+        return extractor.Letters;
+    }
+
+    /// <summary>
+    /// The page's words in reading order, as <see cref="ExtractText"/> reads them: letters on one
+    /// line, split at space characters and at gaps wider than 0.15 times the font size.
+    /// </summary>
+    public IReadOnlyList<PdfWord> GetWords() => [.. Text.Extraction.TextLayout.Lines(GetLetters()).SelectMany(line => line)];
 }
 
 /// <summary>The ordered pages of a document.</summary>

@@ -6,12 +6,12 @@ namespace PdfNetStack.Fonts.OpenType;
 
 /// <summary>
 /// One font of an OpenType file: TrueType outlines (glyf) or CFF outlines, from a .ttf, .otf, a
-/// collection (.ttc, .otc) or a WOFF file. Reads what layout and embedding need: metrics, names,
-/// the Unicode cmap and advance widths.
+/// collection (.ttc, .otc) or a WOFF or WOFF2 file. Reads what layout and embedding need:
+/// metrics, names, the Unicode cmap and advance widths.
 /// </summary>
 internal sealed class OpenTypeFile
 {
-    /// <summary>Total size a WOFF file may decompress to.</summary>
+    /// <summary>Total size a WOFF or WOFF2 file may decompress to.</summary>
     private const int MaxWoffSize = 128 << 20;
 
     /// <summary>Cmap entries to visit at most. Valid cmaps stay far below; overlapping ranges could not.</summary>
@@ -170,10 +170,18 @@ internal sealed class OpenTypeFile
     public string PostScriptName { get; }
 
     /// <summary>Number of fonts in a file: the count of a collection, otherwise 1.</summary>
-    public static int CountFonts(ReadOnlySpan<byte> data) =>
-        data.Length >= 12 && Tag(data, 0) == "ttcf" ? (int)Math.Min(U32(data, 8), 0xFFFF) : 1;
+    public static int CountFonts(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 12) return 1;
+        return Tag(data, 0) switch
+        {
+            "ttcf" => (int)Math.Min(U32(data, 8), 0xFFFF),
+            "wOF2" => Woff2.CountFonts(data, MaxWoffSize),
+            _ => 1,
+        };
+    }
 
-    /// <summary>Parses font <paramref name="index"/> of a .ttf, .otf, .ttc, .otc or .woff file.</summary>
+    /// <summary>Parses font <paramref name="index"/> of a .ttf, .otf, .ttc, .otc, .woff or .woff2 file.</summary>
     /// <exception cref="FontFormatException">The data is not a supported font.</exception>
     public static OpenTypeFile Parse(byte[] data, int index)
     {
@@ -182,7 +190,10 @@ internal sealed class OpenTypeFile
         switch (signature)
         {
             case "wOF2":
-                throw new FontFormatException("WOFF2 fonts are not supported yet. Use the TTF, OTF or WOFF version of the font.");
+                int fonts = Woff2.CountFonts(data, MaxWoffSize);
+                if (index < 0 || index >= fonts) throw new ArgumentOutOfRangeException(nameof(index), fonts == 1 ? "A WOFF2 file holds one font." : $"The collection holds {fonts} fonts.");
+                byte[] sfnt = Woff2.Decode(data, MaxWoffSize);
+                return new OpenTypeFile(sfnt, Tag(sfnt, 0) == "ttcf" ? Offset32(sfnt, 12 + 4 * index) : 0);
             case "wOFF":
                 if (index != 0) throw new ArgumentOutOfRangeException(nameof(index), "A WOFF file holds one font.");
                 return new OpenTypeFile(DecodeWoff(data), 0);
@@ -509,6 +520,85 @@ internal static class SfntBuilder
         }
 
         if (headOffset >= 0) w.SetU32(headOffset + 8, 0xB1B0AFBA - FontData.Checksum(w.Written));
+        return w.ToArray();
+    }
+
+    /// <summary>
+    /// Builds a TTC (version 1.0): the header, one table directory per font, then the shared tables.
+    /// Each 'head' table gets the checkSumAdjustment of the first font that uses it.
+    /// </summary>
+    public static byte[] BuildCollection(List<(uint Flavor, int[] Tables)> fonts, List<(string Tag, byte[] Data)> tables)
+    {
+        foreach ((string tag, byte[] data) in tables)
+        {
+            if (tag != "head") continue;
+            if (data.Length < 54) throw new FontFormatException("Font head table is truncated.");
+            Array.Clear(data, 8, 4);
+        }
+
+        int offset = 12 + 4 * fonts.Count + fonts.Sum(f => 12 + 16 * f.Tables.Length);
+        var offsets = new int[tables.Count];
+        var checksums = new uint[tables.Count];
+        for (int i = 0; i < tables.Count; i++)
+        {
+            offsets[i] = offset;
+            checksums[i] = FontData.Checksum(tables[i].Data);
+            offset += (tables[i].Data.Length + 3) & ~3;
+        }
+
+        var w = new FontWriter(offset);
+        w.U32(0x74746366);
+        w.U32(0x00010000);
+        w.U32((uint)fonts.Count);
+        int directory = 12 + 4 * fonts.Count;
+        foreach ((_, int[] indices) in fonts)
+        {
+            w.U32((uint)directory);
+            directory += 12 + 16 * indices.Length;
+        }
+
+        var adjustments = new Dictionary<int, uint>();
+        foreach ((uint flavor, int[] indices) in fonts)
+        {
+            int[] sorted = [.. indices.OrderBy(i => tables[i].Tag, StringComparer.Ordinal)];
+            int start = w.Length;
+            int power = 1, log = 0;
+            while (power * 2 <= sorted.Length)
+            {
+                power *= 2;
+                log++;
+            }
+
+            w.U32(flavor);
+            w.U16(sorted.Length);
+            w.U16(power * 16);
+            w.U16(log);
+            w.U16(sorted.Length * 16 - power * 16);
+            uint sum = 0;
+            foreach (int i in sorted)
+            {
+                foreach (char c in tables[i].Tag) w.U8(c);
+                w.U32(checksums[i]);
+                w.U32((uint)offsets[i]);
+                w.U32((uint)tables[i].Data.Length);
+                sum += checksums[i];
+            }
+
+            // The font's checksum as if it stood alone: its directory plus its tables.
+            sum += FontData.Checksum(w.Written.Slice(start));
+            foreach (int i in sorted)
+            {
+                if (tables[i].Tag == "head" && !adjustments.ContainsKey(i)) adjustments[i] = 0xB1B0AFBA - sum;
+            }
+        }
+
+        foreach ((_, byte[] data) in tables)
+        {
+            w.Bytes(data);
+            w.Pad(4);
+        }
+
+        foreach (KeyValuePair<int, uint> adjustment in adjustments) w.SetU32(offsets[adjustment.Key] + 8, adjustment.Value);
         return w.ToArray();
     }
 }

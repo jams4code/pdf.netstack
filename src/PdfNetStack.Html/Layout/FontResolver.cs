@@ -107,7 +107,7 @@ internal sealed class FontResolver
                 }
                 catch (FontFormatException)
                 {
-                    // WOFF2 and other unsupported formats: try the next source.
+                    // Damaged or unsupported formats: try the next source.
                 }
             }
         }

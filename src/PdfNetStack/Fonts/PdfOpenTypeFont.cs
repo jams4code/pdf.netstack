@@ -7,13 +7,13 @@ namespace PdfNetStack.Fonts;
 
 /// <summary>
 /// A TrueType or OpenType font, embedded in the document as a subset of the glyphs actually drawn.
-/// Loads .ttf, .otf, collections (.ttc, .otc) and WOFF files. Text is searchable and copyable,
-/// and pairs are kerned from the font's GPOS or kern table.
+/// Loads .ttf, .otf, collections (.ttc, .otc), WOFF and WOFF2 files. Text is searchable and
+/// copyable, and pairs are kerned from the font's GPOS or kern table.
 /// </summary>
 /// <remarks>
 /// The font program is embedded, so the PDF shows the same glyphs everywhere, including in PDF/A.
-/// Variable fonts draw their default instance. CFF2 and WOFF2 fonts are not supported yet. Fonts
-/// whose license forbids embedding (OS/2 fsType) are refused when first drawn.
+/// Variable fonts draw their default instance. CFF2 fonts are not supported yet. Fonts whose
+/// license forbids embedding (OS/2 fsType) are refused when first drawn.
 /// </remarks>
 public sealed class PdfOpenTypeFont : PdfFont
 {
@@ -96,7 +96,7 @@ public sealed class PdfOpenTypeFont : PdfFont
 
     internal CffFont Cff => _cff ??= new CffFont(_file.Table("CFF "));
 
-    /// <summary>Loads a font from a file: .ttf, .otf, .ttc, .otc or .woff.</summary>
+    /// <summary>Loads a font from a file: .ttf, .otf, .ttc, .otc, .woff or .woff2.</summary>
     /// <param name="path">The font file.</param>
     /// <param name="index">For a collection, which of its fonts; see <see cref="CountFonts(byte[])"/>.</param>
     /// <exception cref="FontFormatException">The file is not a supported font.</exception>

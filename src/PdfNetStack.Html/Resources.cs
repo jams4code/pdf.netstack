@@ -100,7 +100,7 @@ internal sealed class Resources
         return reader.ReadToEnd();
     }
 
-    /// <summary>An image: JPEG, PNG or SVG; null when it is missing or not an image the library reads.</summary>
+    /// <summary>An image: JPEG, PNG, GIF or SVG; null when it is missing or not an image the library reads.</summary>
     public HtmlImage? LoadImage(string url)
     {
         if (_images.TryGetValue(url, out HtmlImage? cached)) return cached;

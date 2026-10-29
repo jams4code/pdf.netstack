@@ -49,6 +49,114 @@ internal sealed class CffFont
     /// <summary>CID of each glyph: the charset for a CID-keyed font, the glyph id itself otherwise.</summary>
     public int[] GlyphToCid { get; }
 
+    /// <summary>
+    /// The built-in encoding of a name-keyed font, code to glyph name (Technical Note 5176, 12 and
+    /// 13): the Standard or Expert encoding, or the font's own codes and supplements, naming glyphs
+    /// through the charset. Null for a CID-keyed font, which has none.
+    /// </summary>
+    /// <exception cref="FontFormatException">The encoding or charset is damaged.</exception>
+    public string?[]? BuiltInEncoding()
+    {
+        if (IsCidKeyed) return null;
+        int offset = Dict.Int(_top, OpEncoding) ?? 0;
+        if (offset == 0) return (string?[])Text.Extraction.FontEncodings.StandardEncoding.Clone();
+        if (offset == 1) return (string?[])CffStandardData.ExpertEncoding.Clone();
+
+        string?[] glyphs = GlyphNames();
+        var table = new string?[256];
+        ReadOnlySpan<byte> d = _cff;
+        int at = offset;
+        int format = U8(d, at++);
+        switch (format & 0x7F)
+        {
+            case 0:
+                // A code for each glyph from 1 on.
+                int codes = U8(d, at++);
+                for (int glyph = 1; glyph <= codes; glyph++)
+                {
+                    int code = U8(d, at++);
+                    if (glyph < glyphs.Length) table[code] = glyphs[glyph];
+                }
+
+                break;
+            case 1:
+                // Ranges of consecutive codes, for glyphs from 1 on.
+                int ranges = U8(d, at++);
+                for (int r = 0, glyph = 1; r < ranges; r++, at += 2)
+                {
+                    int first = U8(d, at), left = U8(d, at + 1);
+                    for (int code = first; code <= first + left && code <= 255; code++, glyph++)
+                    {
+                        if (glyph < glyphs.Length) table[code] = glyphs[glyph];
+                    }
+                }
+
+                break;
+            default:
+                throw new FontFormatException("CFF encoding format is invalid.");
+        }
+
+        // Supplements give further codes to glyphs by name, some of them glyphs that already have a code.
+        if ((format & 0x80) != 0)
+        {
+            int supplements = U8(d, at++);
+            for (int s = 0; s < supplements; s++, at += 3) table[U8(d, at)] = StringOf(U16(d, at + 1));
+        }
+
+        return table;
+    }
+
+    /// <summary>The glyph names of a name-keyed font: its charset, glyph id to string id to name.</summary>
+    private string?[] GlyphNames()
+    {
+        var names = new string?[_glyphCount];
+        if (names.Length > 0) names[0] = ".notdef";
+        int at = Dict.Int(_top, OpCharset) ?? 0;
+        if (at <= 2)
+        {
+            // The ISOAdobe charset is string ids 1 to 228 in order; the expert ones are lists of names.
+            IReadOnlyList<string> predefined = at switch
+            {
+                0 => CffStandardData.StandardStrings.Skip(1).Take(228).ToArray(),
+                1 => CffStandardData.ExpertCharset,
+                _ => CffStandardData.ExpertSubsetCharset,
+            };
+            for (int g = 1; g < names.Length && g <= predefined.Count; g++) names[g] = predefined[g - 1];
+            return names;
+        }
+
+        ReadOnlySpan<byte> d = _cff;
+        int format = U8(d, at++);
+        if (format == 0)
+        {
+            for (int g = 1; g < names.Length; g++, at += 2) names[g] = StringOf(U16(d, at));
+            return names;
+        }
+
+        if (format is not (1 or 2)) throw new FontFormatException("CFF charset format is invalid.");
+        for (int g = 1; g < names.Length;)
+        {
+            int first = U16(d, at);
+            int left = format == 1 ? U8(d, at + 2) : U16(d, at + 2);
+            at += format == 1 ? 3 : 4;
+            for (int i = 0; i <= left && g < names.Length; i++) names[g++] = StringOf(first + i);
+        }
+
+        return names;
+    }
+
+    /// <summary>A string id: a standard string, or one of the font's String INDEX; null past its end.</summary>
+    private string? StringOf(int sid)
+    {
+        if (sid < CffStandardData.StandardStringCount) return CffStandardData.StandardStrings[sid];
+        sid -= CffStandardData.StandardStringCount;
+        if (sid >= _strings.Count) return null;
+        ReadOnlySpan<byte> s = _strings.Item(_cff, sid);
+        var chars = new char[s.Length];
+        for (int i = 0; i < s.Length; i++) chars[i] = (char)s[i];
+        return new string(chars);
+    }
+
     /// <summary>Writes the subset: outlines for <paramref name="keep"/> only, same glyph ids.</summary>
     public byte[] Subset(ISet<int> keep)
     {

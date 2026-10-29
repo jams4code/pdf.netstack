@@ -4,3 +4,6 @@
 *.png binary
 *.pdf binary
 *.jpg binary
+*.woff2 binary
+*.br binary
+*.deflate binary

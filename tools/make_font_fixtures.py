@@ -3,7 +3,7 @@
 The fonts are synthetic: a dozen glyphs drawn as simple shapes, with known advances, metrics and
 kerning, so tests can check exact numbers without shipping any third party font.
 
-    pip install fonttools
+    pip install fonttools brotli
     python tools/make_font_fixtures.py
 
 Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
@@ -11,6 +11,15 @@ Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
                          GPOS kerning (a glyph pair and a class pair, in separate subtables)
     Test.ttc             a collection of Test-Regular and Test-Bold (USE_TYPO_METRICS, weight 700)
     Test-Regular.woff    WOFF 1.0 of Test-Regular.ttf
+    Test-Regular.woff2   WOFF 2.0 of Test-Regular.ttf, glyf and loca transformed
+    Test.woff2           WOFF 2.0 of Test.ttc: a collection with shared tables, glyf and loca
+                         transformed (fontTools has no collection encoder, so woff2_collection does it)
+    Test-Outlines.ttf    TrueType outlines for the WOFF2 glyf transform: quadratic curves, deltas
+                         of every triplet size, contours of 300, 520 and 800 points (the three
+                         long forms of 255UInt16), glyph and composite instructions, an overlap flag, a stored bounding box that
+                         differs from the points, scaled and 2x2 composites, a monospaced hmtx tail
+    Test-Outlines.woff2  WOFF 2.0 with glyf, loca and hmtx transformed
+    Test-Outlines-Untransformed.woff2  WOFF 2.0 with no table transformed
     Test-Restricted.ttf  Test-Regular with fsType 2, which forbids embedding
     Test-Regular.otf     name-keyed CFF, 1000 units per em, legacy 'kern' table
     Test-CID.otf         CID-keyed CFF whose CIDs differ from glyph ids (CID = 100 + 3 * glyph id)
@@ -22,16 +31,20 @@ Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
 """
 
 import json
+import math
+import struct
 
 from io import BytesIO
 from pathlib import Path
 
+import brotli
 from fontTools.cffLib import FDArrayIndex, FDSelect, FontDict
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.ttLib import TTCollection, TTFont, newTable
+from fontTools.ttLib import TTCollection, TTFont, getTableClass, newTable, woff2
+from fontTools.ttLib.tables import ttProgram
 from fontTools.ttLib.tables._k_e_r_n import KernTable_format_0
 
 OUT = Path(__file__).resolve().parent.parent / "tests" / "PdfNetStack.Tests" / "Fixtures" / "Fonts"
@@ -321,6 +334,193 @@ def shaping_reference(font_bytes, name):
     (OUT / "Test-Arabic.shaping.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+# name, code point, advance; drawn by draw_outline. The last three share an advance, so hmtx ends
+# with a monospaced run of left side bearings only.
+OUTLINE_GLYPHS = [
+    (".notdef", None, 500), ("space", 0x20, 250), ("O", 0x4F, 1000), ("Z", 0x5A, 700), ("I", 0x49, 350),
+    ("V", 0x56, 600), ("B", 0x42, 500), ("acute", 0xB4, 300), ("Oacute", 0xD3, 1000), ("OO", 0x152, 1000),
+    ("zero", 0x30, 1000), ("one", 0x31, 520), ("two", 0x32, 520), ("three", 0x33, 520),
+]
+
+# Point deltas covering every WOFF2 triplet size: x or y only, 4 bit, 8 bit, 12 bit and 16 bit.
+ZIGZAG = [(0, 7), (0, -300), (0, 1000), (9, 0), (-700, 0), (900, 0), (3, 4), (-20, 35), (60, -10), (-1, -64),
+          (200, 300), (-600, 500), (700, -700), (2000, -1500), (-3000, 4000), (12000, -9000), (-12000, 9000), (-500, -200)]
+
+
+def program(code):
+    p = ttProgram.Program()
+    p.fromBytecode(code)
+    return p
+
+
+def draw_outline(name, glyphs):
+    pen = TTGlyphPen(glyphs)
+    if name in (".notdef", "B"):
+        pen.moveTo((100, 0))
+        pen.lineTo((100, 700))
+        pen.lineTo((400, 700))
+        pen.lineTo((400, 0))
+        pen.closePath()
+    elif name == "O":
+        # An outer contour of on and off curve points, and a counter whose off curve points
+        # follow each other, with the on curve point between them implied.
+        pen.moveTo((500, 0))
+        pen.qCurveTo((800, 0), (800, 350))
+        pen.qCurveTo((800, 700), (500, 700))
+        pen.qCurveTo((200, 700), (200, 350))
+        pen.qCurveTo((200, 0), (500, 0))
+        pen.closePath()
+        pen.moveTo((500, 120))
+        pen.qCurveTo((320, 120), (320, 580), (500, 580))
+        pen.qCurveTo((680, 580), (680, 120), (500, 120))
+        pen.closePath()
+    elif name == "Z":
+        x, y = -50, -60
+        pen.moveTo((x, y))
+        for dx, dy in ZIGZAG:
+            x, y = x + dx, y + dy
+            pen.lineTo((x, y))
+        pen.closePath()
+    elif name == "I":
+        pen.moveTo((100, 0))
+        pen.lineTo((100, 700))
+        pen.lineTo((250, 700))
+        pen.lineTo((250, 0))
+        pen.closePath()
+    elif name == "V":
+        for inset in (0, 60):
+            pen.moveTo((50 + inset, 700))
+            pen.lineTo((550 - inset, 700))
+            pen.lineTo((300, inset))
+            pen.closePath()
+    elif name == "acute":
+        pen.moveTo((100, 750))
+        pen.lineTo((200, 900))
+        pen.lineTo((250, 750))
+        pen.closePath()
+    elif name == "Oacute":
+        pen.addComponent("O", (0.9, 0, 0, 0.9, 50, 0))
+        pen.addComponent("acute", (1, 0, 0.25, 1, 250, 30))
+    elif name == "OO":
+        pen.addComponent("O", (0.5, 0, 0, 0.8, 0, 0))
+        pen.addComponent("O", (0.5, 0, 0, 0.8, 500, 0))
+    elif name == "zero":
+        # Contours of 800, 520 and 300 points: three 255UInt16 encodings of the point count.
+        for radius, count in ((450, 800), (300, 520), (150, 300)):
+            for k in range(count):
+                angle = 2 * math.pi * k / count
+                point = (round(500 + radius * math.cos(angle)), round(350 + radius * math.sin(angle)))
+                if k == 0:
+                    pen.moveTo(point)
+                else:
+                    pen.lineTo(point)
+            pen.closePath()
+    elif name in ("one", "two", "three"):
+        left = {"one": 60, "two": 90, "three": 120}[name]
+        pen.moveTo((left, 0))
+        pen.lineTo((left, 700))
+        pen.lineTo((left + 300, 700))
+        pen.lineTo((left + 300, 0))
+        pen.closePath()
+    glyph = pen.glyph()
+    if name == "I":
+        glyph.program = program(b"\xb1\x02\x03\x21\x21")  # PUSHB[1] 2 3, POP, POP
+    elif name == "Oacute":
+        glyph.program = program(b"\xb0\x01\x21")  # PUSHB[0] 1, POP
+    elif name == "V":
+        glyph.flags[0] |= 0x40  # OVERLAP_SIMPLE
+    return glyph
+
+
+def build_outlines():
+    names = [g[0] for g in OUTLINE_GLYPHS]
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(names)
+    fb.setupCharacterMap({cp: name for name, cp, _ in OUTLINE_GLYPHS if cp is not None})
+    glyphs = {}
+    for name in names:
+        glyphs[name] = draw_outline(name, glyphs)
+    fb.setupGlyf(glyphs)
+    glyf = fb.font["glyf"]
+    bearings = {}
+    for name in names:
+        glyph = glyf[name]
+        glyph.recalcBounds(glyf)
+        bearings[name] = getattr(glyph, "xMin", 0) if glyph.numberOfContours else 0
+    fb.setupHorizontalMetrics({name: (adv, bearings[name]) for name, _, adv in OUTLINE_GLYPHS})
+    fb.setupHorizontalHeader(ascent=900, descent=-300, lineGap=0)
+    fb.setupNameTable({"familyName": "PdfNetStack Test Outlines", "styleName": "Regular", "psName": "PdfNetStackTestOutlines-Regular"})
+    fb.setupOS2(sTypoAscender=900, sTypoDescender=-300, usWinAscent=950, usWinDescent=350, sxHeight=500, sCapHeight=700, fsType=0)
+    fb.setupPost()
+
+    # A stored bounding box wider than the points, which the WOFF2 bbox stream must carry. hmtx
+    # keeps lsb = xMin, so the hmtx transform still applies to the proportional glyphs; one
+    # bearing of the monospaced run differs from xMin, so that run stays stored.
+    font = reload(fb.font)
+    font.recalcBBoxes = False
+    b = font["glyf"]["B"]
+    b.xMin, b.yMin, b.xMax, b.yMax = 50, -50, 450, 750
+    font["hmtx"]["B"] = (font["hmtx"]["B"][0], 50)
+    font["hmtx"]["three"] = (520, 125)
+    return font
+
+
+def woff2_collection(ttc):
+    """A WOFF 2.0 collection (section 4.2) of a TTC: shared tables stored once, glyf and loca transformed."""
+    count = struct.unpack(">I", ttc[8:12])[0]
+    fonts = []
+    for offset in struct.unpack(f">{count}I", ttc[12:12 + 4 * count]):
+        flavor, n = struct.unpack(">IH", ttc[offset:offset + 6])
+        records = {}
+        for i in range(n):
+            tag, _, start, length = struct.unpack(">4sIII", ttc[offset + 12 + 16 * i:offset + 28 + 16 * i])
+            records[tag.decode("latin-1")] = (start, length)
+        fonts.append((flavor, records))
+
+    # Unique tables in font order, each loca right after its glyf (section 5.5).
+    order, index = [], {}
+    for font_number, (_, records) in enumerate(fonts):
+        for tag in sorted(records):
+            if tag == "loca":
+                continue
+            for t in ([tag, "loca"] if tag == "glyf" else [tag]):
+                if records[t] not in index:
+                    index[records[t]] = len(order)
+                    order.append((t, records[t], font_number))
+
+    directory, data = b"", b""
+    for tag, (start, length), font_number in order:
+        raw = ttc[start:start + length]
+        known = woff2.woff2KnownTags.index(tag) if tag in woff2.woff2KnownTags else 63
+        directory += bytes([known]) + (tag.encode("latin-1") if known == 63 else b"") + woff2.packBase128(length)
+        if tag == "glyf":
+            source = TTFont(BytesIO(ttc), fontNumber=font_number, recalcBBoxes=False, recalcTimestamp=False)
+            work = TTFont(recalcBBoxes=False, recalcTimestamp=False)
+            for t in ("maxp", "head", "loca", "glyf"):
+                table = {"loca": woff2.WOFF2LocaTable, "glyf": woff2.WOFF2GlyfTable}.get(t, getTableClass(t))(t)
+                work.tables[t] = table
+                table.decompile(source.reader[t], work)
+            raw = work["glyf"].transform(work)
+            directory += woff2.packBase128(len(raw))
+        elif tag == "loca":
+            raw = b""
+            directory += woff2.packBase128(0)
+        data += raw
+
+    collection = struct.pack(">I", struct.unpack(">I", ttc[4:8])[0]) + woff2.pack255UShort(len(fonts))
+    for flavor, records in fonts:
+        collection += woff2.pack255UShort(len(records)) + struct.pack(">I", flavor)
+        collection += b"".join(woff2.pack255UShort(index[records[tag]]) for tag in sorted(records))
+
+    compressed = brotli.compress(data, mode=brotli.MODE_FONT)
+    body = directory + collection + compressed
+    length = 48 + len(body)
+    padded = length + (-length % 4)
+    header = struct.pack(">4sIIHHIIHHIIIII", b"wOF2", 0x74746366, padded, len(order), 0, len(ttc), len(compressed),
+                         1, 0, 0, 0, 0, 0, 0)
+    return header + body + b"\0" * (padded - length)
+
+
 # A fixed creation and modification time, so regenerating gives byte identical fixtures.
 TIMESTAMP = 0xE4000000
 
@@ -336,6 +536,17 @@ def save(font, name, flavor=None):
     pin(font).flavor = flavor
     buffer = BytesIO()
     font.save(buffer)
+    (OUT / name).write_bytes(buffer.getvalue())
+    print(f"{name}: {len(buffer.getvalue())} bytes")
+
+
+def save_woff2(source, name, transform):
+    """WOFF 2.0 of a saved fixture, transforming the given tables, as fontTools.ttLib.woff2.compress does."""
+    font = TTFont(OUT / source, recalcBBoxes=False, recalcTimestamp=False)
+    font.flavor = "woff2"
+    font.flavorData = woff2.WOFF2FlavorData(transformedTables=transform)
+    buffer = BytesIO()
+    font.save(buffer, reorderTables=False)
     (OUT / name).write_bytes(buffer.getvalue())
     print(f"{name}: {len(buffer.getvalue())} bytes")
 
@@ -364,6 +575,13 @@ def main():
     collection.save(buffer)
     (OUT / "Test.ttc").write_bytes(buffer.getvalue())
     print(f"Test.ttc: {len(buffer.getvalue())} bytes")
+    (OUT / "Test.woff2").write_bytes(woff2_collection(buffer.getvalue()))
+    print(f"Test.woff2: {len((OUT / 'Test.woff2').read_bytes())} bytes")
+
+    save_woff2("Test-Regular.ttf", "Test-Regular.woff2", {"glyf", "loca"})
+    save(build_outlines(), "Test-Outlines.ttf")
+    save_woff2("Test-Outlines.ttf", "Test-Outlines.woff2", {"glyf", "loca", "hmtx"})
+    save_woff2("Test-Outlines.ttf", "Test-Outlines-Untransformed.woff2", set())
 
     save(build_cff(cid_keyed=False), "Test-Regular.otf")
     save(build_cff(cid_keyed=True), "Test-CID.otf")

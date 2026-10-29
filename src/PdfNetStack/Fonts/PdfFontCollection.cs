@@ -19,7 +19,7 @@ namespace PdfNetStack.Fonts;
 /// </example>
 public sealed class PdfFontCollection
 {
-    private static readonly string[] Extensions = [".ttf", ".otf", ".ttc", ".otc", ".woff"];
+    private static readonly string[] Extensions = [".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"];
     private static readonly Lazy<PdfFontCollection> SystemFonts = new(LoadSystemFonts);
 
     private readonly object _lock = new();
@@ -60,7 +60,7 @@ public sealed class PdfFontCollection
     }
 
     /// <summary>
-    /// Adds the fonts in a directory with a font extension (.ttf, .otf, .ttc, .otc, .woff).
+    /// Adds the fonts in a directory with a font extension (.ttf, .otf, .ttc, .otc, .woff, .woff2).
     /// Files that are not readable fonts are skipped. Returns how many fonts were added.
     /// </summary>
     public int AddDirectory(string path, bool recursive = true)
@@ -181,9 +181,17 @@ public sealed class PdfFontCollection
         string signature = Tag(header, 0);
         if (signature is "wOFF" or "wOF2")
         {
+            // Compressed: the names are only readable after decoding, so the fonts load now. A
+            // WOFF2 file may hold a collection.
             stream.Dispose();
-            PdfOpenTypeFont font = PdfOpenTypeFont.Load(path);
-            result.Add((new Face(path, 0, font.Weight, font.IsItalic) { Font = font }, font.FamilyName, null));
+            byte[] data = File.ReadAllBytes(path);
+            int count = PdfOpenTypeFont.CountFonts(data);
+            for (int index = 0; index < count; index++)
+            {
+                PdfOpenTypeFont font = PdfOpenTypeFont.Load(data, index);
+                result.Add((new Face(path, index, font.Weight, font.IsItalic) { Font = font }, font.FamilyName, null));
+            }
+
             return result;
         }
 

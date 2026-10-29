@@ -6,7 +6,8 @@ namespace PdfNetStack.Content;
 /// <summary>
 /// Walks a page's content with its graphics state (ISO 32000-1, 8.4): the current transformation
 /// matrix through q, Q and cm, form XObjects with their own matrix and resources, and inline
-/// images. Subclasses see images, and text operators with the text state they apply under.
+/// images. Subclasses see images, text operators with the text state they apply under, and
+/// marked content sequences.
 /// </summary>
 /// <remarks>
 /// Content comes from untrusted files, so the walk is bounded: forms nest at most
@@ -32,6 +33,8 @@ internal abstract class ContentInterpreter
     private readonly Dictionary<PdfStream, byte[]?> _forms = [];
     private long _operations;
     private long _bytes;
+    private int _marked;
+    private int _markedOverflow;
 
     protected ContentInterpreter(PdfDocument document) => Document = document;
 
@@ -89,6 +92,19 @@ internal abstract class ContentInterpreter
     {
     }
 
+    /// <summary>
+    /// BMC or BDC (ISO 32000-1, 14.6): a marked content sequence begins. <paramref name="properties"/>
+    /// is the BDC property list, inline or from the resources' /Properties, or null.
+    /// </summary>
+    protected virtual void OnBeginMarkedContent(string tag, PdfDictionary? properties)
+    {
+    }
+
+    /// <summary>EMC: the innermost sequence ends. A sequence its stream leaves open ends with the stream.</summary>
+    protected virtual void OnEndMarkedContent()
+    {
+    }
+
     private byte[]? Data(PdfStream stream)
     {
         if (_bytes > MaxBytes) return null;
@@ -112,9 +128,10 @@ internal abstract class ContentInterpreter
         var reader = new ContentReader(content);
         var op = new ContentOperation();
         int baseDepth = _saved.Count;
+        int markedDepth = _marked;
         while (reader.Next(op))
         {
-            if (++_operations > MaxOperations) return;
+            if (++_operations > MaxOperations) break;
             List<PdfObject> o = op.Operands;
             switch (op.Operator)
             {
@@ -134,14 +151,51 @@ internal abstract class ContentInterpreter
                 case "BI" when op.InlineImage is not null:
                     OnInlineImage(op.InlineImage, op.InlineData, resources);
                     break;
+                case "BMC" when o.Count > 0 && o[^1] is PdfName tag:
+                    BeginMarked(tag.Value, null);
+                    break;
+                case "BDC" when o.Count >= 2 && o[^2] is PdfName tag:
+                    BeginMarked(tag.Value, o[^1] switch
+                    {
+                        PdfDictionary inline => inline,
+                        PdfName name when Document.Resolve(resources?["Properties"]) is PdfDictionary properties => Document.Resolve(properties[name.Value]) as PdfDictionary,
+                        _ => null,
+                    });
+                    break;
+                case "EMC":
+                    // An EMC without its BMC or BDC in the same stream is ignored (ISO 32000-1, 14.6).
+                    if (_markedOverflow > 0) _markedOverflow--;
+                    else if (_marked > markedDepth) EndMarked();
+                    break;
                 default:
                     TextOperator(op.Operator, o, resources);
                     break;
             }
         }
 
-        // Unbalanced q inside a form or page is closed at its end.
+        // Unbalanced q and marked content inside a form or page are closed at its end.
         while (_saved.Count > baseDepth) (Ctm, Text) = _saved.Pop();
+        while (_marked > markedDepth) EndMarked();
+        if (depth == 0) _markedOverflow = 0;
+    }
+
+    private void BeginMarked(string tag, PdfDictionary? properties)
+    {
+        // Sequences nest as deep as saved states; deeper ones are counted, not reported.
+        if (_marked >= MaxStateDepth || _markedOverflow > 0)
+        {
+            _markedOverflow++;
+            return;
+        }
+
+        _marked++;
+        OnBeginMarkedContent(tag, properties);
+    }
+
+    private void EndMarked()
+    {
+        _marked--;
+        OnEndMarkedContent();
     }
 
     private void Draw(string name, PdfDictionary? resources, int depth)
