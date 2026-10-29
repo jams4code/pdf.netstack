@@ -4,9 +4,10 @@
 
 - Image extraction: `PdfPage.GetImages()` lists the images a page draws (XObjects, inside forms
   too, and inline images) with their placement, bounds and resolution. `PdfPageImage.Decode()`
-  returns a `PdfBitmap` of 8 bit gray or RGB pixels from raw samples of 1 to 16 bits or from
+  returns a `PdfBitmap` of 8 bit gray or RGB pixels from raw samples of 1 to 16 bits, from
   JPEGs (inverse DCT, fancy upsampling and color conversion as libjpeg does them, within two
-  steps per sample), through the device, Cal, ICC based, Indexed and Lab spaces, and Separation
+  steps per sample) and from CCITT fax data (Group 3 one and two dimensional, Group 4, bit
+  exact with libtiff), through the device, Cal, ICC based, Indexed and Lab spaces, and Separation
   and DeviceN (exact for a Type 2 tint transform, gray otherwise); `PdfBitmap.ToPng()` saves it. `GetEncodedData()` returns a JPEG or JPEG 2000 image as stored.
 - New package `PdfNetStack.Html`: HTML and CSS to PDF in pure C#, without a browser.
   `HtmlConverter.ConvertToPdf`, `ConvertToDocument` and `ConvertFileToDocument`, configured with

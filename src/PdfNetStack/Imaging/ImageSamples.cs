@@ -5,7 +5,7 @@ namespace PdfNetStack.Imaging;
 
 /// <summary>
 /// Turns an image XObject or inline image into gray or RGB pixels (ISO 32000-1, 8.9): general
-/// filters undone, DCTDecode decoded, samples of 1 to 16 bits unpacked, the Decode array applied
+/// filters undone, DCTDecode and CCITTFaxDecode decoded, samples of 1 to 16 bits unpacked, the Decode array applied
 /// and the color space converted. Masks become black on white. Soft masks are not applied.
 /// </summary>
 internal static class ImageSamples
@@ -45,11 +45,31 @@ internal static class ImageSamples
         if (width <= 0 || height <= 0 || (long)width * height > MaxPixels) throw new PdfFormatException("Image size is invalid or too large.");
         bool mask = doc.Resolve(dict["ImageMask"]) is PdfBoolean { Value: true };
         string? encoding = Encoding(doc, dict);
-        if (encoding is not (null or "DCTDecode")) return null;
+        if (encoding is not (null or "DCTDecode" or "CCITTFaxDecode")) return null;
 
         byte[] data = EncodedData(doc, dict, raw);
-        int bpc = mask ? 1 : encoding == "DCTDecode" ? 8 : Int(doc, dict["BitsPerComponent"]);
+        int bpc = mask || encoding == "CCITTFaxDecode" ? 1 : encoding == "DCTDecode" ? 8 : Int(doc, dict["BitsPerComponent"]);
         ColorSpace? space = mask ? ColorSpace.Gray : ColorSpace.Read(doc, doc.Resolve(dict["ColorSpace"]), resources, 0);
+
+        if (encoding == "CCITTFaxDecode")
+        {
+            CcittParameters parameters = Ccitt(doc, LastParms(doc, dict), width);
+            if ((long)((parameters.Columns + 7) / 8) * (parameters.Rows > 0 ? parameters.Rows : height) > Math.Min(doc.DecodeLimit, Compat.MaxArrayLength))
+            {
+                throw new PdfFormatException("Image exceeds the decode limit.");
+            }
+
+            try
+            {
+                data = CcittDecoder.Decode(data, parameters, height);
+            }
+            catch (ArgumentOutOfRangeException e)
+            {
+                throw new PdfFormatException("CCITT image parameters are invalid: " + e.Message, e);
+            }
+
+            space ??= ColorSpace.Gray;
+        }
 
         if (encoding == "DCTDecode")
         {
@@ -86,6 +106,34 @@ internal static class ImageSamples
         long ceiling = Math.Min(doc.DecodeLimit, Compat.MaxArrayLength);
         if (rowBytes * height > ceiling || outputBytes > ceiling) throw new PdfFormatException("Image exceeds the decode limit.");
         return Convert(data, width, height, bpc, rowBytes, space, decode, mask);
+    }
+
+    /// <summary>The decode parameters of the last filter, the image codec.</summary>
+    private static PdfDictionary? LastParms(PdfDocument doc, PdfDictionary dict) => doc.Resolve(dict["DecodeParms"]) switch
+    {
+        PdfDictionary d => d,
+        PdfArray { Count: > 0 } a => doc.Resolve(a[^1]) as PdfDictionary,
+        _ => null,
+    };
+
+    /// <summary>
+    /// The CCITTFaxDecode parameters. Columns defaults to 1728 in the standard, but a file that
+    /// leaves it out means the image's width, so the width is used.
+    /// </summary>
+    private static CcittParameters Ccitt(PdfDocument doc, PdfDictionary? parms, int width)
+    {
+        bool Flag(string key, bool fallback) => doc.Resolve(parms?[key]) is PdfBoolean b ? b.Value : fallback;
+        int Number(string key, int fallback) => parms?[key] is null ? fallback : Int(doc, parms[key]);
+        return new CcittParameters
+        {
+            K = Number("K", 0),
+            EndOfLine = Flag("EndOfLine", false),
+            EncodedByteAlign = Flag("EncodedByteAlign", false),
+            Columns = Number("Columns", width),
+            Rows = Math.Max(0, Number("Rows", 0)),
+            EndOfBlock = Flag("EndOfBlock", true),
+            BlackIs1 = Flag("BlackIs1", false),
+        };
     }
 
     private static int Int(PdfDocument doc, PdfObject? value) =>

@@ -93,7 +93,7 @@ public sealed class PdfPageImage
     /// Decodes the image to 8 bit gray or RGB pixels: color spaces converted, the Decode array
     /// applied, masks black where they paint. Soft masks and transparency are not applied.
     /// </summary>
-    /// <returns>The pixels, or null for an encoding not decoded yet (JPXDecode, JBIG2Decode, CCITTFaxDecode) or an unsupported color space.</returns>
+    /// <returns>The pixels, or null for an encoding not decoded yet (JPXDecode, JBIG2Decode) or an unsupported color space.</returns>
     /// <exception cref="PdfFormatException">The data is damaged or too large.</exception>
     public PdfBitmap? Decode() => ImageSamples.Decode(_document, Dictionary, _data, _resources) is Raster r ? new PdfBitmap(r) : null;
 

@@ -322,7 +322,7 @@ foreach (PdfPageImage image in doc.Pages[0].GetImages())
 
 `GetImages` walks the page content: image XObjects, inside forms too, and inline images, each
 with the matrix that places it. `Decode` gives 8 bit gray or RGB pixels for raw samples of 1 to 16
-bits and JPEGs (decoded as libjpeg does), through DeviceGray, RGB and CMYK, Cal and ICC based
+bits, JPEGs (decoded as libjpeg does) and CCITT fax (Group 3 and 4, bit exact with libtiff), through DeviceGray, RGB and CMYK, Cal and ICC based
 spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied.
 
 ### HTML to PDF
@@ -514,7 +514,7 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
-- Image extraction decodes raw samples and JPEGs. CCITT, JBIG2 and JPEG 2000 images come back
+- Image extraction decodes raw samples, JPEGs and CCITT fax. JBIG2 and JPEG 2000 images come back
   encoded (`GetEncodedData`), soft masks are not applied, and Separation and DeviceN colors
   other than a Type 2 tint transform are approximated as gray.
 - Linearized (fast web view) output is not produced; linearization is dropped.

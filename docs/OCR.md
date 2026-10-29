@@ -213,8 +213,8 @@ users can pin or replace them. Add both to `eng/license-allowlist.json` and the 
 ## 4. Plan
 
 Status: in phase 0 the content walker, image placement (public as `PdfPage.GetImages()`), raw
-samples with color spaces and Decode arrays, JPEG pixel decoding and inline images are done.
-CCITT, the glyphless font and invisible text remain.
+samples with color spaces and Decode arrays, JPEG pixel decoding, inline images and the CCITT
+Group 3 and 4 decoder are done. The glyphless font and invisible text remain.
 
 | Phase | Work | Estimate |
 |---|---|---|
