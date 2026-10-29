@@ -14,3 +14,6 @@ artifacts/
 # script in tools/ for the one synthetic file below.
 *.pdf
 !tests/PdfNetStack.Tests/Fixtures/Forms/form.pdf
+
+# Python bytecode from the fixture scripts
+__pycache__/
