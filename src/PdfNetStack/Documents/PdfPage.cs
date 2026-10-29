@@ -108,13 +108,15 @@ public sealed class PdfPage
     /// </summary>
     /// <remarks>
     /// Lines follow each run of text's own baseline, so rotated text and vertical writing read in
-    /// order too. Columns are not detected: side by side columns whose lines share a baseline read
-    /// as one line. A character the font gives no Unicode value for reads as U+FFFD; see
+    /// order too. Columns of prose read one after the other: blocks of at least three lines of a
+    /// dozen characters, separated by a gutter of an em or more. Narrower or shorter side by side
+    /// text, such as a table, reads row by row. A character the font gives no Unicode value for
+    /// reads as U+FFFD; see
     /// <see cref="GetLetters"/> for what is decoded.
     /// </remarks>
     /// <example>
     /// <code>
-    /// using PdfDocument doc = PdfDocument.Open("report.pdf");
+    /// PdfDocument doc = PdfDocument.Open("report.pdf");
     /// foreach (PdfPage page in doc.Pages)
     /// {
     ///     Console.WriteLine(page.ExtractText());

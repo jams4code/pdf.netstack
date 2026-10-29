@@ -195,7 +195,7 @@ PdfFont? title = PdfFontCollection.System.Find("Segoe UI", weight: 600);   // in
 
 var brand = new PdfFontCollection();
 brand.AddDirectory("fonts");
-PdfFont heading = brand.Find("Inter", weight: 700) ?? PdfStandardFont.HelveticaBold;
+PdfFont heading = (PdfFont?)brand.Find("Inter", weight: 700) ?? PdfStandardFont.HelveticaBold;
 ```
 
 Embedded text is kerned from the font's GPOS or kern table, stays searchable and copyable in
