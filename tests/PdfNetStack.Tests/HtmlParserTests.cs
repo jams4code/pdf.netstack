@@ -85,7 +85,7 @@ public sealed class HtmlParserTests
     }
 
     [TestMethod]
-    [DataRow("a<!---->", "", "")]
+    [DataRow("", "a<!---->", "")]
     [DataRow("<table>", "x<!---->", "</table>")]
     [DataRow("<p ", "a=1 ", ">")]
     public void RepeatedInputParsesInLinearTime(string prefix, string unit, string suffix)
@@ -93,20 +93,29 @@ public sealed class HtmlParserTests
         // Comment-separated text runs merge into one node, foster-parented runs merge before the
         // table, and duplicate attributes are dropped. Compare scaling, not wall time: four times
         // the input should take about four times as long, where quadratic work would take sixteen.
+        // Best of three, each from a collected heap so one run does not pay for the garbage of
+        // the last: quadratic work at these sizes takes seconds, linear work tens of milliseconds.
         static long Run(string prefix, string unit, string suffix, int count)
         {
             string html = prefix + string.Concat(Enumerable.Repeat(unit, count)) + suffix;
-            var clock = Stopwatch.StartNew();
-            HtmlDocument doc = HtmlParser.Parse(html);
-            long elapsed = Math.Max(1, clock.ElapsedMilliseconds);
-            Assert.IsLessThanOrEqualTo(3, doc.Body.Children.Count);
-            return elapsed;
+            long best = long.MaxValue;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                var clock = Stopwatch.StartNew();
+                HtmlDocument doc = HtmlParser.Parse(html);
+                best = Math.Min(best, Math.Max(1, clock.ElapsedMilliseconds));
+                Assert.IsLessThanOrEqualTo(3, doc.Body.Children.Count);
+            }
+
+            return best;
         }
 
-        Run(prefix, unit, suffix, 50_000);
-        long small = Run(prefix, unit, suffix, 50_000);
-        long large = Run(prefix, unit, suffix, 200_000);
-        Assert.IsLessThan(10.0, (double)large / small, $"50k took {small} ms, 200k took {large} ms");
+        long small = Run(prefix, unit, suffix, 200_000);
+        long large = Run(prefix, unit, suffix, 800_000);
+        Assert.IsLessThan(10.0, (double)large / small, $"200k took {small} ms, 800k took {large} ms");
         Assert.AreEqual(1, HtmlParser.Parse("<p a=1 a=2 b=3>").Body.ChildElements.Single().Attributes.Count(a => a.Key == "a"));
         Assert.AreEqual("xx", HtmlParser.Parse("<table>x<!---->x</table>").Body.Children.OfType<HtmlText>().Single().Data);
     }
