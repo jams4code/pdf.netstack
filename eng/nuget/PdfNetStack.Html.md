@@ -110,9 +110,10 @@ boxes repeat on every page, for letterheads and watermarks.
 - **Layout.** Block flow with margin collapsing, inline layout with Unicode line breaking,
   justification and soft hyphens, floats and `clear`, relative, absolute and fixed
   positioning, tables (spans, both border models, fixed and automatic widths), flexbox (wrap,
-  gap, grow and shrink, alignment, order), grid (fr tracks, `minmax()`, `repeat()`, named
-  areas, auto-placement), inline blocks, list markers and counters,
-  `::before` and `::after`.
+  gap, grow and shrink, alignment, order), grid (fr tracks, `minmax()`, `repeat()` with
+  `auto-fill` and `auto-fit`, named areas and lines, auto-placement by rows or columns, dense
+  packing, `subgrid`, the `grid` and `grid-template` shorthands), inline blocks, list markers
+  and counters, `::before` and `::after`.
 - **Text.** Right to left and Arabic with contextual shaping that matches HarfBuzz, bidi
   reordering, kerning, ligatures, fallback fonts per character, every `vertical-align`.
 - **Painting.** Backgrounds with images and linear or radial gradients, rounded borders in
@@ -151,12 +152,12 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.
-- No multi-column layout or vertical writing modes yet. Grid has no dense packing, column
-  flow, subgrid or named lines.
+- No multi-column layout or vertical writing modes yet.
 - Images: JPEG, PNG, GIF (the first frame) and SVG (drawn as vectors, without filters, masks or
   patterns). WebP does not load yet.
-- The `page` property is read on the children of `body`, where sections usually sit. An inline
-  running element shows on every page rather than from where it stands.
+- The `page` property breaks between blocks of the block flow. Inside a flex, grid or table
+  container it takes no effect, and the container stays on one page type. An inline running
+  element shows on every page rather than from where it stands.
 - Box shadow blur is approximated, `text-shadow` blur is not drawn, and group opacity is applied
   per element.
 

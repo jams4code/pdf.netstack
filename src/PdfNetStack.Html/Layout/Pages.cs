@@ -188,7 +188,11 @@ internal static class Paginator
     // A table's header group repeats on pages that start between its end and the end of the body rows.
     private sealed record Repeat(BoxFragment Header, double Start, double End, double Advance);
 
-    public static List<Slice> Paginate(BoxFragment root, Func<int, double> pageHeight)
+    /// <param name="root">The laid out canvas.</param>
+    /// <param name="pageHeight">The page area height of each page, from the first page of the canvas.</param>
+    /// <param name="start">Where the pages start, when the canvas holds content before them that other pages show.</param>
+    /// <param name="last">The box whose end is the end of the pages, when content after it shows on other pages.</param>
+    public static List<Slice> Paginate(BoxFragment root, Func<int, double> pageHeight, double? start = null, BoxFragment? last = null)
     {
         var candidates = new List<Candidate>();
         var avoid = new List<(double Top, double Bottom)>();
@@ -201,8 +205,19 @@ internal static class Paginator
 
         candidates.Sort((x, y) => x.Break.CompareTo(y.Break));
         double end = ContentBottom(root);
+        if (last is not null)
+        {
+            // Content past the last box shows on the next run's pages, and so do its breaks.
+            end = Math.Max(last.Bottom, ContentBottom(last));
+            candidates.RemoveAll(c => c.Break > end + Epsilon);
+        }
+
+        // A forced break before the first content or after the last would leave a page empty:
+        // the pages start and end there anyway.
+        double top = start ?? root.Y;
+        (double first, double final) = Content(root, top);
+        candidates.RemoveAll(c => c.Forced && (c.Break <= first + Epsilon || c.Break >= final - Epsilon));
         var slices = new List<Slice>();
-        double top = root.Y;
         while (top < end - Epsilon || slices.Count == 0)
         {
             double height = pageHeight(slices.Count);
@@ -345,5 +360,200 @@ internal static class Paginator
         }
 
         return bottom == double.MinValue ? box.Y : bottom;
+    }
+
+    /// <summary>
+    /// The top of the highest and the bottom of the lowest line or leaf box at or below
+    /// <paramref name="from"/>. A container's own border or background does not count: a forced
+    /// break before its first child or after its last is a break before or after it.
+    /// </summary>
+    private static (double Top, double Bottom) Content(BoxFragment box, double from)
+    {
+        double top = double.MaxValue, bottom = double.MinValue;
+        if (box.Children.Count == 0 && box.Height > Epsilon && box.Y >= from - Epsilon) (top, bottom) = (box.Y, box.Bottom);
+        foreach (Fragment child in box.Children)
+        {
+            (double t, double b) = child is BoxFragment f ? Content(f, from) : child.Y >= from - Epsilon ? (child.Y, child.Bottom) : (double.MaxValue, double.MinValue);
+            top = Math.Min(top, t);
+            bottom = Math.Max(bottom, b);
+        }
+
+        return (top, bottom);
+    }
+}
+
+/// <summary>
+/// Named pages (CSS Paged Media 3, 8.1): splits the box tree into runs of one used page name. The
+/// page property of any block-level box in the block flow counts; auto takes its parent's. Where
+/// the page name changes between two siblings, the page breaks (CSS Fragmentation 3, 4.1) and the
+/// next run is laid out at the width of its own page type. A run holds the boxes on its side of the
+/// breaks; a box with content on both sides goes in each, sliced at the break, so its start edge
+/// shows only in the first run and its end edge only in the last.
+/// </summary>
+internal sealed class NamedPages
+{
+    private readonly Dictionary<Box, (int First, int Last)> _range = [];
+    private readonly List<string?> _names = [];
+    private readonly List<(Box Before, Box After)> _breaks = [];
+    private readonly List<List<(Box Box, List<Box> Children)>> _split = [];
+    private Box? _previous;
+
+    public NamedPages(BlockBox root)
+    {
+        Walk(root, null);
+
+        // For each run, the boxes it shares with others and their children on its side of the breaks.
+        for (int r = 0; r < _names.Count; r++) _split.Add([]);
+        foreach (KeyValuePair<Box, (int First, int Last)> box in _range.Where(b => b.Value.First < b.Value.Last).ToList())
+        {
+            for (int r = box.Value.First; r <= box.Value.Last; r++) _split[r].Add((box.Key, []));
+            foreach (Box child in box.Key.Children)
+            {
+                if (!_range.TryGetValue(child, out (int First, int Last) range)) continue;
+                for (int r = range.First; r <= range.Last; r++) _split[r][^1].Children.Add(child);
+            }
+        }
+    }
+
+    /// <summary>The number of runs: at least one.</summary>
+    public int Count => Math.Max(1, _names.Count);
+
+    /// <summary>The page name of a run, null for the unnamed page.</summary>
+    public string? Name(int run) => run < _names.Count ? _names[run] : null;
+
+    /// <summary>The box right after the break that starts a run, or null for the first run.</summary>
+    public Box? First(int run) => run > 0 ? _breaks[run - 1].After : null;
+
+    /// <summary>The box right before the break that ends a run, or null for the last run.</summary>
+    public Box? Last(int run) => run < _breaks.Count ? _breaks[run].Before : null;
+
+    /// <summary>The page property as a name; auto takes the parent's.</summary>
+    private static string? PageName(Box box)
+    {
+        List<CssValue> v = box.Style["page"];
+        return v.Count == 1 && v[0].IsToken && v[0].Token.Type == CssTokenType.Ident && !v[0].IsIdent("auto") ? v[0].Token.Value : null;
+    }
+
+    /// <summary>Floats, absolutely positioned and inline-level children are outside the block flow and force no break.</summary>
+    private static bool InFlow(Box box) =>
+        box.IsBlockLevel && box.Style.Keyword("float") is "none" or "" && box.Style.Keyword("position") is not ("absolute" or "fixed");
+
+    /// <summary>A block container whose children are in the block flow; other boxes are leaves, kept whole in one run.</summary>
+    private static bool Descends(Box box) =>
+        box.GetType() == typeof(BlockBox) && box.Children.Any(InFlow) && !box.Children.All(c => c.IsInlineLevel);
+
+    private void Walk(Box box, string? inherited)
+    {
+        string? name = PageName(box) ?? inherited;
+        if (!Descends(box))
+        {
+            // A leaf joins the current run, or starts the next one when its page name differs.
+            if (_names.Count == 0 || _names[^1] != name)
+            {
+                if (_previous is not null) _breaks.Add(Siblings(_previous, box));
+                _names.Add(name);
+            }
+
+            _previous = box;
+            _range[box] = (_names.Count - 1, _names.Count - 1);
+            return;
+        }
+
+        foreach (Box child in box.Children.Where(InFlow)) Walk(child, name);
+        List<(int First, int Last)> ranges = [.. box.Children.Where(InFlow).Select(c => _range[c])];
+        _range[box] = (ranges[0].First, ranges[^1].Last);
+
+        // A child outside the block flow stays with the in-flow sibling before it, else the one after.
+        int? before = null;
+        var pending = new List<Box>();
+        foreach (Box child in box.Children)
+        {
+            if (!InFlow(child))
+            {
+                if (before is int run) _range[child] = (run, run);
+                else pending.Add(child);
+                continue;
+            }
+
+            foreach (Box waiting in pending) _range[waiting] = (_range[child].First, _range[child].First);
+            pending.Clear();
+            before = _range[child].Last;
+        }
+    }
+
+    /// <summary>The siblings a break between two leaves falls between: their ancestors under the nearest common one.</summary>
+    private static (Box Before, Box After) Siblings(Box before, Box after)
+    {
+        var chain = new List<Box>();
+        for (Box? b = before; b is not null; b = b.Parent) chain.Add(b);
+        var ancestors = new HashSet<Box>(chain);
+        Box next = after;
+        while (next.Parent is not null && !ancestors.Contains(next.Parent)) next = next.Parent;
+        int common = next.Parent is null ? chain.Count : chain.IndexOf(next.Parent);
+        return (chain[Math.Max(0, common - 1)], next);
+    }
+
+    /// <summary>
+    /// Cuts the tree down to one run's boxes until the result is disposed. A list item continued
+    /// from an earlier run shows no marker.
+    /// </summary>
+    public IDisposable Keep(int run)
+    {
+        var restore = new List<(Box Box, List<Box> Children, Box? Marker)>();
+        foreach ((Box box, List<Box> children) in run < _split.Count ? _split[run] : [])
+        {
+            Box? marker = box is BlockBox block ? block.Marker : null;
+            restore.Add((box, [.. box.Children], marker));
+            box.SetChildren(children);
+            if (run > _range[box].First && box is BlockBox continued) continued.Marker = null;
+        }
+
+        return new Restore(restore);
+    }
+
+    /// <summary>
+    /// Where a run starts on its canvas: above the box after the break by its top margin, and those
+    /// of first children collapsing with it, as margins after a forced break are kept (CSS
+    /// Fragmentation 3, 5.2). Edges of boxes continued from the run before stay above, cut off.
+    /// </summary>
+    public static double Start(BoxFragment first)
+    {
+        double top = first.Y - Math.Max(0, first.Margin.Top);
+        for (BoxFragment? f = first; f is not null && f.Border.Top == 0 && f.Padding.Top == 0;)
+        {
+            f = f.Children.FirstOrDefault() as BoxFragment;
+            if (f is not null) top = Math.Min(top, f.Y - Math.Max(0, f.Margin.Top));
+        }
+
+        return top;
+    }
+
+    /// <summary>The outermost fragment of a box in a laid out run: a table's wrapper rather than the table.</summary>
+    public static BoxFragment? Find(BoxFragment root, Box box)
+    {
+        var stack = new Stack<BoxFragment>([root]);
+        while (stack.Count > 0)
+        {
+            BoxFragment f = stack.Pop();
+            if (f.Box == box || (f.Box is TableWrapperBox wrapper && wrapper.Table == box)) return f;
+            for (int i = f.Children.Count - 1; i >= 0; i--)
+            {
+                if (f.Children[i] is BoxFragment child) stack.Push(child);
+            }
+        }
+
+        return null;
+    }
+
+    private sealed class Restore(List<(Box Box, List<Box> Children, Box? Marker)> boxes) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach ((Box box, List<Box> children, Box? marker) in boxes)
+            {
+                box.SetChildren(children);
+                if (box is BlockBox block) block.Marker = marker;
+            }
+        }
     }
 }

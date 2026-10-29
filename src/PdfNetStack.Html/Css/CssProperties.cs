@@ -161,6 +161,8 @@ internal static class CssProperties
         ["grid-column"] = ["grid-column-start", "grid-column-end"],
         ["grid-row"] = ["grid-row-start", "grid-row-end"],
         ["grid-area"] = ["grid-row-start", "grid-column-start", "grid-row-end", "grid-column-end"],
+        ["grid-template"] = ["grid-template-rows", "grid-template-columns", "grid-template-areas"],
+        ["grid"] = ["grid-template-rows", "grid-template-columns", "grid-template-areas", "grid-auto-rows", "grid-auto-columns", "grid-auto-flow"],
         ["font-variant"] = ["font-variant-caps", "font-variant-ligatures", "font-variant-numeric"],
     };
 
@@ -271,6 +273,10 @@ internal static class CssProperties
                 return AnyOrder(items, ("flex-direction", "row|row-reverse|column|column-reverse"), ("flex-wrap", "nowrap|wrap|wrap-reverse"));
             case "grid-column" or "grid-row" or "grid-area":
                 return GridPlacement(Shorthands[name], value);
+            case "grid-template":
+                return GridTemplate(value);
+            case "grid":
+                return Grid(value);
             case "gap" or "overflow" or "place-items" or "place-content" or "place-self":
                 return Pair(Shorthands[name], items);
             case "page-break-before" or "page-break-after" or "page-break-inside":
@@ -692,6 +698,103 @@ internal static class CssProperties
         }
 
         return result;
+    }
+
+    /// <summary>A value split at its slashes, each part without whitespace.</summary>
+    private static List<List<CssValue>> Slashes(List<CssValue> value)
+    {
+        var parts = new List<List<CssValue>> { new() };
+        foreach (CssValue v in value)
+        {
+            if (v.IsToken && v.Token is { Type: CssTokenType.Delim, Value: "/" }) parts.Add([]);
+            else if (!v.IsWhitespace) parts[^1].Add(v);
+        }
+
+        return parts;
+    }
+
+    /// <summary>
+    /// grid-template (CSS Grid 1, 7.4): none; rows / columns; or rows of area strings, each with
+    /// the line names around it and its size (auto when missing), then / columns.
+    /// </summary>
+    private static List<(string, List<CssValue>)>? GridTemplate(List<CssValue> value)
+    {
+        List<List<CssValue>> parts = Slashes(value);
+        if (parts.Count == 1 && parts[0].Count == 1 && parts[0][0].IsIdent("none"))
+        {
+            return [("grid-template-rows", Ident("none")), ("grid-template-columns", Ident("none")), ("grid-template-areas", Ident("none"))];
+        }
+
+        if (parts.Count is < 1 or > 2 || parts.Any(p => p.Count == 0)) return null;
+        static bool IsString(CssValue v) => v.IsToken && v.Token.Type == CssTokenType.String;
+        List<CssValue> columns = parts.Count == 2 ? parts[1] : Ident("none");
+        if (!parts[0].Any(IsString))
+        {
+            return parts.Count == 2 ? [("grid-template-rows", parts[0]), ("grid-template-columns", columns), ("grid-template-areas", Ident("none"))] : null;
+        }
+
+        // Before the first string only line names; after a string, a size, then line names.
+        var rows = new List<CssValue>();
+        var areas = new List<CssValue>();
+        bool sized = true;
+        foreach (CssValue v in parts[0])
+        {
+            if (IsString(v))
+            {
+                if (!sized) rows.AddRange(Ident("auto"));
+                areas.Add(v);
+                sized = false;
+            }
+            else if (v.Block == CssTokenType.LeftBracket)
+            {
+                if (!sized) rows.AddRange(Ident("auto"));
+                rows.Add(v);
+                sized = true;
+            }
+            else if (!sized)
+            {
+                rows.Add(v);
+                sized = true;
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        if (!sized) rows.AddRange(Ident("auto"));
+        return [("grid-template-rows", rows), ("grid-template-columns", columns), ("grid-template-areas", areas)];
+    }
+
+    /// <summary>
+    /// grid (CSS Grid 1, 7.8): a grid-template, or auto-flow on one side of the slash with the
+    /// implicit track size, which makes the items flow along that axis.
+    /// </summary>
+    private static List<(string, List<CssValue>)>? Grid(List<CssValue> value)
+    {
+        List<List<CssValue>> parts = Slashes(value);
+        int side = parts.FindIndex(p => p.Any(v => v.IsIdent("auto-flow")));
+        if (side < 0)
+        {
+            List<(string, List<CssValue>)>? template = GridTemplate(value);
+            return template is null ? null : [.. template, ("grid-auto-rows", Ident("auto")), ("grid-auto-columns", Ident("auto")), ("grid-auto-flow", Ident("row"))];
+        }
+
+        List<CssValue> flow = parts[side];
+        if (parts.Count != 2 || parts[1 - side].Count == 0 || flow.Count(v => v.IsIdent("auto-flow")) != 1 || flow.Count(v => v.IsIdent("dense")) > 1) return null;
+        List<CssValue> size = [.. flow.Where(v => !v.IsIdent("auto-flow") && !v.IsIdent("dense"))];
+        if (size.Count == 0) size = Ident("auto");
+        List<CssValue> direction = [.. Ident(side == 0 ? "row" : "column")];
+        if (flow.Any(v => v.IsIdent("dense"))) direction.AddRange(Ident("dense"));
+        return
+        [
+            ("grid-template-rows", side == 0 ? Ident("none") : parts[0]),
+            ("grid-template-columns", side == 0 ? parts[1] : Ident("none")),
+            ("grid-template-areas", Ident("none")),
+            ("grid-auto-rows", side == 0 ? size : Ident("auto")),
+            ("grid-auto-columns", side == 0 ? Ident("auto") : size),
+            ("grid-auto-flow", direction),
+        ];
     }
 
     private static List<(string, List<CssValue>)>? PageBreak(string longhand, List<CssValue> items)

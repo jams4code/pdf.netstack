@@ -173,58 +173,41 @@ public static class HtmlConverter
     private sealed record PageRun(BoxFragment Layout, LayoutEngine Engine, List<Paginator.Slice> Slices, string? Name, int FirstPage);
 
     /// <summary>
-    /// Lays out the document in runs of one page name each (CSS Paged Media 3, 8): a child of the
-    /// body whose page differs from the child before it starts a new page, and is laid out at that
-    /// page type's width, so a landscape section gets the landscape width.
+    /// Lays out the document in runs of one page name each (CSS Paged Media 3, 8): where the used
+    /// page name changes between two boxes of the block flow, at any depth, a new page starts, and
+    /// the run after the break is laid out at its page type's width, so a landscape section gets
+    /// the landscape width.
     /// </summary>
     private static List<PageRun> LayoutRuns(BlockBox root, PageMaster master, FontResolver fonts)
     {
-        Box? body = root.Children.FirstOrDefault(c => c.Element?.Name == "body");
-        var groups = new List<(string? Name, List<Box> Boxes)>();
-        foreach (Box child in body?.Children ?? [])
-        {
-            string? name = PageName(child);
-            if (groups.Count == 0 || groups[^1].Name != name) groups.Add((name, []));
-            groups[^1].Boxes.Add(child);
-        }
-
-        if (body is null || groups.Count <= 1) return [LayoutRun(root, master, fonts, 0, groups.Count == 1 ? groups[0].Name : null)];
-
+        var named = new NamedPages(root);
         var runs = new List<PageRun>();
-        List<Box> all = [.. body.Children];
-        try
+        int first = 0;
+        for (int i = 0; i < named.Count; i++)
         {
-            int first = 0;
-            foreach ((string? name, List<Box> boxes) in groups)
+            using (named.Keep(i))
             {
-                body.SetChildren(boxes);
-                PageRun run = LayoutRun(root, master, fonts, first, name);
+                PageRun run = LayoutRun(root, master, fonts, first, named.Name(i), named.First(i), named.Last(i));
                 runs.Add(run);
                 first += run.Slices.Count;
             }
-        }
-        finally
-        {
-            body.SetChildren(all);
         }
 
         return runs;
     }
 
-    private static PageRun LayoutRun(BlockBox root, PageMaster master, FontResolver fonts, int first, string? name)
+    /// <param name="start">The box after the break the run starts at, or null for the first run.</param>
+    /// <param name="end">The box before the break the run ends at, or null for the last run.</param>
+    private static PageRun LayoutRun(BlockBox root, PageMaster master, FontResolver fonts, int first, string? name, Box? start, Box? end)
     {
         PageGeometry g = master.Geometry(first, name);
         var engine = new LayoutEngine(fonts);
         BoxFragment layout = engine.Layout(root, g.ContentWidth, g.ContentHeight);
-        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(first + i, name).ContentHeight);
+        BoxFragment? startFragment = start is null ? null : NamedPages.Find(layout, start);
+        BoxFragment? endFragment = end is null ? null : NamedPages.Find(layout, end);
+        double? top = startFragment is null ? null : NamedPages.Start(startFragment);
+        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(first + i, name).ContentHeight, top, endFragment);
         return new PageRun(layout, engine, slices, name, first);
-    }
-
-    /// <summary>The page property as a name; auto takes the body's page, which has none.</summary>
-    private static string? PageName(Box box)
-    {
-        List<CssValue> v = box.Style["page"];
-        return v.Count == 1 && v[0].IsToken && v[0].Token.Type == CssTokenType.Ident && !v[0].IsIdent("auto") ? v[0].Token.Value : null;
     }
 
     /// <summary>Converts an HTML string to PDF bytes.</summary>

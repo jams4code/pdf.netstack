@@ -225,6 +225,87 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void BreaksForNamedPagesAtAnyDepth()
+    {
+        // The named section sits two levels down. The page breaks before and after it, and its
+        // page is laid out at the landscape width: 25 words of Helvetica 16px (about 980px) fit
+        // on one line there. The outer box is sliced: its top border shows on the first page only.
+        string words = string.Join(" ", Enumerable.Repeat("word", 25));
+        PdfDocument doc = Convert($$"""
+            <style>
+              @page { size: A4; margin: 0 }
+              @page wide { size: A4 landscape; margin: 0 }
+              body { margin: 0; font: 16px Helvetica }
+              p { margin: 0 }
+            </style>
+            <div style="border-top: 2px solid; border-bottom: 2px solid">
+              <p>first</p>
+              <div><section style="page: wide"><p style="margin-top: 20px">{{words}}</p></section></div>
+              <p>after</p>
+            </div>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        Assert.AreEqual(595.28, doc.Pages[0].Width, 0.01);
+        Assert.AreEqual(841.89, doc.Pages[1].Width, 0.01, "the nested section gets its named page");
+        Assert.AreEqual(595.28, doc.Pages[2].Width, 0.01);
+        Assert.AreEqual("first", Text(doc, 0));
+        Assert.AreEqual("after", Text(doc, 2));
+
+        IReadOnlyList<PdfWord> wide = doc.Pages[1].GetWords();
+        Assert.HasCount(25, wide);
+        Assert.HasCount(1, wide.Select(w => Math.Round(w.Letters[0].BaselineStart.Y, 2)).Distinct(), "one line at the landscape width");
+
+        // Distance from the page top to the first baseline, in pt (0.75 per px). Page one: below
+        // the 2px border. Page two: below the paragraph's 20px margin, kept after the forced break,
+        // with the outer border cut off. Page three: at the top, the outer box continued.
+        double Top(int page) => doc.Pages[page].Height - doc.Pages[page].GetWords()[0].Letters[0].BaselineStart.Y;
+        Assert.AreEqual(1.5, Top(0) - Top(2), 0.01);
+        Assert.AreEqual(15, Top(1) - Top(2), 0.01);
+
+        // The first page takes the name the document starts with, however deep it is set.
+        doc = Convert("""
+            <style>@page wide { size: A4 landscape }</style>
+            <main><article><section style="page: wide"><p>x</p></section></article></main>
+            """);
+        Assert.HasCount(1, doc.Pages);
+        Assert.AreEqual(841.89, doc.Pages[0].Width, 0.01);
+
+        // Many runs deep in the tree: each run cuts only the boxes it shares with others.
+        string sections = string.Concat(Enumerable.Range(0, 400).Select(i => $"<div><section style=\"page: {(i % 2 == 0 ? "a" : "b")}\"><p>s{i}</p></section></div>"));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        doc = Convert("<style>@page a { size: A5 } @page b { size: A4 }</style><main><article>" + sections + "</article></main>");
+        Assert.IsLessThan(30_000, clock.ElapsedMilliseconds);
+        Assert.HasCount(400, doc.Pages);
+        Assert.AreEqual(419.53, doc.Pages[398].Width, 0.01);
+        Assert.AreEqual(595.28, doc.Pages[399].Width, 0.01);
+        Assert.AreEqual("s399", Text(doc, 399));
+    }
+
+    [TestMethod]
+    public void ForcedBreaksLeaveNoEmptyPages()
+    {
+        // A break before the first content or after the last adds no page, inside bordered boxes too.
+        PdfDocument doc = Convert("""
+            <body style="background: #eee">
+              <div style="border: 1px solid"><p style="break-before: page">a</p><p style="break-after: page">b</p></div>
+            </body>
+            """);
+        Assert.HasCount(1, doc.Pages);
+
+        // A forced break where the page name changes anyway, at the start and the end of a run.
+        doc = Convert("""
+            <style>@page wide { size: A4 landscape }</style>
+            <p>a</p><div><p style="break-after: page">b</p></div>
+            <section style="page: wide; break-before: page; margin-top: 30px"><div style="break-before: page"><p>c</p></div></section>
+            <p style="break-before: page">d</p>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        Assert.AreEqual(841.89, doc.Pages[1].Width, 0.01);
+        Assert.AreEqual("c", Text(doc, 1));
+        Assert.AreEqual("d", Text(doc, 2));
+    }
+
+    [TestMethod]
     public void SetsNamedStringsForRunningHeaders()
     {
         PdfDocument doc = Convert("""
