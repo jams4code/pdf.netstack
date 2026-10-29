@@ -82,6 +82,29 @@ public sealed class AnnotationTests
     }
 
     [TestMethod]
+    public void HostileNameTreesResolveQuickly()
+    {
+        // Each of 25 levels lists the next 30 times: 30^25 paths without the visited set.
+        PdfDocument doc = PdfDocument.Create();
+        PdfPage page = doc.Pages.Add(PdfRectangle.A4);
+        PdfDictionary node = new() { ["Names"] = new PdfArray() };
+        for (int level = 0; level < 25; level++)
+        {
+            PdfReference child = doc.AddObject(node);
+            var kids = new PdfArray();
+            for (int k = 0; k < 30; k++) kids.Add(child);
+            node = new PdfDictionary { ["Kids"] = kids };
+        }
+
+        doc.Catalog.Set("Names", new PdfDictionary { ["Dests"] = node });
+        PdfAnnotation link = page.Annotations.AddLink(0, 0, 10, 10, page);
+        link.Dictionary.Set("Dest", PdfString.FromText("missing"));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.IsNull(link.Destination);
+        Assert.IsLessThan(5000, clock.ElapsedMilliseconds);
+    }
+
+    [TestMethod]
     public void NotesAndMarkupHaveAppearances()
     {
         PdfDocument doc = PdfDocument.Create();

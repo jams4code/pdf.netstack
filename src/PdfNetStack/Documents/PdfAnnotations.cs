@@ -83,6 +83,7 @@ public sealed class PdfAnnotation
 public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
 {
     private const int MaxNameTreeDepth = 32;
+    private const int MaxNameTreeNodes = 10_000;
     private readonly PdfPage _page;
 
     internal PdfAnnotationCollection(PdfPage page) => _page = page;
@@ -247,12 +248,19 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
     {
         if (doc.Resolve(doc.Catalog["Dests"]) is PdfDictionary dests && dests[name] is PdfObject direct) return direct;
         PdfDictionary? names = doc.Resolve(doc.Catalog["Names"]) as PdfDictionary;
-        return names is null ? null : SearchNameTree(doc, doc.Resolve(names["Dests"]) as PdfDictionary, name, 0);
+        if (names is null) return null;
+        var visited = new HashSet<PdfDictionary>();
+        return SearchNameTree(doc, doc.Resolve(names["Dests"]) as PdfDictionary, name, 0, visited);
     }
 
-    private static PdfObject? SearchNameTree(PdfDocument doc, PdfDictionary? node, string name, int depth)
+    /// <summary>
+    /// Depth first through the name tree. Each node is visited once and the walk stops after
+    /// <see cref="MaxNameTreeNodes"/> nodes: a crafted tree listing a kid many times at every
+    /// level would otherwise take exponential time.
+    /// </summary>
+    private static PdfObject? SearchNameTree(PdfDocument doc, PdfDictionary? node, string name, int depth, HashSet<PdfDictionary> visited)
     {
-        if (node is null || depth > MaxNameTreeDepth) return null;
+        if (node is null || depth > MaxNameTreeDepth || visited.Count >= MaxNameTreeNodes || !visited.Add(node)) return null;
         if (doc.Resolve(node["Names"]) is PdfArray leaf)
         {
             for (int i = 0; i + 1 < leaf.Count; i += 2)
@@ -265,7 +273,7 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
         {
             foreach (PdfObject kid in kids)
             {
-                if (SearchNameTree(doc, doc.Resolve(kid) as PdfDictionary, name, depth + 1) is PdfObject found) return found;
+                if (SearchNameTree(doc, doc.Resolve(kid) as PdfDictionary, name, depth + 1, visited) is PdfObject found) return found;
             }
         }
 
