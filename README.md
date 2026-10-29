@@ -308,6 +308,23 @@ New protection is written as AES-256 (revision 6) or AES-128 (revision 4). A doc
 only the user password can be read but not saved, and pages can be copied out of it only when
 its permissions allow copying.
 
+### Extracting images
+
+```csharp
+PdfDocument doc = PdfDocument.Open("scan.pdf");
+foreach (PdfPageImage image in doc.Pages[0].GetImages())
+{
+    Console.WriteLine($"{image.Width}x{image.Height} at {image.Bounds}, {image.HorizontalResolution:0} dpi");
+    if (image.Encoding == "DCTDecode") File.WriteAllBytes("photo.jpg", image.GetEncodedData());  // the JPEG as is
+    else image.Decode()?.SavePng("image.png");                                                    // pixels
+}
+```
+
+`GetImages` walks the page content: image XObjects, inside forms too, and inline images, each
+with the matrix that places it. `Decode` gives 8 bit gray or RGB pixels for raw samples of 1 to 16
+bits and JPEGs (decoded as libjpeg does), through DeviceGray, RGB and CMYK, Cal and ICC based
+spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied.
+
 ### HTML to PDF
 
 ```csharp
@@ -476,6 +493,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
 | Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | Done (next release) |
 | HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | Done (next release) |
+| Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | Done (next release) |
 
 ### Low level access
 
@@ -496,6 +514,9 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
+- Image extraction decodes raw samples and JPEGs. CCITT, JBIG2 and JPEG 2000 images come back
+  encoded (`GetEncodedData`), soft masks are not applied, and Separation and DeviceN colors
+  other than a Type 2 tint transform are approximated as gray.
 - Linearized (fast web view) output is not produced; linearization is dropped.
 - The whole document is held in memory. Peak memory depends on decoded image sizes and on
   parallelism: plan for about 10 times the file size, more for image heavy files, or lower

@@ -212,6 +212,10 @@ users can pin or replace them. Add both to `eng/license-allowlist.json` and the 
 
 ## 4. Plan
 
+Status: in phase 0 the content walker, image placement (public as `PdfPage.GetImages()`), raw
+samples with color spaces and Decode arrays, JPEG pixel decoding and inline images are done.
+CCITT, the glyphless font and invisible text remain.
+
 | Phase | Work | Estimate |
 |---|---|---|
 | 0 Core prerequisites (MIT, no deps) | Content walker and an internal image placement API; raw sample to gray with color spaces and Decode arrays; JPEG pixel decode on top of `JpegReader`; CCITT G3/G4 decoder; `GlyphlessFont` and `DrawInvisibleText`; InternalsVisibleTo | 17 to 24 days |

@@ -90,6 +90,17 @@ public sealed class PdfPage
 
     /// <summary>Number of annotations (links, notes, form widgets) on the page.</summary>
     public int AnnotationCount => Owner.Resolve(Dictionary["Annots"]) is PdfArray a ? a.Count : 0;
+
+    /// <summary>
+    /// The images the page draws, in drawing order, with where each lands: image XObjects
+    /// (inside forms too) and inline images. Damaged content is read as far as it goes.
+    /// </summary>
+    public IReadOnlyList<PdfPageImage> GetImages()
+    {
+        var finder = new PdfPageImage.Finder(Owner);
+        finder.Run(this);
+        return finder.Images;
+    }
 }
 
 /// <summary>The ordered pages of a document.</summary>
