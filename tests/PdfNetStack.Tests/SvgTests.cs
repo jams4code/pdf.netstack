@@ -166,7 +166,28 @@ public sealed class SvgTests
         Draw($"<svg {Ns}>" + string.Concat(Enumerable.Repeat("<g>", 5000)) + "<rect width=\"1\" height=\"1\"/>" + string.Concat(Enumerable.Repeat("</g>", 5000)) + "</svg>");
         Draw($"<svg {Ns}><path d=\"M0 0" + string.Concat(Enumerable.Repeat(" l1 1", 600_000)) + "\"/></svg>");
         Draw($"<svg {Ns}><path d=\"M0 0 L1e999 5\"/><circle r=\"1e400\"/></svg>");
+
+        // Ten uses per level, sixteen levels deep, of a group that paints nothing: 10^16 visits
+        // unless the work itself is budgeted, since nothing is ever drawn.
+        var fanOut = new StringBuilder($"<svg {Ns}><defs><g id=\"l0\"/>");
+        for (int level = 1; level <= 16; level++)
+        {
+            fanOut.Append($"<g id=\"l{level}\">").Append(string.Concat(Enumerable.Repeat($"<use href=\"#l{level - 1}\"/>", 10))).Append("</g>");
+        }
+
+        Draw(fanOut.Append("</defs><use href=\"#l16\"/></svg>").ToString());
+
+        // A clip of many shapes on an element used many times shares the same budget.
+        string shapes = string.Concat(Enumerable.Repeat("<rect width=\"1\" height=\"1\"/>", 20_000));
+        Draw($"<svg {Ns}><defs><clipPath id=\"c\">{shapes}</clipPath><g id=\"r\" clip-path=\"url(#c)\"/></defs>"
+            + string.Concat(Enumerable.Repeat("<use href=\"#r\"/>", 20_000)) + "</svg>");
         Assert.IsLessThan(30_000, clock.ElapsedMilliseconds);
+
+        // Sizes that overflow or exceed any page fall back as if unset.
+        PdfSvg huge = PdfSvg.Parse($"<svg {Ns} width=\"1e308in\" height=\"1e300\" viewBox=\"0 0 1e400 1e400\"/>");
+        Assert.AreEqual(225, huge.Width, 1e-9);
+        Assert.AreEqual(112.5, huge.Height, 1e-9);
+        Draw($"<svg {Ns} width=\"1e308in\"><rect width=\"1e308in\" height=\"5\"/></svg>");
     }
 
     [TestMethod]

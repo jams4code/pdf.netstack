@@ -13,6 +13,10 @@ internal sealed class SvgRenderer
 {
     private const int MaxUseDepth = 16;
     private const int MaxDrawn = 200_000;
+
+    // Work done whether or not anything paints: use fans out, so a small file can ask for 10^16
+    // visits of empty groups. Every element entered and every clip shape counts.
+    private const int MaxVisited = 1_000_000;
     private const double DefaultFontSize = 16;
 
     // Properties that pass from parent to child (SVG 1.1, Appendix N).
@@ -32,6 +36,7 @@ internal sealed class SvgRenderer
     private readonly Dictionary<string, SvgElement> _ids = new(StringComparer.Ordinal);
     private readonly List<(string Selector, Dictionary<string, string> Declarations)> _rules = [];
     private int _drawn;
+    private int _visited;
 
     private SvgRenderer(PdfGraphics graphics, SvgElement root)
     {
@@ -210,7 +215,7 @@ internal sealed class SvgRenderer
         double n = Number(t, double.NaN);
         if (double.IsNaN(n)) return fallback;
         string unit = t.TrimStart('-', '+', '.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9').TrimStart('e', 'E', '-', '+', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9').Trim().ToLowerInvariant();
-        return unit switch
+        double length = unit switch
         {
             "%" => n / 100 * basis,
             "pt" => n * 96 / 72,
@@ -222,6 +227,9 @@ internal sealed class SvgRenderer
             "ex" => n * fontSize / 2,
             _ => n,
         };
+
+        // 1e308in overflows: an infinite length is as good as none.
+        return double.IsNaN(length) || double.IsInfinity(length) ? fallback : length;
     }
 
     private static List<double> Numbers(string? s)
@@ -393,13 +401,14 @@ internal sealed class SvgRenderer
     {
         foreach (SvgElement child in e.Children)
         {
-            if (_drawn > MaxDrawn) return;
+            if (_drawn > MaxDrawn || _visited > MaxVisited) return;
             Element(child, style, depth);
         }
     }
 
     private void Element(SvgElement e, Dictionary<string, string> parentStyle, int depth)
     {
+        if (++_visited > MaxVisited) return;
         if (e.Name is "defs" or "symbol" or "lineargradient" or "radialgradient" or "clippath" or "mask" or "pattern" or "filter" or "style" or "title" or "desc" or "metadata" or "script") return;
         Dictionary<string, string> style = Style(e, parentStyle);
         if (V(style, "display") == "none") return;
@@ -682,6 +691,7 @@ internal sealed class SvgRenderer
         bool any = false;
         foreach (SvgElement child in clipPath.Children)
         {
+            if (++_visited > MaxVisited) break;
             SvgElement shape = child.Name == "use" && child["href"] is string href && Reference(href) is SvgElement used ? used : child;
             if (Shape(shape, style) is not PdfPath p) continue;
             if (child["transform"] is string t)

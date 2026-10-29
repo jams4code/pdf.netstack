@@ -24,6 +24,9 @@ public sealed class PdfSvg
     private const double PointsPerPixel = 0.75;
     private const int MaxBytes = 32 << 20;
 
+    // Far larger than any page (PDF caps page sides at 14,400 units, Annex C): such a size is unset.
+    private const double MaxPixels = 1 << 20;
+
     private readonly SvgElement _root;
     private readonly ConditionalWeakTable<PdfDocument, PdfForm> _forms = new();
 
@@ -33,14 +36,16 @@ public sealed class PdfSvg
 
         // Size from width and height, else the viewBox, else the default 300 by 150 (SVG 2, 8.2).
         string[] viewBox = (root["viewbox"] ?? "").Split([' ', ',', '\t', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        double vbWidth = viewBox.Length == 4 ? SvgRenderer.Length(viewBox[2], 0) : 0;
-        double vbHeight = viewBox.Length == 4 ? SvgRenderer.Length(viewBox[3], 0) : 0;
-        double width = Absolute(root["width"]), height = Absolute(root["height"]);
-        if (width <= 0 && height > 0 && vbWidth > 0 && vbHeight > 0) width = height * vbWidth / vbHeight;
-        if (height <= 0 && width > 0 && vbWidth > 0 && vbHeight > 0) height = width * vbHeight / vbWidth;
+        double vbWidth = viewBox.Length == 4 ? Sane(SvgRenderer.Length(viewBox[2], 0)) : 0;
+        double vbHeight = viewBox.Length == 4 ? Sane(SvgRenderer.Length(viewBox[3], 0)) : 0;
+        double width = Sane(Absolute(root["width"])), height = Sane(Absolute(root["height"]));
+        if (width <= 0 && height > 0 && vbWidth > 0 && vbHeight > 0) width = Sane(height * vbWidth / vbHeight);
+        if (height <= 0 && width > 0 && vbWidth > 0 && vbHeight > 0) height = Sane(width * vbHeight / vbWidth);
         PixelWidth = width > 0 ? width : vbWidth > 0 ? vbWidth : 300;
         PixelHeight = height > 0 ? height : vbHeight > 0 ? vbHeight : 150;
     }
+
+    private static double Sane(double px) => px > 0 && px <= MaxPixels ? px : 0;
 
     /// <summary>Width in points at the drawing's own size, CSS pixels at 96 per inch.</summary>
     public double Width => PixelWidth * PointsPerPixel;
