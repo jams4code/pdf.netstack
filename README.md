@@ -213,8 +213,8 @@ PdfFont heading = (PdfFont?)brand.Find("Inter", weight: 700) ?? PdfStandardFont.
 
 Embedded text is kerned from the font's GPOS or kern table, stays searchable and copyable in
 any script the font covers (a ToUnicode map is written), and the subset keeps only the outlines
-used, so a page in Inter costs a few KB. `PdfFontCollection` matches family, weight and italic
-the way CSS does. Text can be filled with a gradient, outlined with a pen, or both;
+used, so a page in Inter costs a few KB. `PdfFontCollection` matches family, width, style and
+weight the way CSS does. Text can be filled with a gradient, outlined with a pen, or both;
 `MeasureString`, `Ascent`, `Descent` and `GetLineHeight` give the metrics for layout. Fonts are
 parsed defensively: a damaged file raises `FontFormatException`, and a font whose license
 forbids embedding (OS/2 fsType) is refused.
@@ -227,6 +227,21 @@ fontTools and HarfBuzz:
 var variable = PdfOpenTypeFont.Load("fonts/Inter[opsz,wght].ttf");
 PdfFont semiBold = variable.GetInstance("SemiBold");                        // a named instance
 PdfFont custom = variable.GetInstance(new Dictionary<string, double> { ["wght"] = 650 });
+```
+
+In a `PdfFontCollection`, a variable font counts for every weight, width and slant its axes
+cover, and its named instances are faces of the family. `Find` returns the instance CSS font
+matching selects, with the optical size and any axis values applied, made once per location so a
+document embeds one program for each:
+
+```csharp
+PdfFont caption = brand.Find("Inter", new PdfFontQuery
+{
+    Weight = 650,                       // inside the wght axis: exactly 650
+    Style = PdfFontStyle.Italic,        // ital = 1, or the slnt axis for oblique
+    OpticalSize = 9,                    // opsz, when the font has it
+    Variations = new Dictionary<string, double> { ["GRAD"] = -25 },
+})!;
 ```
 
 Paragraphs wrap, align and justify, with rich text and right to left scripts:
@@ -499,7 +514,7 @@ PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a
 A layout engine in C#, no browser: the CSS cascade, block, inline, table, flex and grid layout
 (named lines, dense packing, subgrid), floats and positioning, paged media with `@page` and
 named pages on any element of the block flow, running headers and footers
-with page counters and named strings, repeated table headers, tagged output for accessibility, web fonts, right to left and Arabic text, links and bookmarks.
+with page counters and named strings, repeated table headers, tagged output for accessibility, web fonts and variable fonts, right to left and Arabic text, links and bookmarks.
 Without a resource loader nothing is fetched from the network. Details, options and limits in the
 [package readme](eng/nuget/PdfNetStack.Html.md).
 

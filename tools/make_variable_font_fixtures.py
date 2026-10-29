@@ -19,9 +19,16 @@ Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
     Test-Variable.instances.json  fontTools' instances (varLib.instancer) of both fonts at the
                          named instances and at weight 550: glyph outlines, advances and metrics
     Test-Variable.shaping.jsonl   HarfBuzz's shaping of sample texts at the same locations
+    Test-Axes.ttf        five axes (wght, wdth, opsz, ital, slnt) and eight named instances, for
+                         font matching: each axis adds its own amount to the advances, so a measured
+                         width tells which axis values an instance has (see AXES_ADVANCE)
+
+    python tools/make_variable_font_fixtures.py axes   rebuilds Test-Axes.ttf only
 """
 
 import json
+import math
+import sys
 from array import array
 from io import BytesIO
 from pathlib import Path
@@ -363,8 +370,90 @@ def shaping(data, name):
     return lines
 
 
+# Test-Axes.ttf: (tag, name, minimum, default, maximum).
+AXES = [("wght", "Weight", 100, 400, 900), ("wdth", "Width", 75, 100, 125), ("opsz", "Optical size", 8, 12, 72),
+        ("ital", "Italic", 0, 0, 1), ("slnt", "Slant", -15, 0, 0)]
+# What each master at an axis extreme adds to an advance, in font units; masters sit at one extreme
+# each, so the axes add up: H at wght 650, wdth 75 is 600 + 100 * 0.5 - 100.
+AXES_ADVANCE = {("wght", 100): -60, ("wght", 900): 100, ("wdth", 75): -100, ("wdth", 125): 100,
+                ("opsz", 8): 40, ("opsz", 72): -40, ("ital", 1): 20, ("slnt", -15): 10}
+AXES_BASE = {".notdef": 500, "space": 250, "H": 600, "I": 300}
+AXES_INSTANCES = [("Thin", {"wght": 100}), ("Regular", {}), ("Bold", {"wght": 700}), ("Condensed", {"wdth": 75}),
+                  ("Expanded Black", {"wdth": 125, "wght": 900}), ("Italic", {"ital": 1}),
+                  ("Bold Italic", {"wght": 700, "ital": 1}), ("Display", {"opsz": 72})]
+
+
+def axes_master(location):
+    """One master of Test-Axes.ttf: boxes whose stems follow the weight, scaled by the width, sheared by the slant."""
+    extreme = next(((tag, v) for tag, v in location.items() if (tag, v) in AXES_ADVANCE), None)
+    delta = AXES_ADVANCE.get(extreme, 0)
+    w, scale = location["wght"], location["wdth"] / 100
+    shear = math.tan(math.radians(-location["slnt"] + 12 * location["ital"]))
+    s = stem(w)
+    fb = FontBuilder(1000, isTTF=True)
+    glyph_names = list(AXES_BASE)
+    fb.setupGlyphOrder(glyph_names)
+    fb.setupCharacterMap({0x20: "space", 0x48: "H", 0x49: "I"})
+    glyphs = {}
+    for name in glyph_names:
+        pen = TTGlyphPen(glyphs)
+
+        def box(x0, y0, x1, y1):
+            points = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+            pen.moveTo(*[(round(x * scale + y * shear), y) for x, y in points[:1]])
+            for x, y in points[1:]:
+                pen.lineTo((round(x * scale + y * shear), y))
+            pen.closePath()
+
+        if name in (".notdef", "H"):
+            box(50, 0, 50 + s, 700)
+            box(500 - s, 0, 500, 700)
+            box(50 + s, 330, 500 - s, 330 + s // 2)
+        elif name == "I":
+            box(150 - s // 2, 0, 150 + s // 2, 700)
+        glyphs[name] = pen.glyph()
+    fb.setupGlyf(glyphs)
+    fb.setupHorizontalMetrics({name: (AXES_BASE[name] + (delta if name != ".notdef" else 0), 0) for name in glyph_names})
+    fb.setupHorizontalHeader(ascent=900, descent=-250, lineGap=0)
+    fb.setupNameTable({"familyName": "PdfNetStack Test Axes", "styleName": "Regular", "psName": "PdfNetStackTestAxes-Regular"})
+    fb.setupOS2(sTypoAscender=900, sTypoDescender=-250, sTypoLineGap=0, usWinAscent=950, usWinDescent=300,
+                sxHeight=500, sCapHeight=700, usWeightClass=w, fsType=0)
+    fb.setupPost()
+    return reload(fb.font)
+
+
+def build_axes():
+    doc = DesignSpaceDocument()
+    for tag, name, minimum, default, maximum in AXES:
+        axis = AxisDescriptor()
+        axis.tag, axis.name, axis.minimum, axis.default, axis.maximum = tag, name, minimum, default, maximum
+        doc.addAxis(axis)
+    defaults = {tag: default for tag, _, _, default, _ in AXES}
+    names = {tag: name for tag, name, _, _, _ in AXES}
+    for location in [{}] + [{tag: v} for tag, v in AXES_ADVANCE]:
+        full = {**defaults, **location}
+        source = SourceDescriptor()
+        source.font = axes_master(full)
+        source.location = {names[tag]: v for tag, v in full.items()}
+        source.styleName = " ".join(f"{tag}{v}" for tag, v in location.items()) or "Regular"
+        doc.addSource(source)
+    for style, location in AXES_INSTANCES:
+        instance = InstanceDescriptor()
+        instance.styleName = style
+        instance.location = {names[tag]: v for tag, v in {**defaults, **location}.items()}
+        doc.addInstance(instance)
+    font, _, _ = build_variable(doc)
+    return font
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    buffer = BytesIO()
+    pin(build_axes()).save(buffer)
+    (OUT / "Test-Axes.ttf").write_bytes(buffer.getvalue())
+    print(f"Test-Axes.ttf: {len(buffer.getvalue())} bytes")
+    if sys.argv[1:] == ["axes"]:
+        return
     references = []
     shaped = []
     for cff, name in ((False, "Test-Variable.ttf"), (True, "Test-Variable.otf")):

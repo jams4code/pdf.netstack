@@ -5,10 +5,16 @@ using static PdfNetStack.Fonts.OpenType.FontData;
 namespace PdfNetStack.Fonts;
 
 /// <summary>
-/// Fonts found by family name, weight and style, the way CSS matches them. Add font files or
-/// directories, or use <see cref="System"/> for the fonts installed on the machine. Adding a file
-/// reads only its names and style; the font itself loads when first found. Thread safe.
+/// Fonts found by family name, weight, width and style, the way CSS matches them. Add font files
+/// or directories, or use <see cref="System"/> for the fonts installed on the machine. Adding a
+/// file reads only its names and style; the font itself loads when first found. Thread safe.
 /// </summary>
+/// <remarks>
+/// A variable font counts for every weight, width and slant its axes cover: asking for weight 650
+/// of a family whose font has a wght axis from 100 to 900 gives the instance at 650. Its named
+/// instances are faces of the family too, and like any face can also be found by full name, such
+/// as "Inter SemiBold".
+/// </remarks>
 /// <example>
 /// <code>
 /// PdfFont body = PdfFontCollection.System.Find("Segoe UI") ?? PdfStandardFont.Helvetica;
@@ -24,6 +30,7 @@ public sealed class PdfFontCollection
 
     private readonly object _lock = new();
     private readonly Dictionary<string, List<Face>> _families = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<Face>> _fullNames = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The fonts installed on this machine (Windows, macOS and Linux font directories), scanned on first use.</summary>
     public static PdfFontCollection System => SystemFonts.Value;
@@ -37,11 +44,18 @@ public sealed class PdfFontCollection
         }
     }
 
-    /// <summary>Adds a loaded font under its family name.</summary>
+    /// <summary>
+    /// Adds a loaded font under its family name. A variable font as loaded adds its whole design
+    /// space and its named instances; an instance from <see cref="PdfOpenTypeFont.GetInstance(string)"/>
+    /// adds that one location.
+    /// </summary>
     public void Add(PdfOpenTypeFont font)
     {
         Compat.ThrowIfNull(font, nameof(font));
-        Register(new Face(null, 0, font.Weight, font.IsItalic) { Font = font }, font.FamilyName, null);
+        foreach ((Face face, string? fullName, string? postScriptName) in Faces(new Source(null, 0) { Font = font }, font))
+        {
+            Register(face, font.FamilyName, null, fullName, postScriptName);
+        }
     }
 
     /// <summary>Adds every font of a file: one, or all fonts of a collection. Returns how many were added.</summary>
@@ -49,14 +63,13 @@ public sealed class PdfFontCollection
     public int AddFile(string path)
     {
         Compat.ThrowIfNull(path, nameof(path));
-        int added = 0;
-        foreach ((Face face, string family, string? typographic) in Scan(path))
+        List<Scanned> fonts = Scan(path);
+        foreach (Scanned font in fonts)
         {
-            Register(face, family, typographic);
-            added++;
+            foreach ((Face face, string? fullName, string? postScriptName) in font.Faces) Register(face, font.Family, font.Typographic, fullName, postScriptName);
         }
 
-        return added;
+        return fonts.Count;
     }
 
     /// <summary>
@@ -96,50 +109,63 @@ public sealed class PdfFontCollection
 
     /// <summary>
     /// The font of <paramref name="family"/> closest to the requested weight and style, chosen as
-    /// CSS does (CSS Fonts Level 4, 5.2): for weights 400 to 500, heavier up to 500 first, then
+    /// CSS does (CSS Fonts 4, 5.2): for weights 400 to 500, heavier up to 500 first, then
     /// lighter, then heavier; below 400, lighter first; above 500, heavier first. An italic is
-    /// preferred when asked for, an upright face otherwise. Null when the family is unknown.
+    /// preferred when asked for, an upright face otherwise. A variable font gives its instance at
+    /// the weight asked when its wght axis covers it. Null when the family is unknown.
     /// </summary>
-    /// <param name="family">Family name, case insensitive, such as "Inter" or "Times New Roman".</param>
+    /// <param name="family">Family name, case insensitive, such as "Inter" or "Times New Roman", or a face's full name.</param>
     /// <param name="weight">CSS weight, 1 to 1000: 400 regular, 700 bold.</param>
     /// <param name="italic">True to prefer an italic or oblique face.</param>
     public PdfOpenTypeFont? Find(string family, int weight = 400, bool italic = false)
     {
         Compat.ThrowIfNull(family, nameof(family));
         if (weight is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(weight), "CSS weights range from 1 to 1000.");
+        return Find(family, new PdfFontQuery { Weight = weight, Style = italic ? PdfFontStyle.Italic : PdfFontStyle.Normal });
+    }
+
+    /// <summary>
+    /// The font of <paramref name="family"/> that best matches <paramref name="query"/>, chosen as
+    /// CSS does (CSS Fonts 4, 5.2): the closest width first, then style, then weight. A variable
+    /// font gives its instance at the values found, clamped to its axes, with the query's optical
+    /// size and variations applied over them (CSS Fonts 4, 7.2). Each location is made once, so
+    /// finding it again returns the same font. Null when the family is unknown.
+    /// </summary>
+    /// <param name="family">Family name, case insensitive, such as "Inter", or a face's full or PostScript name, such as "Inter SemiBold".</param>
+    /// <param name="query">The weight, width, style and variations wanted.</param>
+    /// <exception cref="ArgumentOutOfRangeException">A value of the query is outside its range.</exception>
+    /// <exception cref="ArgumentException">A variation value is not a finite number.</exception>
+    public PdfOpenTypeFont? Find(string family, PdfFontQuery query)
+    {
+        Compat.ThrowIfNull(family, nameof(family));
+        Compat.ThrowIfNull(query, nameof(query));
+        query.Validate();
         List<Face> candidates;
         lock (_lock)
         {
-            if (!_families.TryGetValue(family.Trim(), out List<Face>? faces)) return null;
+            string name = family.Trim();
+            if (!_families.TryGetValue(name, out List<Face>? faces) && !_fullNames.TryGetValue(name, out faces)) return null;
             candidates = [.. faces];
         }
 
-        foreach (Face face in candidates.OrderBy(f => f.Italic == italic ? 0 : 1).ThenBy(f => WeightRank(weight, f.Weight)))
+        // Faces whose file does not load drop out and the match runs again on the rest.
+        while (candidates.Count > 0)
         {
-            PdfOpenTypeFont? font = Load(face);
-            if (font is not null) return font;
+            List<Face> best = FontMatcher.Select(candidates, f => f.Traits, query);
+            if (best.Count == 0) break;
+            foreach (Face face in best)
+            {
+                PdfOpenTypeFont? font = Load(face.Source);
+                if (font is not null) return FontMatcher.Instance(font, face.Traits, query, face.Location);
+            }
+
+            candidates.RemoveAll(best.Contains);
         }
 
         return null;
     }
 
-    /// <summary>Order of a face's weight for a requested weight; lower is better.</summary>
-    internal static int WeightRank(int wanted, int weight)
-    {
-        int distance = Math.Abs(weight - wanted);
-        if (weight == wanted) return 0;
-        if (wanted is >= 400 and <= 500)
-        {
-            if (weight > wanted && weight <= 500) return 1000 + distance;
-            if (weight < wanted) return 2000 + distance;
-            return 3000 + distance;
-        }
-
-        bool preferred = wanted < 400 ? weight < wanted : weight > wanted;
-        return (preferred ? 1000 : 2000) + distance;
-    }
-
-    private void Register(Face face, string family, string? typographic)
+    private void Register(Face face, string family, string? typographic, string? fullName, string? postScriptName)
     {
         lock (_lock)
         {
@@ -148,34 +174,65 @@ public sealed class PdfFontCollection
             foreach (string? name in new[] { family, typographic })
             {
                 if (string.IsNullOrWhiteSpace(name) || (name == typographic && string.Equals(family, typographic, StringComparison.OrdinalIgnoreCase))) continue;
-                if (!_families.TryGetValue(name!, out List<Face>? faces)) _families[name!] = faces = [];
-                faces.Add(face);
+                Index(_families, name!.Trim());
             }
+
+            foreach (string? name in new[] { fullName, postScriptName })
+            {
+                if (string.IsNullOrWhiteSpace(name) || (name == postScriptName && string.Equals(fullName, postScriptName, StringComparison.OrdinalIgnoreCase))) continue;
+                Index(_fullNames, name!.Trim());
+            }
+        }
+
+        void Index(Dictionary<string, List<Face>> index, string name)
+        {
+            if (!index.TryGetValue(name, out List<Face>? faces)) index[name] = faces = [];
+            faces.Add(face);
         }
     }
 
-    private PdfOpenTypeFont? Load(Face face)
+    private static PdfOpenTypeFont? Load(Source source)
     {
-        lock (face)
+        lock (source)
         {
-            if (face.Font is not null || face.Failed) return face.Font;
+            if (source.Font is not null || source.Failed) return source.Font;
             try
             {
-                face.Font = PdfOpenTypeFont.Load(face.Path!, face.Index);
+                source.Font = PdfOpenTypeFont.Load(source.Path!, source.Index);
             }
             catch (Exception e) when (e is FontFormatException or IOException or UnauthorizedAccessException)
             {
-                face.Failed = true;
+                source.Failed = true;
             }
 
-            return face.Font;
+            return source.Font;
         }
     }
 
-    /// <summary>Family, weight and style of each font in a file, from its name, OS/2 and head tables only.</summary>
-    private static List<(Face Face, string Family, string? Typographic)> Scan(string path)
+    /// <summary>
+    /// The faces of a loaded font, with their full and PostScript names: its named instances,
+    /// then the font itself (its whole design space when variable).
+    /// </summary>
+    private static List<(Face Face, string? FullName, string? PostScriptName)> Faces(Source source, PdfOpenTypeFont font)
     {
-        var result = new List<(Face, string, string?)>();
+        var faces = new List<(Face, string?, string?)>();
+        if (font.IsVariable && font.Location is null)
+        {
+            foreach ((string style, string? postScript, double[] values) in font.NamedInstanceLocations)
+            {
+                faces.Add((new Face(source, font.TraitsAt(values), values), font.FamilyName + " " + style, postScript));
+            }
+        }
+
+        faces.Add((new Face(source, font.Traits, font.Location), OpenTypeFile.ReadName(font.File.Table("name"), 4), font.Name));
+        return faces;
+    }
+
+
+    /// <summary>Names and faces of each font in a file, from its name, OS/2, head, post and fvar tables only.</summary>
+    private static List<Scanned> Scan(string path)
+    {
+        var result = new List<Scanned>();
         using FileStream stream = File.OpenRead(path);
         byte[] header = Read(stream, 0, 12);
         string signature = Tag(header, 0);
@@ -189,7 +246,7 @@ public sealed class PdfFontCollection
             for (int index = 0; index < count; index++)
             {
                 PdfOpenTypeFont font = PdfOpenTypeFont.Load(data, index);
-                result.Add((new Face(path, index, font.Weight, font.IsItalic) { Font = font }, font.FamilyName, null));
+                result.Add(new Scanned(font.FamilyName, null, Faces(new Source(path, index) { Font = font }, font)));
             }
 
             return result;
@@ -213,7 +270,7 @@ public sealed class PdfFontCollection
             byte[] sfnt = Read(stream, offsets[index], 12);
             int tables = U16(sfnt, 4);
             byte[] records = Read(stream, offsets[index] + 12, 16 * tables);
-            byte[]? name = null, os2 = null, head = null;
+            byte[]? name = null, os2 = null, head = null, post = null, fvar = null;
             for (int t = 0; t < tables; t++)
             {
                 string tag = Tag(records, 16 * t);
@@ -224,16 +281,28 @@ public sealed class PdfFontCollection
                     case "name": name = Read(stream, offset, (int)length); break;
                     case "OS/2": os2 = Read(stream, offset, (int)length); break;
                     case "head": head = Read(stream, offset, (int)length); break;
+                    case "post": post = Read(stream, offset, Math.Min((int)length, 32)); break;
+                    case "fvar": fvar = Read(stream, offset, (int)length); break;
                 }
             }
 
             if (name is null || head is null) continue;
             string? family = OpenTypeFile.ReadName(name, 1);
             if (family is null) continue;
-            int macStyle = U16(head, 44);
-            int weight = os2 is { Length: >= 64 } && U16(os2, 4) is >= 1 and <= 1000 and var w ? w : (macStyle & 1) != 0 ? 700 : 400;
-            bool italic = (os2 is { Length: >= 64 } && (U16(os2, 62) & 0x201) != 0) || (macStyle & 2) != 0;
-            result.Add((new Face(path, index, weight, italic), family, OpenTypeFile.ReadName(name, 16)));
+            string? typographic = OpenTypeFile.ReadName(name, 16);
+            FontVariations? variations = fvar is null ? null : FontVariations.Read(fvar, default);
+            IReadOnlyList<VariationAxis> axes = variations?.Axes ?? [];
+            var source = new Source(path, index);
+            var faces = new List<(Face, string?, string?)>();
+            foreach (NamedInstance instance in variations?.Instances ?? [])
+            {
+                string style = OpenTypeFile.ReadName(name, instance.SubfamilyNameId) ?? "Instance";
+                string? postScript = instance.PostScriptNameId is > 0 and < 0xFFFF ? OpenTypeFile.ReadName(name, instance.PostScriptNameId) : null;
+                faces.Add((new Face(source, FontTraits.Describe(os2, head, post, axes, instance.Coordinates), instance.Coordinates), (typographic ?? family) + " " + style, postScript));
+            }
+
+            faces.Add((new Face(source, FontTraits.Describe(os2, head, post, axes, null), null), OpenTypeFile.ReadName(name, 4), OpenTypeFile.ReadName(name, 6)));
+            result.Add(new Scanned(family, typographic, faces));
         }
 
         return result;
@@ -285,19 +354,31 @@ public sealed class PdfFontCollection
         }
     }
 
-    /// <summary>One font: where it is, how it matches, and the font once loaded.</summary>
-    private sealed class Face(string? path, int index, int weight, bool italic)
+    /// <summary>One font of a file, loaded when a face of it is first found.</summary>
+    private sealed class Source(string? path, int index)
     {
         public string? Path { get; } = path;
 
         public int Index { get; } = index;
 
-        public int Weight { get; } = weight;
-
-        public bool Italic { get; } = italic;
-
         public PdfOpenTypeFont? Font { get; set; }
 
         public bool Failed { get; set; }
     }
+
+    /// <summary>
+    /// A face: a font, how it matches, and for a named instance or an instance its axis values
+    /// (user units, one per axis).
+    /// </summary>
+    private sealed class Face(Source source, FontTraits traits, IReadOnlyList<double>? location)
+    {
+        public Source Source { get; } = source;
+
+        public FontTraits Traits { get; } = traits;
+
+        public IReadOnlyList<double>? Location { get; } = location;
+    }
+
+    /// <summary>A font of a file: its family names, and its faces with their full and PostScript names.</summary>
+    private sealed record Scanned(string Family, string? Typographic, List<(Face Face, string? FullName, string? PostScriptName)> Faces);
 }

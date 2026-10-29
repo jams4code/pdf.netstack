@@ -20,7 +20,7 @@ public sealed class HtmlConverterOptions
     /// </summary>
     public Func<Uri, byte[]?>? ResourceLoader { get; init; }
 
-    /// <summary>Fonts to use before installed ones, matched by family name, weight and style.</summary>
+    /// <summary>Fonts to use before installed ones, matched by family name, width, style and weight.</summary>
     public PdfFontCollection? Fonts { get; init; }
 
     /// <summary>

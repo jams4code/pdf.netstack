@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Variable fonts in font matching. `PdfFontCollection` counts a variable font for every weight,
+  width and slant its axes cover, and registers its named instances as faces; faces are also
+  found by full or PostScript name. `Find(family, PdfFontQuery)` matches width, then style, then
+  weight with ranges as CSS Fonts 4 does (5.2), and returns the instance at the values found,
+  with `OpticalSize` and `Variations` applied over them (7.2): ital for italic, slnt for oblique,
+  never both. `PdfFontStyle` gives normal, italic or oblique at any angle. Static families match
+  as before, now also by OS/2 width class.
+- HTML: `@font-face` takes ranges in `font-weight`, `font-stretch` (and `font-width`) and
+  `font-style` (`oblique 0deg 15deg`), and the `font-variation-settings` and
+  `font-named-instance` descriptors. A missing descriptor is `auto`: the face matches as normal
+  and the variation follows the style unclamped. `font-style: oblique <angle>`,
+  `font-optical-sizing` (opsz set to the font size in CSS px) and `font-variation-settings` are
+  supported; the `font` shorthand resets the last two. Rules with identical descriptors: the
+  last one wins.
+- Variable font instances are made once per location and the default location is the font
+  itself, so a document embeds one program per location drawn, however many sizes use it.
+  `@font-face` rules that share a file share its font. A damaged variation table makes matching
+  fall back to the font's default instance.
+- `tools/make_variable_font_fixtures.py` also builds Test-Axes.ttf, a font with wght, wdth,
+  opsz, ital and slnt axes for the matching tests.
+
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color

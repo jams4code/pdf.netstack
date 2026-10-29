@@ -32,9 +32,12 @@ internal sealed class FontVariations
 
     /// <summary>The font's axes and instances, or null when it is not a variable font.</summary>
     /// <exception cref="FontFormatException">The fvar table is damaged.</exception>
-    public static FontVariations? Load(OpenTypeFile font)
+    public static FontVariations? Load(OpenTypeFile font) => Read(font.Table("fvar"), font.Table("avar"));
+
+    /// <summary>The axes and instances of an fvar table, with avar's mappings; null when there is no fvar.</summary>
+    /// <exception cref="FontFormatException">The fvar table is damaged.</exception>
+    public static FontVariations? Read(ReadOnlySpan<byte> fvar, ReadOnlySpan<byte> avar)
     {
-        ReadOnlySpan<byte> fvar = font.Table("fvar");
         if (fvar.Length == 0) return null;
         int axesAt = U16(fvar, 4), axisCount = U16(fvar, 8), axisSize = U16(fvar, 10);
         int instanceCount = U16(fvar, 12), instanceSize = U16(fvar, 14);
@@ -60,7 +63,7 @@ internal sealed class FontVariations
             instances.Add(new NamedInstance(U16(fvar, at), postScript, coordinates));
         }
 
-        return new FontVariations(axes, instances, ReadAvar(font.Table("avar"), axisCount));
+        return new FontVariations(axes, instances, ReadAvar(avar, axisCount));
     }
 
     /// <summary>

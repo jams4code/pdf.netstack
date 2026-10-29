@@ -15,8 +15,10 @@ namespace PdfNetStack.Fonts;
 /// The font program is embedded, so the PDF shows the same glyphs everywhere, including in PDF/A.
 /// A variable font draws its default instance; <see cref="GetInstance(string)"/> and
 /// <see cref="GetInstance(IReadOnlyDictionary{string, double})"/> give any other, embedded as a
-/// static font with the variations applied (TrueType and CFF2 outlines alike). Fonts whose
-/// license forbids embedding (OS/2 fsType) are refused when first drawn.
+/// static font with the variations applied (TrueType and CFF2 outlines alike). Each location is
+/// made once and shared, the default location being the font itself, so a document embeds one
+/// program per location drawn. Fonts whose license forbids embedding (OS/2 fsType) are refused
+/// when first drawn.
 /// </remarks>
 public sealed class PdfOpenTypeFont : PdfFont
 {
@@ -24,17 +26,20 @@ public sealed class PdfOpenTypeFont : PdfFont
     private readonly OpenTypeFile _source;
     private readonly FontVariations? _variations;
     private readonly ConcurrentDictionary<string, PdfOpenTypeFont> _instances;
+    private readonly double[]? _location;
     private readonly Kerning? _kerning;
     private readonly double _scale;
     private CffFont? _cff;
     private ShapingTables? _tables;
+    private FontTraits? _traits;
 
-    private PdfOpenTypeFont(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont>? instances)
+    private PdfOpenTypeFont(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont> instances, double[]? location)
     {
         _file = file;
         _source = source;
         _variations = variations;
-        _instances = instances ?? new ConcurrentDictionary<string, PdfOpenTypeFont>(StringComparer.Ordinal);
+        _instances = instances;
+        _location = location;
         _kerning = Kerning.Load(file);
         _scale = 1000.0 / file.UnitsPerEm;
 
@@ -118,6 +123,25 @@ public sealed class PdfOpenTypeFont : PdfFont
 
     internal CffFont Cff => _cff ??= new CffFont(_file.Table("CFF "));
 
+    /// <summary>
+    /// How the font matches in a family: the ranges of its axes for a variable font as loaded, the
+    /// values of its location for an instance, else its OS/2 weight, width and style.
+    /// </summary>
+    internal FontTraits Traits => _traits ??= TraitsAt(_location);
+
+    /// <summary>How the font matches at a location (user units, one per axis), or over all its axes for null.</summary>
+    internal FontTraits TraitsAt(IReadOnlyList<double>? location) =>
+        FontTraits.Describe(_file.Table("OS/2"), _file.Table("head"), _file.Table("post"), _variations?.Axes ?? [], location);
+
+    /// <summary>For an instance, its axis values in user units, one per axis; null for a font as loaded.</summary>
+    internal IReadOnlyList<double>? Location => _location;
+
+    /// <summary>The named instances of a variable font: style name, PostScript name if the font gives one, and axis values.</summary>
+    internal IEnumerable<(string Style, string? PostScriptName, double[] Values)> NamedInstanceLocations =>
+        _variations is null
+            ? []
+            : _variations.Instances.Select(i => (InstanceName(i), i.PostScriptNameId is > 0 and < 0xFFFF ? OpenTypeFile.ReadName(_source.Table("name"), i.PostScriptNameId) : null, i.Coordinates));
+
     /// <summary>Loads a font from a file: .ttf, .otf, .ttc, .otc, .woff or .woff2.</summary>
     /// <param name="path">The font file.</param>
     /// <param name="index">For a collection, which of its fonts; see <see cref="CountFonts(byte[])"/>.</param>
@@ -156,7 +180,12 @@ public sealed class PdfOpenTypeFont : PdfFont
             source.Coordinates = new float[variations.Axes.Count];
         }
 
-        return Create(file, source, variations, null);
+        var instances = new ConcurrentDictionary<string, PdfOpenTypeFont>(StringComparer.Ordinal);
+        PdfOpenTypeFont font = Create(file, source, variations, instances, null);
+
+        // The default instance is the font itself, so drawing with both embeds one program.
+        if (variations is not null) instances[Key(new float[variations.Axes.Count])] = font;
+        return font;
     }
 
     /// <summary>
@@ -206,11 +235,8 @@ public sealed class PdfOpenTypeFont : PdfFont
     {
         FontVariations variations = _variations!;
         float[] coordinates = variations.Normalize(values);
-        string key = string.Join(",", coordinates.Select(c => c.ToString("R", CultureInfo.InvariantCulture)));
-        return _instances.GetOrAdd(key, _ =>
+        return _instances.GetOrAdd(Key(coordinates), _ =>
         {
-            if (coordinates.All(c => c == 0) && !_source.IsCff2) return Create(_source, _source, variations, _instances);
-
             // A named instance at this location gives the style and PostScript names.
             NamedInstance? named = variations.Instances.FirstOrDefault(i => variations.Normalize(i.Coordinates).SequenceEqual(coordinates));
             string prefix = OpenTypeFile.ReadName(_source.Table("name"), 25) ?? _source.FamilyName;
@@ -221,11 +247,15 @@ public sealed class PdfOpenTypeFont : PdfFont
                     ? prefix + "-" + subfamily
                     : prefix + "_" + string.Concat(variations.Axes.Select((a, i) => values[i] == a.Default ? "" : FormatAxis(values[i]) + a.Tag));
             OpenTypeFile file = Instantiate(_source, variations, values, subfamily, OpenTypeFile.SanitizePostScriptName(postScript));
-            return Create(file, _source, variations, _instances);
+            double[] location = [.. values.Select((v, i) => Math.Max(variations.Axes[i].Minimum, Math.Min(variations.Axes[i].Maximum, v)))];
+            return Create(file, _source, variations, _instances, location);
         });
 
         static string FormatAxis(double v) => Math.Round(Math.Max(Math.Min(v, 99999), -99999), 2).ToString("0.##", CultureInfo.InvariantCulture);
     }
+
+    /// <summary>The cache key of a location: its normalized coordinates, so values that round to the same point share an instance.</summary>
+    private static string Key(float[] coordinates) => string.Join(",", coordinates.Select(c => (c == 0 ? 0f : c).ToString("R", CultureInfo.InvariantCulture)));
 
     private string InstanceName(NamedInstance instance) => OpenTypeFile.ReadName(_source.Table("name"), instance.SubfamilyNameId) ?? "Instance";
 
@@ -239,9 +269,9 @@ public sealed class PdfOpenTypeFont : PdfFont
         return file;
     }
 
-    private static PdfOpenTypeFont Create(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont>? instances)
+    private static PdfOpenTypeFont Create(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont> instances, double[]? location)
     {
-        var font = new PdfOpenTypeFont(file, source, variations, instances);
+        var font = new PdfOpenTypeFont(file, source, variations, instances, location);
         if (font._file.IsCff && font.Cff.GlyphCount != font._file.GlyphCount)
         {
             throw new FontFormatException("The CFF table and maxp disagree on the number of glyphs.");

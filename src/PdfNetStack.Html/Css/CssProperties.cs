@@ -4,11 +4,16 @@ namespace PdfNetStack.Html.Css;
 internal sealed class CssProperty
 {
     internal CssProperty(string name, bool inherited, string initial, string grammar)
+        : this(name, inherited, initial, CssGrammar.Parse(grammar))
+    {
+    }
+
+    internal CssProperty(string name, bool inherited, string initial, CssGrammar grammar)
     {
         Name = name;
         Inherited = inherited;
         Initial = CssProperties.Trim(CssParser.ComponentValues(CssTokenizer.Tokenize(initial)));
-        Grammar = CssGrammar.Parse(grammar);
+        Grammar = grammar;
     }
 
     public string Name { get; }
@@ -26,7 +31,7 @@ internal sealed class CssProperty
 /// <summary>
 /// A small value grammar: alternatives separated by |, each a type (length, percentage, lp for
 /// length or percentage, number, integer, color, image) or a keyword, with an optional repeat
-/// count such as {1,2}. * accepts anything.
+/// count such as {1,2}. * accepts anything. Values the notation cannot describe use a custom check.
 /// </summary>
 internal sealed class CssGrammar
 {
@@ -39,6 +44,10 @@ internal sealed class CssGrammar
     private readonly HashSet<string> _keywords = new(StringComparer.OrdinalIgnoreCase);
     private bool _any, _length, _percentage, _number, _integer, _color, _image;
     private int _min = 1, _max = 1;
+    private Func<List<CssValue>, bool>? _custom;
+
+    /// <summary>A grammar that accepts the values <paramref name="valid"/> accepts.</summary>
+    public static CssGrammar Custom(Func<List<CssValue>, bool> valid) => new() { _custom = valid };
 
     public static CssGrammar Parse(string spec)
     {
@@ -74,6 +83,7 @@ internal sealed class CssGrammar
     public bool Matches(List<CssValue> value)
     {
         if (_any) return true;
+        if (_custom is not null) return _custom(value);
         int count = 0;
         foreach (CssValue v in value)
         {
@@ -86,6 +96,7 @@ internal sealed class CssGrammar
 
     public bool MatchesOne(CssValue v)
     {
+        if (_custom is not null) return _custom([v]);
         if (IsMath(v)) return _length || _percentage || _number || _integer;
         if (!v.IsToken)
         {
@@ -145,7 +156,7 @@ internal static class CssProperties
         ["border-radius"] = [.. Corners.Select(c => "border-" + c + "-radius")],
         ["outline"] = ["outline-width", "outline-style", "outline-color"],
         ["background"] = ["background-color", "background-image", "background-position", "background-size", "background-repeat", "background-attachment", "background-origin", "background-clip"],
-        ["font"] = ["font-style", "font-variant-caps", "font-weight", "font-stretch", "font-size", "line-height", "font-family", "font-variant-ligatures", "font-variant-numeric", "font-feature-settings", "font-kerning"],
+        ["font"] = ["font-style", "font-variant-caps", "font-weight", "font-stretch", "font-size", "line-height", "font-family", "font-variant-ligatures", "font-variant-numeric", "font-feature-settings", "font-kerning", "font-optical-sizing", "font-variation-settings"],
         ["list-style"] = ["list-style-type", "list-style-position", "list-style-image"],
         ["text-decoration"] = ["text-decoration-line", "text-decoration-style", "text-decoration-color", "text-decoration-thickness"],
         ["flex"] = ["flex-grow", "flex-shrink", "flex-basis"],
@@ -173,6 +184,7 @@ internal static class CssProperties
         ["grid-row-gap"] = "row-gap",
         ["grid-column-gap"] = "column-gap",
         ["-webkit-print-color-adjust"] = "print-color-adjust",
+        ["font-width"] = "font-stretch",
     };
 
     public static readonly Dictionary<string, CssProperty> All = Build();
@@ -494,7 +506,8 @@ internal static class CssProperties
     {
         // [style || variant || weight || stretch]? size [/ line-height]? family
         int i = 0;
-        CssValue? style = null, variant = null, weight = null, stretch = null;
+        CssValue? variant = null, weight = null, stretch = null;
+        List<CssValue>? style = null;
         int normals = 0;
         while (true)
         {
@@ -502,7 +515,19 @@ internal static class CssProperties
             if (i >= value.Count) return null;
             CssValue v = value[i];
             if (v.IsIdent("normal")) normals++;
-            else if (style is null && All["font-style"].Grammar.MatchesOne(v)) style = v;
+            else if (style is null && All["font-style"].Grammar.MatchesOne(v))
+            {
+                style = One(v);
+
+                // "oblique 10deg": the angle belongs to the style.
+                int next = i + 1;
+                CssSelector.SkipWhitespace(value, ref next);
+                if (v.IsIdent("oblique") && next < value.Count && Angle(value[next]) is double angle && angle is >= -90 and <= 90)
+                {
+                    style = [v, new CssValue(new CssToken(CssTokenType.Whitespace, " ")), value[next]];
+                    i = next;
+                }
+            }
             else if (variant is null && (v.IsIdent("small-caps"))) variant = v;
             else if (weight is null && v.IsToken && v.Token.Type is CssTokenType.Ident or CssTokenType.Number && All["font-weight"].Grammar.MatchesOne(v)
                      && !(v.Token.Type == CssTokenType.Number && (v.Token.Number is < 1 or > 1000 || NextIsSizeSeparator(value, i)))) weight = v;
@@ -530,7 +555,7 @@ internal static class CssProperties
 
         return
         [
-            ("font-style", style is null ? Ident("normal") : One(style)),
+            ("font-style", style ?? Ident("normal")),
             ("font-variant-caps", variant is null ? Ident("normal") : One(variant)),
             ("font-weight", weight is null ? Ident("normal") : One(weight)),
             ("font-stretch", stretch is null ? Ident("normal") : One(stretch)),
@@ -541,7 +566,49 @@ internal static class CssProperties
             ("font-variant-numeric", Ident("normal")),
             ("font-feature-settings", Ident("normal")),
             ("font-kerning", Ident("auto")),
+            ("font-optical-sizing", Ident("auto")),
+            ("font-variation-settings", Ident("normal")),
         ];
+    }
+
+    /// <summary>An angle in degrees: a dimension in deg, grad, rad or turn. Null for anything else.</summary>
+    public static double? Angle(CssValue v)
+    {
+        if (!v.IsToken || v.Token.Type != CssTokenType.Dimension) return null;
+        double n = v.Token.Number;
+        return v.Token.Unit.ToLowerInvariant() switch
+        {
+            "deg" => n,
+            "grad" => n * 0.9,
+            "rad" => n * 180 / Math.PI,
+            "turn" => n * 360,
+            _ => null,
+        };
+    }
+
+    /// <summary>font-style: normal, italic, or oblique with an optional angle from -90 to 90 degrees.</summary>
+    private static bool FontStyle(List<CssValue> value)
+    {
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count == 1) return items[0].IsIdent("normal") || items[0].IsIdent("italic") || items[0].IsIdent("oblique");
+        return items.Count == 2 && items[0].IsIdent("oblique") && Angle(items[1]) is double angle && angle is >= -90 and <= 90;
+    }
+
+    /// <summary>font-variation-settings: normal, or a comma separated list of four character tags in quotes, each with a number.</summary>
+    public static bool VariationSettings(List<CssValue> value)
+    {
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count == 1 && items[0].IsIdent("normal")) return true;
+        foreach (List<CssValue> setting in SplitCommas(value))
+        {
+            List<CssValue> pair = setting.Where(v => !v.IsWhitespace).ToList();
+            if (pair.Count != 2 || !pair[0].IsToken || pair[0].Token.Type != CssTokenType.String || !IsTag(pair[0].Token.Value)) return false;
+            if (!CssGrammar.IsMath(pair[1]) && !(pair[1].IsToken && pair[1].Token.Type == CssTokenType.Number)) return false;
+        }
+
+        return true;
+
+        static bool IsTag(string tag) => tag.Length == 4 && tag.All(c => c is >= ' ' and <= '~');
     }
 
     // "font: 700 12px x" has a weight; "font: 12px/1.5 x" does not, and neither does a bare "0".
@@ -854,7 +921,7 @@ internal static class CssProperties
         Add("color", I, "canvastext", "color");
         Add("font-family", I, "serif", "*");
         Add("font-size", I, "medium", "xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|lp");
-        Add("font-style", I, "normal", "normal|italic|oblique");
+        all["font-style"] = new CssProperty("font-style", I, "normal", CssGrammar.Custom(FontStyle));
         Add("font-weight", I, "normal", "normal|bold|bolder|lighter|number");
         Add("font-stretch", I, "normal", "normal|ultra-condensed|extra-condensed|condensed|semi-condensed|semi-expanded|expanded|extra-expanded|ultra-expanded|percentage");
         Add("font-variant-caps", I, "normal", "normal|small-caps|all-small-caps|petite-caps|all-petite-caps|unicase|titling-caps");
@@ -862,6 +929,8 @@ internal static class CssProperties
         Add("font-variant-numeric", I, "normal", "normal|lining-nums|oldstyle-nums|proportional-nums|tabular-nums|diagonal-fractions|stacked-fractions|ordinal|slashed-zero{1,5}");
         Add("font-feature-settings", I, "normal", "*");
         Add("font-kerning", I, "auto", "auto|normal|none");
+        Add("font-optical-sizing", I, "auto", "auto|none");
+        all["font-variation-settings"] = new CssProperty("font-variation-settings", I, "normal", CssGrammar.Custom(VariationSettings));
         Add("line-height", I, "normal", "normal|number|lp");
         Add("letter-spacing", I, "normal", "normal|lp");
         Add("word-spacing", I, "normal", "normal|lp");

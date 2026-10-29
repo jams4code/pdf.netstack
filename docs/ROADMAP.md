@@ -19,7 +19,7 @@ Done and in the main branch:
 |---|---|
 | Object model | Public `PdfObject` types, `Catalog`, `Resolve`, `AddObject`, `GetStreamData`, page dictionaries |
 | Drawing | Paths, pens, gray, RGB and CMYK colors, opacity, blend modes, gradients, transforms, clipping, on new and existing pages |
-| Fonts | Standard 14 fonts; TrueType, OpenType CFF, collections, WOFF and WOFF2; subsetting, Type 0 embedding, ToUnicode, kerning; font collections with CSS weight matching; variable fonts at named instances or any axis values, TrueType (gvar, HVAR, MVAR, cvar) and CFF2, embedded as static fonts |
+| Fonts | Standard 14 fonts; TrueType, OpenType CFF, collections, WOFF and WOFF2; subsetting, Type 0 embedding, ToUnicode, kerning; font collections with CSS font matching (width, style and weight ranges); variable fonts at named instances or any axis values, TrueType (gvar, HVAR, MVAR, cvar) and CFF2, embedded as static fonts once per location, and matched as ranges in collections and HTML |
 | Text layout | Unicode line breaking (UAX #14) and bidi (UAX #9) passing the Unicode 16 suites; an OpenType shaper matching HarfBuzz on the fonts we compare, with Unicode normalization, Arabic and the nine Indic scripts; paragraphs with wrapping, alignment, justification (kashida for Arabic, opt in), rich text and fallback |
 | Images | JPEG, PNG, GIF, BMP, TIFF (every page), WebP and SVG placement with fit, alignment and opacity; Form XObjects; pages of other PDFs as overlays, letterheads and n-up |
 | Annotations | Links, named destinations (read and rename), notes, text markup, free text, stamps, ink, squares, circles, lines with endings, polygons, polylines and file attachments, with appearance streams; flattening of one annotation, a page or a document |
@@ -30,12 +30,9 @@ Done and in the main branch:
 | Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
 | Scale | Documents read on demand from a seekable stream, with incremental saving |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
-| HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, tagged PDF |
+| HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, variable fonts (`font-weight`, `font-stretch`, `font-style`, `font-optical-sizing` and `font-variation-settings` choosing the instance), tagged PDF |
 
 ## Next
-
-**Core**
-- Variable fonts in `PdfFontCollection` and HTML (`font-weight` and `font-variation-settings` choosing an instance).
 
 **Text**
 - The Universal Shaping Engine (Southeast Asian and other complex scripts), Khmer, Myanmar, Thai

@@ -149,6 +149,14 @@ WOFF2), fonts you pass in `Fonts`, and installed fonts. The generic families map
 so a document that asks only for `serif`, `sans-serif` or `monospace` needs no embedded font.
 Installed fonts with wide coverage stand in for characters the chosen fonts lack.
 
+Variable fonts draw at the instance the style asks for, as CSS Fonts 4 sets out: `font-weight`,
+`font-stretch` (or `font-width`) and `font-style` pick the weight, width, italic and slant,
+within the ranges of the `@font-face` descriptors (`font-weight: 100 900`,
+`font-stretch: 75% 125%`, `font-style: oblique 0deg 15deg`); `font-optical-sizing: auto` (the
+default) sets the opsz axis to the font size in CSS px; `font-variation-settings` sets any axis
+last. The `@font-face` descriptors `font-variation-settings` and `font-named-instance` apply too.
+Each location is embedded once however many elements use it.
+
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.

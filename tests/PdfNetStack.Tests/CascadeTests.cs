@@ -95,7 +95,7 @@ public sealed class CascadeTests
             "border-top-left-radius: 1px 5px; border-top-right-radius: 2px 5px; border-bottom-right-radius: 3px 5px; border-bottom-left-radius: 2px 5px",
             Expand("border-radius: 1px 2px 3px / 5px"));
         Assert.AreEqual(
-            "font-style: italic; font-variant-caps: normal; font-weight: 700; font-stretch: normal; font-size: 12px; line-height: 1.5; font-family: \"Inter\", sans-serif; font-variant-ligatures: normal; font-variant-numeric: normal; font-feature-settings: normal; font-kerning: auto",
+            "font-style: italic; font-variant-caps: normal; font-weight: 700; font-stretch: normal; font-size: 12px; line-height: 1.5; font-family: \"Inter\", sans-serif; font-variant-ligatures: normal; font-variant-numeric: normal; font-feature-settings: normal; font-kerning: auto; font-optical-sizing: auto; font-variation-settings: normal",
             Expand("font: italic 700 12px/1.5 \"Inter\", sans-serif"));
         StringAssert.Contains(Expand("font: 0 serif"), "font-size: 0");
         Assert.AreEqual("invalid", Expand("font: bold"));

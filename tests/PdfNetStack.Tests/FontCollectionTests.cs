@@ -43,18 +43,26 @@ public sealed class FontCollectionTests
     }
 
     [TestMethod]
-    public void WeightRankFollowsCss()
+    public void WeightOrderFollowsCss()
     {
         // CSS Fonts 4, 5.2 step 4: candidates in order of preference for each requested weight.
         AssertOrder(400, [400, 500, 300, 100, 600, 900]);
         AssertOrder(500, [500, 400, 300, 600, 900]);
         AssertOrder(600, [600, 700, 900, 500, 400]);
         AssertOrder(300, [300, 200, 100, 400, 500]);
+        AssertOrder(450, [500, 400, 300, 600]);
 
         static void AssertOrder(int wanted, int[] expected)
         {
-            int[] shuffled = [.. Enumerable.Reverse(expected)];
-            int[] ordered = [.. shuffled.OrderBy(w => PdfFontCollection.WeightRank(wanted, w))];
+            // The best weight is found, taken out, and the search runs again on the rest.
+            var left = new List<FontRange>(Enumerable.Reverse(expected).Select(w => FontRange.Of(w)));
+            var ordered = new List<int>();
+            while (FontMatcher.MatchWeight(left, wanted) is double found)
+            {
+                ordered.Add((int)found);
+                left.RemoveAll(r => r.Contains(found));
+            }
+
             CollectionAssert.AreEqual(expected, ordered, $"weight {wanted}");
         }
     }

@@ -24,7 +24,8 @@ internal sealed record FontSet(PdfFont Primary, IReadOnlyList<PdfFont> Fallbacks
 
 /// <summary>
 /// Matches CSS font properties to fonts (CSS Fonts 4, 5): @font-face rules first, then fonts
-/// the caller supplies, then installed fonts. Generic families map to the standard 14 fonts, so
+/// the caller supplies, then installed fonts. A variable font draws at the instance its weight,
+/// width, style, optical size and font-variation-settings select (CSS Fonts 4, 7.2). Generic families map to the standard 14 fonts, so
 /// documents that only ask for serif or sans-serif need no embedded font. Installed fonts with
 /// wide coverage back up characters the chosen fonts lack, such as Arabic or symbols.
 /// </summary>
@@ -38,13 +39,28 @@ internal sealed class FontResolver
         "Noto Sans CJK SC", "PingFang SC", "Segoe UI Emoji", "Noto Color Emoji",
     ];
 
+    private static readonly Dictionary<string, double> WidthKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ultra-condensed"] = 50, ["extra-condensed"] = 62.5, ["condensed"] = 75, ["semi-condensed"] = 87.5, ["normal"] = 100,
+        ["semi-expanded"] = 112.5, ["expanded"] = 125, ["extra-expanded"] = 150, ["ultra-expanded"] = 200,
+    };
+
     private readonly List<Face> _faces = [];
+    private readonly Dictionary<string, PdfOpenTypeFont?> _loaded = new(StringComparer.Ordinal);
     private readonly PdfFontCollection? _fonts;
     private readonly bool _useSystemFonts;
-    private readonly Dictionary<(string Families, int Weight, bool Italic), FontSet> _cache = [];
+    private readonly Dictionary<Request, FontSet> _cache = [];
     private List<PdfFont>? _systemFallbacks;
 
-    private sealed record Face(string Family, int MinWeight, int MaxWeight, bool Italic, PdfOpenTypeFont Font);
+    /// <summary>
+    /// An @font-face rule: the traits it matches with (its descriptors, auto counting as normal),
+    /// the ranges the variations it applies are clamped to (its descriptors, or the font's own
+    /// for auto), and the axis values of its font-named-instance and font-variation-settings.
+    /// </summary>
+    private sealed record Face(string Family, FontTraits Selection, FontTraits Applied, PdfOpenTypeFont Font, List<KeyValuePair<string, double>> Settings);
+
+    /// <summary>What a computed style asks of its fonts; equal requests share a font set.</summary>
+    private readonly record struct Request(string Families, double Weight, double Width, PdfFontStyle Style, double Angle, double? OpticalSize, string Variations);
 
     public FontResolver(PdfFontCollection? fonts, bool useSystemFonts)
     {
@@ -57,10 +73,11 @@ internal sealed class FontResolver
     {
         foreach (CssFontFaceRule rule in rules)
         {
-            string? family = null;
+            string? family = null, namedInstance = null;
             List<CssValue>? src = null;
-            int min = 400, max = 400;
-            bool italic = false;
+            FontRange? weight = null, width = null;
+            (FontRange? Italic, FontRange? Oblique)? style = null;
+            List<KeyValuePair<string, double>>? settings = null;
             foreach (CssDeclaration d in rule.Declarations)
             {
                 switch (d.Property)
@@ -72,17 +89,43 @@ internal sealed class FontResolver
                         src = d.Value;
                         break;
                     case "font-weight":
-                        (min, max) = WeightRange(d.Value);
+                        weight = Range(d.Value, WeightValue);
+                        break;
+                    case "font-stretch" or "font-width":
+                        width = Range(d.Value, WidthValue);
                         break;
                     case "font-style":
-                        italic = d.Value.Any(v => v.IsIdent("italic") || v.IsIdent("oblique"));
+                        style = StyleDescriptor(d.Value);
+                        break;
+                    case "font-variation-settings":
+                        settings = VariationSettings(d.Value);
+                        break;
+                    case "font-named-instance":
+                        namedInstance = d.Value.FirstOrDefault(v => v.IsToken && v.Token.Type == CssTokenType.String)?.Token.Value;
                         break;
                 }
             }
 
             if (family is null || src is null) continue;
             PdfOpenTypeFont? font = LoadSource(src, load);
-            if (font is not null) _faces.Add(new Face(family, min, max, italic, font));
+            if (font is null) continue;
+
+            // Auto descriptors match as normal and leave the variations to the font's own ranges.
+            FontTraits own = font.Traits;
+            var selection = new FontTraits(weight ?? FontTraits.Normal.Weight, width ?? FontTraits.Normal.Width,
+                style is null ? FontTraits.Normal.Italic : style.Value.Italic, style is null ? FontTraits.Normal.Oblique : style.Value.Oblique);
+            var applied = new FontTraits(weight ?? own.Weight, width ?? own.Width, style is null ? own.Italic : style.Value.Italic, style is null ? own.Oblique : style.Value.Oblique);
+
+            // CSS Fonts 4, 7.2: the named instance, then the descriptor's own settings.
+            var faceSettings = new List<KeyValuePair<string, double>>();
+            if (namedInstance is not null && font.IsVariable && font.NamedInstanceLocations.FirstOrDefault(i => string.Equals(i.Style, namedInstance, StringComparison.OrdinalIgnoreCase)) is { Values: not null } instance)
+            {
+                IReadOnlyList<PdfFontAxis> axes = font.VariationAxes;
+                for (int i = 0; i < axes.Count && i < instance.Values.Length; i++) faceSettings.Add(new(axes[i].Tag, instance.Values[i]));
+            }
+
+            if (settings is not null) faceSettings.AddRange(settings);
+            _faces.Add(new Face(family, selection, applied, font, faceSettings));
         }
     }
 
@@ -103,15 +146,28 @@ internal sealed class FontResolver
                 string? url = v.IsToken && v.Token.Type == CssTokenType.Url ? v.Token.Value
                     : v.Function == "url" ? v.Children.FirstOrDefault(c => c.IsToken && c.Token.Type == CssTokenType.String)?.Token.Value
                     : null;
-                if (url is null || load?.Invoke(url) is not byte[] data) continue;
-                try
+                if (url is null) continue;
+
+                // Rules that share a file share its font, and so the instances made of it.
+                if (!_loaded.TryGetValue(url, out PdfOpenTypeFont? font))
                 {
-                    return PdfOpenTypeFont.Load(data);
+                    font = null;
+                    if (load?.Invoke(url) is byte[] data)
+                    {
+                        try
+                        {
+                            font = PdfOpenTypeFont.Load(data);
+                        }
+                        catch (FontFormatException)
+                        {
+                            // Damaged or unsupported formats: try the next source.
+                        }
+                    }
+
+                    _loaded[url] = font;
                 }
-                catch (FontFormatException)
-                {
-                    // Damaged or unsupported formats: try the next source.
-                }
+
+                if (font is not null) return font;
             }
         }
 
@@ -137,11 +193,61 @@ internal sealed class FontResolver
         yield return part;
     }
 
-    private static (int Min, int Max) WeightRange(List<CssValue> value)
+    /// <summary>A descriptor of one or two values as a range (CSS Fonts 4, 4.4); null for auto or an invalid value, which counts as auto.</summary>
+    private static FontRange? Range(List<CssValue> value, Func<CssValue, double?> parse)
     {
-        var weights = value.Where(v => !v.IsWhitespace).Select(v =>
-            v.IsIdent("bold") ? 700 : v.IsToken && v.Token.Type == CssTokenType.Number ? (int)Math.Min(1000, Math.Max(1, v.Token.Number)) : 400).ToList();
-        return weights.Count == 0 ? (400, 400) : (weights.Min(), weights.Max());
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count is 0 or > 2) return null;
+        double? a = parse(items[0]), b = parse(items[^1]);
+        return a is double x && b is double y ? FontRange.Of(x, y) : null;
+    }
+
+    private static double? WeightValue(CssValue v)
+    {
+        if (v.IsIdent("normal")) return 400;
+        if (v.IsIdent("bold")) return 700;
+        return Number(v) is double n && n is >= 1 and <= 1000 ? n : null;
+    }
+
+    private static double? WidthValue(CssValue v)
+    {
+        if (v.IsToken && v.Token.Type == CssTokenType.Ident) return WidthKeywords.TryGetValue(v.Token.Value, out double w) ? w : null;
+        return v.IsToken && v.Token.Type == CssTokenType.Percentage && v.Token.Number >= 0 ? v.Token.Number : null;
+    }
+
+    /// <summary>
+    /// The font-style descriptor as italic values and oblique angles: normal, italic (left and
+    /// right too), or oblique with up to two angles (14 degrees without). Null for auto or invalid.
+    /// </summary>
+    private static (FontRange? Italic, FontRange? Oblique)? StyleDescriptor(List<CssValue> value)
+    {
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count == 1 && items[0].IsIdent("normal")) return (FontRange.Of(0), FontRange.Of(0));
+        if (items.Count == 1 && (items[0].IsIdent("italic") || items[0].IsIdent("left") || items[0].IsIdent("right"))) return (FontRange.Of(1), null);
+        if (items.Count is < 1 or > 3 || !items[0].IsIdent("oblique")) return null;
+        if (items.Count == 1) return (null, FontRange.Of(14));
+        double? a = CssProperties.Angle(items[1]), b = CssProperties.Angle(items[^1]);
+        return a is double x && b is double y && x is >= -90 and <= 90 && y is >= -90 and <= 90 ? (null, FontRange.Of(x, y)) : null;
+    }
+
+    /// <summary>The axis values of a font-variation-settings value, in order; null for normal or an invalid value.</summary>
+    private static List<KeyValuePair<string, double>>? VariationSettings(List<CssValue> value)
+    {
+        if (!CssProperties.VariationSettings(value) || value.Any(v => v.IsIdent("normal"))) return null;
+        var settings = new List<KeyValuePair<string, double>>();
+        foreach (List<CssValue> setting in Split(value))
+        {
+            List<CssValue> pair = setting.Where(v => !v.IsWhitespace).ToList();
+            if (Number(pair[1]) is double n) settings.Add(new(pair[0].Token.Value, n));
+        }
+
+        return settings;
+    }
+
+    private static double? Number(CssValue v)
+    {
+        if (CssGrammar.IsMath(v)) return CssMath.Evaluate(v, null, out bool isLength) is double n && !isLength ? n : null;
+        return v.IsToken && v.Token.Type == CssTokenType.Number ? v.Token.Number : null;
     }
 
     /// <summary>Family names from a font-family value: strings, or identifiers joined by spaces.</summary>
@@ -154,30 +260,47 @@ internal sealed class FontResolver
     /// <summary>The fonts for a computed style.</summary>
     public FontSet Resolve(ComputedStyle style)
     {
-        int weight = (int)Math.Round(style.Number("font-weight"));
+        double weight = style.Number("font-weight");
         if (weight is < 1 or > 1000) weight = 400;
-        bool italic = style.Keyword("font-style") is "italic" or "oblique";
+        List<CssValue> stretch = style["font-stretch"];
+        double width = stretch.Count == 1 ? WidthValue(stretch[0]) ?? 100 : 100;
+        (PdfFontStyle slant, double angle) = Style(style["font-style"]);
+        double? opticalSize = style.Keyword("font-optical-sizing") == "auto" && style.FontSize > 0 ? style.FontSize : null;
+        List<KeyValuePair<string, double>>? settings = VariationSettings(style["font-variation-settings"]);
         string families = string.Join(",", FamilyNames(style["font-family"]));
-        if (_cache.TryGetValue((families, weight, italic), out FontSet? cached)) return cached;
+        var request = new Request(families, weight, width, slant, angle, opticalSize,
+            settings is null ? "" : string.Join(",", settings.Select(s => s.Key + "=" + s.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture))));
+        if (_cache.TryGetValue(request, out FontSet? cached)) return cached;
 
+        Dictionary<string, double>? variations = null;
+        if (settings is not null)
+        {
+            // A tag given twice: the last value wins.
+            variations = new Dictionary<string, double>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, double> s in settings) variations[s.Key] = s.Value;
+        }
+
+        var query = new PdfFontQuery { Weight = weight, Width = width, Style = slant, ObliqueAngle = angle, OpticalSize = opticalSize, Variations = variations };
+        int standardWeight = (int)Math.Round(weight);
+        bool italic = slant != PdfFontStyle.Normal;
         var found = new List<PdfFont>();
         PdfFont? generic = null;
         foreach (string family in families.Split(','))
         {
             if (family.Length == 0) continue;
-            if (Generic(family, weight, italic) is PdfFont standard)
+            if (Generic(family, standardWeight, italic) is PdfFont standard)
             {
                 generic ??= standard;
                 found.Add(standard);
                 continue;
             }
 
-            PdfFont? font = Find(family, weight, italic) ?? Alias(family, weight, italic);
+            PdfFont? font = Find(family, query) ?? Alias(family, standardWeight, italic);
             if (font is not null && !found.Contains(font)) found.Add(font);
         }
 
         // The default family is serif, as in browsers.
-        PdfFont fallback = generic ?? Generic("serif", weight, italic)!;
+        PdfFont fallback = generic ?? Generic("serif", standardWeight, italic)!;
         if (!found.Contains(fallback)) found.Add(fallback);
         foreach (PdfFont f in SystemFallbackFonts())
         {
@@ -185,20 +308,31 @@ internal sealed class FontResolver
         }
 
         var set = new FontSet(found[0], found.Skip(1).ToList());
-        _cache[(families, weight, italic)] = set;
+        _cache[request] = set;
         return set;
     }
 
-    private PdfFont? Find(string family, int weight, bool italic)
+    /// <summary>The computed font-style as a style and an oblique angle in degrees.</summary>
+    private static (PdfFontStyle Style, double Angle) Style(List<CssValue> value)
     {
-        // @font-face: same style first, then the weight closest per CSS (a weight inside a variable range matches exactly).
-        Face? face = _faces
-            .Where(f => string.Equals(f.Family, family, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(f => f.Italic == italic ? 0 : 1)
-            .ThenBy(f => weight >= f.MinWeight && weight <= f.MaxWeight ? 0 : 1 + PdfFontCollection.WeightRank(weight, weight < f.MinWeight ? f.MinWeight : f.MaxWeight))
-            .FirstOrDefault();
-        if (face is not null) return face.Font;
-        return _fonts?.Find(family, weight, italic) ?? (_useSystemFonts ? PdfFontCollection.System.Find(family, weight, italic) : null);
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count == 0 || items[0].IsIdent("normal")) return (PdfFontStyle.Normal, 14);
+        if (items[0].IsIdent("italic")) return (PdfFontStyle.Italic, 14);
+        double angle = items.Count > 1 ? CssProperties.Angle(items[1]) ?? 14 : 14;
+        return (PdfFontStyle.Oblique, Math.Max(-90, Math.Min(90, angle)));
+    }
+
+    private PdfFont? Find(string family, PdfFontQuery query)
+    {
+        // @font-face first: the best match by its descriptors, the last rule among equals (CSS Fonts 4, 4.1).
+        List<Face> faces = FontMatcher.Select(_faces.Where(f => string.Equals(f.Family, family, StringComparison.OrdinalIgnoreCase)), f => f.Selection, query);
+        if (faces.Count > 0)
+        {
+            Face face = faces[^1];
+            return FontMatcher.Instance(face.Font, face.Applied, query, face.Font.Location, face.Settings);
+        }
+
+        return _fonts?.Find(family, query) ?? (_useSystemFonts ? PdfFontCollection.System.Find(family, query) : null);
     }
 
     /// <summary>Generic families (CSS Fonts 4, 4.2) as standard 14 fonts.</summary>
