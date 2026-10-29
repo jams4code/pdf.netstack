@@ -17,11 +17,17 @@ internal readonly record struct XrefEntry(XrefEntryType Type, long Field1, int F
 /// <summary>
 /// Read side of a PDF: cross-reference loading across every revision, lazy object
 /// resolution, object stream expansion and reconstruction of damaged files.
-/// The source buffer is never modified; stream data is sliced from it without copying.
+/// The source is never modified. In memory, stream data is sliced from the buffer without
+/// copying. On a stream, only the bytes an object needs are read: its dictionary when the
+/// object is resolved, its stream data each time that is asked for.
 /// </summary>
 internal sealed class PdfFile
 {
+    private readonly PdfSource _source;
+
+    // The whole file when it is in memory; empty when it is read from a stream.
     private readonly ReadOnlyMemory<byte> _data;
+    private readonly bool _inMemory;
     private readonly long _decodeLimit;
     private readonly Dictionary<int, XrefEntry> _xref = new();
     private readonly Dictionary<int, PdfObject> _cache = new();
@@ -43,9 +49,20 @@ internal sealed class PdfFile
     // stack frames, so the chain is cut off well before the stack is at risk.
     private const int MaxResolveDepth = 24;
 
-    private PdfFile(ReadOnlyMemory<byte> data, long decodeLimit)
+    // A stream source is parsed through windows that grow until the parse ends well inside one.
+    private const int FirstWindow = 4096;
+    private const int WindowMargin = 256;
+    private const long MaxWindow = 256L << 20;
+
+    private PdfFile(PdfSource source, long decodeLimit)
     {
-        _data = data;
+        _source = source;
+        if (source is MemorySource memory)
+        {
+            _data = memory.Data;
+            _inMemory = true;
+        }
+
         _decodeLimit = decodeLimit;
         Trailer = new PdfDictionary();
     }
@@ -67,7 +84,11 @@ internal sealed class PdfFile
 
     public bool WasReconstructed { get; private set; }
 
-    public ReadOnlyMemory<byte> Data => _data;
+    /// <summary>The bytes of the file.</summary>
+    public PdfSource Source => _source;
+
+    /// <summary>Length of the file in bytes.</summary>
+    public long Length => _source.Length;
 
     public IReadOnlyDictionary<int, XrefEntry> Xref => _xref;
 
@@ -76,9 +97,14 @@ internal sealed class PdfFile
     /// </summary>
     public int RevisionCount => Math.Max(1, IsLinearized ? XrefSectionCount - 1 : XrefSectionCount);
 
-    public static PdfFile Open(ReadOnlyMemory<byte> data, long decodeLimit)
+    public static PdfFile Open(ReadOnlyMemory<byte> data, long decodeLimit) => Open(new MemorySource(data), decodeLimit);
+
+    /// <summary>Opens a file on a seekable stream, reading only what parsing needs.</summary>
+    public static PdfFile Open(Stream stream, long decodeLimit) => Open(new StreamSource(stream), decodeLimit);
+
+    private static PdfFile Open(PdfSource source, long decodeLimit)
     {
-        var file = new PdfFile(data, decodeLimit);
+        var file = new PdfFile(source, decodeLimit);
         file.ReadHeader();
         bool loaded = file.TryLoadXref(file.HeaderOffset) || (file.HeaderOffset > 0 && file.TryLoadXref(0));
         if (!loaded) file.Reconstruct();
@@ -122,11 +148,41 @@ internal sealed class PdfFile
     }
 
     /// <summary>End of the region an object starting at <paramref name="offset"/> may occupy.</summary>
-    private int RegionEnd(long offset)
+    private long RegionEnd(long offset)
     {
         int i = Array.BinarySearch(_objectStarts, offset + 1);
         if (i < 0) i = ~i;
-        return i < _objectStarts.Length ? (int)_objectStarts[i] : _data.Length;
+        return i < _objectStarts.Length ? _objectStarts[i] : _source.Length;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="body"/> on a parser positioned at <paramref name="offset"/>, which sees
+    /// the file no further than <paramref name="limit"/>. In memory the parser sees the whole
+    /// file and positions are file offsets. On a stream it sees a window starting at the offset,
+    /// which grows while the parse ends, or fails, too close to the window's end to be sure the
+    /// window did not cut it short. The second argument of the body is the window's file offset.
+    /// </summary>
+    private T ParseAt<T>(long offset, long limit, Func<PdfParser, long, T> body)
+    {
+        limit = Math.Min(limit, _source.Length);
+        if (_inMemory) return body(new PdfParser(_data[..(int)Math.Max(0, limit)], (int)Math.Min(offset, int.MaxValue)), 0);
+
+        for (long size = FirstWindow; ; size *= 8)
+        {
+            long end = Math.Min(limit, offset + size);
+            ReadOnlyMemory<byte> window = _source.Read(offset, end);
+            bool whole = end >= limit || size >= MaxWindow;
+            var parser = new PdfParser(window);
+            try
+            {
+                T result = body(parser, offset);
+                if (whole || parser.Position + WindowMargin <= window.Length) return result;
+            }
+            catch (PdfFormatException) when (!whole && parser.Position + WindowMargin > window.Length)
+            {
+                // The window may have cut the object short; read more and parse again.
+            }
+        }
     }
 
     /// <summary>Generation recorded for an object number; object stream members are generation 0.</summary>
@@ -262,7 +318,8 @@ internal sealed class PdfFile
 
     private void ReadHeader()
     {
-        ReadOnlySpan<byte> s = _data.Span;
+        // The header sits in the first 1024 bytes and the linearization dictionary right after it.
+        ReadOnlySpan<byte> s = _source.Read(0, 4096).Span;
         int window = Math.Min(s.Length, 1024);
         int at = s[..window].IndexOf("%PDF-"u8);
         if (at < 0) throw new PdfFormatException("Missing %PDF header.");
@@ -287,12 +344,12 @@ internal sealed class PdfFile
 
     private long FindStartXref()
     {
-        ReadOnlySpan<byte> s = _data.Span;
-        int tailStart = Math.Max(0, s.Length - 4096);
-        int at = s[tailStart..].LastIndexOf("startxref"u8);
+        long length = _source.Length;
+        long tailStart = Math.Max(0, length - 4096);
+        long at = _source.Read(tailStart, length).Span.LastIndexOf("startxref"u8);
         if (at < 0)
         {
-            at = s.LastIndexOf("startxref"u8);
+            at = _source.LastIndexOf("startxref"u8, length);
             if (at < 0) throw new PdfFormatException("startxref not found.");
         }
         else
@@ -300,9 +357,53 @@ internal sealed class PdfFile
             at += tailStart;
         }
 
-        var parser = new PdfParser(_data, at + 9);
-        if (!parser.TryReadInteger(out long offset)) throw new PdfFormatException("startxref offset missing.");
-        return offset;
+        return ParseAt(at + 9, length, (parser, _) =>
+            parser.TryReadInteger(out long offset) ? offset : throw new PdfFormatException("startxref offset missing."));
+    }
+
+    /// <summary>The value of the file's last startxref: where readers start, and the /Prev of an update.</summary>
+    public long LastStartXref() => FindStartXref();
+
+    /// <summary>
+    /// What the file's cross-reference offsets are measured from: 0, or the header's offset for
+    /// files with bytes before %PDF that count from the header.
+    /// </summary>
+    public int OffsetBase => _offsetBase;
+
+    /// <summary>Numbers of the objects parsed so far, in no particular order.</summary>
+    public IReadOnlyCollection<int> CachedNumbers
+    {
+        get
+        {
+            lock (_cache)
+            {
+                return _cache.Keys.ToList();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A second reader over the same bytes and cross-reference data with nothing parsed yet, so
+    /// its objects are exactly what the file holds whatever was done to this reader's objects.
+    /// </summary>
+    public PdfFile Fork()
+    {
+        var copy = new PdfFile(_source, _decodeLimit)
+        {
+            Trailer = Trailer,
+            HeaderVersion = HeaderVersion,
+            HeaderOffset = HeaderOffset,
+            XrefSectionCount = XrefSectionCount,
+            IsLinearized = IsLinearized,
+            UsesXrefStreams = UsesXrefStreams,
+            WasReconstructed = WasReconstructed,
+            Security = Security,
+            _encryptNumber = _encryptNumber,
+            _offsetBase = _offsetBase,
+            _objectStarts = _objectStarts,
+        };
+        foreach ((int number, XrefEntry entry) in _xref) copy._xref[number] = entry;
+        return copy;
     }
 
     private void LoadXrefChain()
@@ -314,11 +415,11 @@ internal sealed class PdfFile
         {
             if (!visited.Add(offset)) break;
             long actual = offset + _offsetBase;
-            if (actual < 0 || actual >= _data.Length)
+            if (actual < 0 || actual >= _source.Length)
             {
                 // Offsets measured from the header are the norm; some files measure from byte 0.
                 actual = offset;
-                if (actual < 0 || actual >= _data.Length) throw new PdfFormatException("xref offset outside the file.");
+                if (actual < 0 || actual >= _source.Length) throw new PdfFormatException("xref offset outside the file.");
             }
 
             var section = new Dictionary<int, XrefEntry>();
@@ -361,11 +462,14 @@ internal sealed class PdfFile
 
     private PdfDictionary ReadXrefSection(long offset, Dictionary<int, XrefEntry> section)
     {
-        if (offset < 0 || offset >= _data.Length) throw new PdfFormatException("xref offset outside the file.");
-        var parser = new PdfParser(_data, (int)offset);
-        if (parser.TryReadKeyword("xref"u8)) return ReadXrefTable(parser, section);
+        if (offset < 0 || offset >= _source.Length) throw new PdfFormatException("xref offset outside the file.");
+        PdfDictionary? table = ParseAt(offset, _source.Length, (parser, _) =>
+        {
+            section.Clear();
+            return parser.TryReadKeyword("xref"u8) ? ReadXrefTable(parser, section) : null;
+        });
+        if (table is not null) return table;
 
-        parser.Position = (int)offset;
         PdfObject obj = ReadIndirectObject(offset, expectedNumber: null);
         if (obj is not PdfStream xs || xs.Dictionary.GetName("Type") != "XRef")
         {
@@ -479,13 +583,14 @@ internal sealed class PdfFile
     private bool ValidateXref()
     {
         if (Trailer["Root"] is null) return false;
-        foreach ((int num, XrefEntry e) in _xref)
+
+        // In file order, so a stream source reads the headers front to back.
+        foreach ((int num, XrefEntry e) in _xref.Where(x => x.Value.Type == XrefEntryType.InFile).OrderBy(x => x.Value.Field1))
         {
-            if (e.Type != XrefEntryType.InFile) continue;
-            if (e.Field1 < 0 || e.Field1 >= _data.Length) return false;
-            var parser = new PdfParser(_data, (int)e.Field1);
-            if (!parser.TryReadInteger(out long n) || n != num) return false;
-            if (!parser.TryReadInteger(out _) || !parser.TryReadKeyword("obj"u8)) return false;
+            if (e.Field1 < 0 || e.Field1 >= _source.Length) return false;
+            bool header = ParseAt(e.Field1, _source.Length, (parser, _) =>
+                parser.TryReadInteger(out long n) && n == num && parser.TryReadInteger(out _) && parser.TryReadKeyword("obj"u8));
+            if (!header) return false;
         }
 
         foreach ((_, XrefEntry e) in _xref)
@@ -514,19 +619,32 @@ internal sealed class PdfFile
         _objectStreamCacheBytes = 0;
         _objectStarts = [];
 
-        ReadOnlySpan<byte> s = _data.Span;
         var direct = new Dictionary<int, XrefEntry>();
-        int searchFrom = 0;
-        while (true)
+        long length = _source.Length;
+
+        // In memory the file is one chunk. On a stream it is scanned a megabyte at a time, each
+        // chunk with enough of the bytes before it to read an object header backwards.
+        long chunk = _inMemory ? Math.Max(1, length) : 1 << 20;
+        const int lookback = 1024;
+        for (long chunkStart = 0; chunkStart < length; chunkStart += chunk)
         {
-            int rel = s[searchFrom..].IndexOf("obj"u8);
-            if (rel < 0) break;
-            int at = searchFrom + rel;
-            searchFrom = at + 3;
-            if (at + 3 < s.Length && PdfSyntax.IsRegular(s[at + 3])) continue;
-            if (TryReadObjectHeaderBackwards(s, at, out int num, out int gen, out int start))
+            long windowStart = Math.Max(0, chunkStart - lookback);
+            long chunkEnd = Math.Min(length, chunkStart + chunk);
+            ReadOnlySpan<byte> s = _source.Read(windowStart, chunkEnd + 3).Span;
+            int searchFrom = (int)(chunkStart - windowStart);
+            int stop = (int)(chunkEnd - windowStart);
+            while (true)
             {
-                direct[num] = new XrefEntry(XrefEntryType.InFile, start, gen);
+                int rel = s[searchFrom..].IndexOf("obj"u8);
+                if (rel < 0) break;
+                int at = searchFrom + rel;
+                if (at >= stop) break;
+                searchFrom = at + 3;
+                if (at + 3 < s.Length && PdfSyntax.IsRegular(s[at + 3])) continue;
+                if (TryReadObjectHeaderBackwards(s, at, out int num, out int gen, out int start))
+                {
+                    direct[num] = new XrefEntry(XrefEntryType.InFile, windowStart + start, gen);
+                }
             }
         }
 
@@ -560,7 +678,7 @@ internal sealed class PdfFile
         _cache.Clear();
         LengthsRepaired = 0;
         UnreadableObjects = 0;
-        PdfDictionary trailer = FindTrailerByScan(s) ?? new PdfDictionary();
+        PdfDictionary trailer = FindTrailerByScan() ?? new PdfDictionary();
         foreach (string key in new[] { "Root", "Info", "ID", "Encrypt" })
         {
             if (trailer[key] is null && previousTrailer[key] is { } v) trailer.Set(key, v);
@@ -583,18 +701,18 @@ internal sealed class PdfFile
         XrefSectionCount = Math.Max(1, XrefSectionCount);
     }
 
-    private PdfDictionary? FindTrailerByScan(ReadOnlySpan<byte> s)
+    private PdfDictionary? FindTrailerByScan()
     {
-        int at = s.Length;
+        long at = _source.Length;
         for (int attempt = 0; attempt < 16 && at > 0; attempt++)
         {
-            int found = s[..at].LastIndexOf("trailer"u8);
+            long found = _source.LastIndexOf("trailer"u8, at);
             if (found < 0) break;
             at = found;
             try
             {
-                var parser = new PdfParser(_data[..Math.Min(_data.Length, found + 7 + 65536)], found + 7);
-                if (parser.ParseObject() is PdfDictionary d && d["Root"] is not null) return d;
+                PdfObject candidate = ParseAt(found + 7, found + 7 + 65536, (parser, _) => parser.ParseObject());
+                if (candidate is PdfDictionary d && d["Root"] is not null) return d;
             }
             catch (PdfFormatException)
             {
@@ -643,8 +761,9 @@ internal sealed class PdfFile
 
     private PdfObject ReadIndirectObject(long offset, int? expectedNumber)
     {
-        if (offset < 0 || offset >= _data.Length) throw new PdfFormatException("Object offset outside the file.");
-        ReadOnlyMemory<byte> region = _data[..RegionEnd(offset)];
+        if (offset < 0 || offset >= _source.Length) throw new PdfFormatException("Object offset outside the file.");
+        if (!_inMemory) return ReadIndirectObjectFromStream(offset, expectedNumber);
+        ReadOnlyMemory<byte> region = _data[..(int)RegionEnd(offset)];
         var parser = new PdfParser(region, (int)offset);
         if (!parser.TryReadInteger(out long num) || !parser.TryReadInteger(out long gen) || !parser.TryReadKeyword("obj"u8))
         {
@@ -684,7 +803,7 @@ internal sealed class PdfFile
             if (type == "XRef") return stream;
             if (type == "Metadata" && !security.EncryptMetadata) return stream;
             if (!RemoveIdentityCryptFilter(stream.Dictionary)) return stream;
-            stream.Data = security.Decrypt(number, generation, stream.Data.Span, isString: false);
+            stream.Transform(data => security.Decrypt(number, generation, data.Span, isString: false));
             return stream;
         }
 
@@ -773,6 +892,89 @@ internal sealed class PdfFile
         if (end > dataStart && s[end - 1] == (byte)'\r') end--;
         if (!_loadingXref) LengthsRepaired++;
         return region[dataStart..end];
+    }
+
+    /// <summary>
+    /// Reads an object from a stream source. The dictionary is parsed from a window; stream data
+    /// stays in the file and is read on each access.
+    /// </summary>
+    private PdfObject ReadIndirectObjectFromStream(long offset, int? expectedNumber)
+    {
+        long regionEnd = RegionEnd(offset);
+        (PdfObject obj, long num, long gen, long dataStart) = ParseAt(offset, regionEnd, (parser, windowStart) =>
+        {
+            if (!parser.TryReadInteger(out long n) || !parser.TryReadInteger(out long g) || !parser.TryReadKeyword("obj"u8))
+            {
+                throw new PdfFormatException($"No object header at offset {offset}.");
+            }
+
+            if (expectedNumber is { } expected && n != expected)
+            {
+                throw new PdfFormatException($"Expected object {expected} at offset {offset}, found {n}.");
+            }
+
+            PdfObject value = parser.ParseObject();
+            long start = -1;
+            if (value is PdfDictionary)
+            {
+                int afterDict = parser.Position;
+                if (parser.TryReadKeyword("stream"u8))
+                {
+                    ReadOnlySpan<byte> s = parser.Span;
+                    int p = parser.Position;
+                    if (p < s.Length && s[p] == (byte)'\r') p++;
+                    if (p < s.Length && s[p] == (byte)'\n') p++;
+                    parser.Position = p;
+                    start = windowStart + p;
+                }
+                else
+                {
+                    parser.Position = afterDict;
+                }
+            }
+
+            return (value, n, g, start);
+        });
+
+        if (dataStart >= 0)
+        {
+            var dict = (PdfDictionary)obj;
+            (long dataEnd, bool repaired) = FindStreamEnd(dict, dataStart, regionEnd);
+            if (repaired && !_loadingXref) LengthsRepaired++;
+            long length = dataEnd - dataStart;
+            if (length > Compat.MaxArrayLength) throw new PdfFormatException("Stream data exceeds the largest supported buffer.");
+            PdfSource source = _source;
+            obj = new PdfStream(dict, () => source.Read(dataStart, dataEnd), (int)length);
+        }
+
+        return Security is null || num == _encryptNumber ? obj : Decrypt(obj, (int)num, (int)gen);
+    }
+
+    /// <summary>
+    /// Where a stream's data ends: after /Length bytes when endstream follows there, otherwise
+    /// just before the first endstream in the object's region. The flag reports a repair.
+    /// </summary>
+    private (long End, bool Repaired) FindStreamEnd(PdfDictionary dict, long dataStart, long regionEnd)
+    {
+        long declared = -1;
+        PdfObject? lengthObj = dict["Length"];
+        if (lengthObj is PdfNumber { IsInteger: true } ln) declared = ln.IntegerValue;
+        else if (lengthObj is PdfReference lr && Resolve(lr) is PdfNumber { IsInteger: true } rn) declared = rn.IntegerValue;
+
+        if (declared >= 0 && dataStart + declared <= regionEnd)
+        {
+            long at = dataStart + declared;
+            if (EndstreamFollows(_source.Read(at, Math.Min(regionEnd, at + 1024)).Span, 0)) return (at, false);
+        }
+
+        long found = _source.IndexOf("endstream"u8, dataStart, regionEnd - 8);
+        if (found < 0) throw new PdfFormatException("Stream without endstream.");
+        long end = found;
+        ReadOnlySpan<byte> before = _source.Read(Math.Max(dataStart, end - 2), end).Span;
+        int k = before.Length;
+        if (k > 0 && before[k - 1] == (byte)'\n') k--;
+        if (k > 0 && before[k - 1] == (byte)'\r') k--;
+        return (end - (before.Length - k), true);
     }
 
     /// <summary>Streams whose /Length was wrong and had to be recovered from endstream.</summary>

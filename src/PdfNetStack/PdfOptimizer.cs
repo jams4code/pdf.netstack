@@ -14,6 +14,8 @@ namespace PdfNetStack;
 /// <summary>
 /// PDF optimizer, lossless by default. Every entry point writes a valid PDF to the output: either
 /// a smaller rewrite that has been proven equivalent to the input, or the input bytes unchanged.
+/// With <see cref="PdfOptimizerOptions.Linearize"/> set, a proven linearized rewrite of a file
+/// that is not linearized yet is written even when it is larger.
 /// With <see cref="PdfOptimizerOptions.JpegQuality"/> set, JPEG images may be requantized; the
 /// proof then checks that each such image changed by exactly that requantization and nothing else.
 /// </summary>
@@ -215,17 +217,42 @@ public static partial class PdfOptimizer
             }
 
             bool pdfA1 = IsPdfA1(file, options.MaxDecodedStreamBytes);
+            int stripped = graph.StrippedEntries;
             timings = timings with { Analyze = phase.Elapsed };
             phase.Restart();
 
+            // Structural passes, all decided by one analysis of the content before anything changes.
+            int pruned = 0, fontsMerged = 0;
+            HashSet<int> compact = [], encoded = [];
+            bool mergeFonts = options.MergeFontSubsets && options.DeduplicateObjects;
+            if (options.PruneUnusedResources || options.CompactContentStreams || mergeFonts)
+            {
+                ContentAnalysis analysis = ContentAnalysis.Run(file, graph.Order, [], options.MaxDecodedStreamBytes, ct);
+                if (options.PruneUnusedResources && (pruned = ResourcePruner.Run(analysis)) > 0)
+                {
+                    graph = ObjectGraph.Collect(file, options.RemovePageThumbnails, options.RemovePieceInfo, ct);
+                }
+
+                if (mergeFonts) (fontsMerged, encoded) = FontProgramMerger.Run(file, analysis, options.ZlibLevel, options.MaxDecodedStreamBytes, ct);
+                if (options.CompactContentStreams) compact = analysis.ContentStreams;
+            }
+
+            // A linearized file describes each page by what the page itself refers to.
+            string? notLinearized = options.Linearize ? InheritedAttributes.PushToPages(file) : null;
+            bool pushedDown = options.Linearize && notLinearized is null;
+
+            timings = timings with { Content = phase.Elapsed };
+            phase.Restart();
+
             RecompressionCounts recompressed = new(0, 0, []);
-            if (options.RecompressStreams)
+            if (options.RecompressStreams || compact.Count > 0)
             {
                 JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality, options.ProgressiveJpeg, options.MinImageSsim) : null;
                 ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg
                     ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg)
                     : null;
-                recompressed = StreamRecompressor.Run(file, graph, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors, jpeg, images,
+                var scope = new RecompressionScope(options.RecompressStreams, compact, encoded, options.DeduplicateObjects);
+                recompressed = StreamRecompressor.Run(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors, jpeg, images,
                     options.MaxDecodedStreamBytes, options.MaxDegreeOfParallelism, ct);
             }
 
@@ -236,7 +263,7 @@ public static partial class PdfOptimizer
             int merged = 0;
             if (options.DeduplicateObjects)
             {
-                (representative, merged) = Deduplicator.Run(file, graph, ct);
+                (representative, merged) = Deduplicator.Run(file, graph, recompressed.ContentHashes, ct);
             }
             else
             {
@@ -273,7 +300,19 @@ public static partial class PdfOptimizer
             {
                 Exhaustive = options.Compression == CompressionEffort.Exhaustive,
             };
-            ReadOnlyMemory<byte> candidate = PdfDocumentWriter.Write(objects, trailer, Map, settings);
+            ReadOnlyMemory<byte> candidate;
+            bool linearized = false;
+            if (pushedDown && LinearizedWriter.Write(objects, trailer, Map, settings with { UseObjectStreams = false, Version = LinearizedVersion(file.HeaderVersion) }) is { } lin)
+            {
+                candidate = lin;
+                linearized = true;
+            }
+            else
+            {
+                if (pushedDown) notLinearized = "the page tree cannot be laid out page by page";
+                candidate = PdfDocumentWriter.Write(objects, trailer, Map, settings);
+            }
+
             timings = timings with { Write = phase.Elapsed };
             phase.Restart();
 
@@ -283,7 +322,7 @@ public static partial class PdfOptimizer
                 objects.Count,
                 recompressed.Streams,
                 merged,
-                graph.StrippedEntries,
+                stripped,
                 0,
                 TimeSpan.Zero,
                 timings)
@@ -293,10 +332,15 @@ public static partial class PdfOptimizer
                 ImagesDownsampled = recompressed.Downsampled,
                 ImagesConvertedToJpeg = recompressed.ConvertedToJpeg,
                 ImagesKeptByQualityGate = recompressed.KeptByGate,
+                ResourcesPruned = pruned,
+                ContentStreamsCompacted = recompressed.Compacted,
+                FontProgramsMerged = fontsMerged,
+                Linearized = linearized,
             };
 
+            // Linearizing a file that is not linearized yet is worth keeping even when it costs bytes.
             double saving = 100.0 * (input.Length - candidate.Length) / input.Length;
-            if (saving < options.MinSavingPercent)
+            if (saving < options.MinSavingPercent && !(linearized && !file.IsLinearized))
             {
                 return new Outcome(OptimizationDisposition.OriginalRetained, null,
                     Compat.Format("Rewrite saved {0:F2}%, below the {1}% threshold.", saving, options.MinSavingPercent),
@@ -316,9 +360,17 @@ public static partial class PdfOptimizer
                 var ignored = new List<string>();
                 if (options.RemovePageThumbnails) ignored.Add("Thumb");
                 if (options.RemovePieceInfo) ignored.Add("PieceInfo");
-                var allowance = new ImageAllowance(recompressed.RequantizedObjects.Contains, recompressed.ResampledObjects.Contains, options.MinImageSsim);
-                string? difference = EquivalenceVerifier.Verify(reference, written, ignored, options.MaxDecodedStreamBytes,
-                    allowance, options.MaxDegreeOfParallelism, ct, out int compared);
+                var rules = new VerificationRules
+                {
+                    IgnoredSourceKeys = ignored,
+                    Images = new ImageAllowance(recompressed.RequantizedObjects.Contains, recompressed.ResampledObjects.Contains, options.MinImageSsim),
+                    AllowResourcePruning = pruned > 0,
+                    AllowContentCompaction = recompressed.Compacted > 0,
+                    AllowFontMerging = fontsMerged > 0,
+                    AllowInheritedAttributes = pushedDown,
+                };
+                string? difference = EquivalenceVerifier.Verify(reference, written, rules, options.MaxDecodedStreamBytes,
+                    options.MaxDegreeOfParallelism, ct, out int compared);
                 if (difference is not null)
                 {
                     return new Outcome(OptimizationDisposition.OriginalRetained, null, "Verification failed: " + difference, pageCount, stats);
@@ -327,7 +379,10 @@ public static partial class PdfOptimizer
                 stats = stats with { ObjectsVerified = compared, Phases = timings with { Verify = phase.Elapsed } };
             }
 
-            return new Outcome(OptimizationDisposition.Optimized, candidate, Reason(options, recompressed), pageCount, stats);
+            string reason = Reason(options, recompressed);
+            if (linearized) reason += " The output is linearized.";
+            else if (notLinearized is not null) reason += " Not linearized: " + notLinearized + ".";
+            return new Outcome(OptimizationDisposition.Optimized, candidate, reason, pageCount, stats);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -373,6 +428,10 @@ public static partial class PdfOptimizer
             ? header
             : "1.5";
     }
+
+    /// <summary>Linearization arrived with PDF 1.2.</summary>
+    private static string LinearizedVersion(string header) =>
+        decimal.TryParse(header, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal v) && v >= 1.2m ? header : "1.2";
 
     /// <summary>PDF/A-1 is based on PDF 1.4 and forbids object and xref streams.</summary>
     internal static bool IsPdfA1(PdfFile file, long decodeLimit)

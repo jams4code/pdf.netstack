@@ -3,7 +3,7 @@ namespace PdfNetStack;
 /// <summary>What the optimizer wrote to the output.</summary>
 public enum OptimizationDisposition
 {
-    /// <summary>A smaller, verified rewrite was written.</summary>
+    /// <summary>A verified rewrite was written: smaller, or linearized as asked.</summary>
     Optimized,
 
     /// <summary>The input was written unchanged: no worthwhile saving, or the rewrite failed verification.</summary>
@@ -55,6 +55,18 @@ public sealed record OptimizationStatistics(
     /// <summary>Images left as they were because their lossy change failed <see cref="PdfOptimizerOptions.MinImageSsim"/>.</summary>
     public int ImagesKeptByQualityGate { get; init; }
 
+    /// <summary>Resource entries removed because no content stream could name them.</summary>
+    public int ResourcesPruned { get; init; }
+
+    /// <summary>Content streams rewritten with minimal syntax, counted in <see cref="StreamsRecompressed"/> as well.</summary>
+    public int ContentStreamsCompacted { get; init; }
+
+    /// <summary>TrueType font programs replaced by a merged program shared with other subsets of the same font.</summary>
+    public int FontProgramsMerged { get; init; }
+
+    /// <summary>True when the output was written as a linearized file.</summary>
+    public bool Linearized { get; init; }
+
     internal static OptimizationStatistics Empty(TimeSpan elapsed) => new(0, 0, 0, 0, 0, 0, 0, elapsed, new PhaseTimings());
 }
 
@@ -63,6 +75,9 @@ public sealed record PhaseTimings
 {
     /// <summary>Parsing, safety checks and reachability.</summary>
     public TimeSpan Analyze { get; init; }
+
+    /// <summary>Content analysis, resource pruning and font program merging.</summary>
+    public TimeSpan Content { get; init; }
 
     /// <summary>Stream re-encoding.</summary>
     public TimeSpan Recompress { get; init; }

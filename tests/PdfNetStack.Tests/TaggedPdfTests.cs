@@ -114,7 +114,7 @@ public sealed class TaggedPdfTests
         // The header shows on every page, but only its first showing is content: later ones are artifacts.
         string tableText = string.Join("\n", Enumerable.Range(0, doc.Pages.Count).Select(p => doc.Pages[p].ExtractText()));
         Assert.HasCount(doc.Pages.Count, Regex.Matches(tableText, "Heading"));
-        int tagged = Enumerable.Range(0, doc.Pages.Count).Sum(p => Regex.Matches(Content(doc, p), @"/TH <</MCID\s").Cast<Match>().Count());
+        int tagged = Enumerable.Range(0, doc.Pages.Count).Sum(p => Regex.Matches(Content(doc, p), @"/TH\s?<</MCID\s").Cast<Match>().Count());
         Assert.AreEqual(1, tagged);
     }
 

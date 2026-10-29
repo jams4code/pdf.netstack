@@ -1,3 +1,4 @@
+using PdfNetStack.Content;
 using PdfNetStack.Filters;
 using PdfNetStack.Imaging;
 using PdfNetStack.Objects;
@@ -10,7 +11,12 @@ namespace PdfNetStack.Optimization;
 /// the trailer and compares every reachable value. Streams are compared by decoded content, so
 /// a different compression of the same bytes is equal, while any change to page content, fonts,
 /// images, annotations, metadata or structure is reported with its path. JPEG data is compared
-/// by DCT coefficients, so a re-encoding of the same image is equal too.
+/// by DCT coefficients, so a re-encoding of the same image is equal too. Lossy image changes are
+/// accepted only where <see cref="VerificationRules.Images"/> allows them. The lossless structural
+/// passes are accepted when <see cref="VerificationRules"/> allows them, each checked against an
+/// analysis of the source: resource entries no content can name may be missing, content streams
+/// may differ in layout but not in tokens, and a TrueType program may change where no glyph its
+/// fonts show is affected.
 /// </summary>
 internal sealed class EquivalenceVerifier
 {
@@ -23,19 +29,41 @@ internal sealed class EquivalenceVerifier
 
     private readonly long _decodeLimit;
     private readonly ImageAllowance _allowance;
+    private readonly VerificationRules _rules;
+    private readonly Lazy<ContentAnalysis?> _analysis;
+    private readonly Lazy<Dictionary<int, HashSet<int>>> _fontPrograms;
     private readonly HashSet<(int, int)> _visited = new();
     private readonly Dictionary<int, int> _aToB = new();
     private readonly Dictionary<int, int> _bToA = new();
     private readonly Queue<(int A, int B, string Path)> _pending = new();
     private readonly List<StreamJob> _streams = new();
 
-    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, ImageAllowance allowance)
+    private EquivalenceVerifier(PdfFile a, PdfFile b, VerificationRules rules, long decodeLimit, CancellationToken ct)
     {
         _a = a;
         _b = b;
-        _ignoredSourceKeys = new HashSet<string>(ignoredSourceKeys, StringComparer.Ordinal);
+        _rules = rules;
+        _ignoredSourceKeys = new HashSet<string>(rules.IgnoredSourceKeys, StringComparer.Ordinal);
         _decodeLimit = decodeLimit;
-        _allowance = allowance;
+        _allowance = rules.Images;
+
+        // The source is analysed only once a difference needs it; most comparisons never do.
+        _analysis = new Lazy<ContentAnalysis?>(() => Analyze(ct));
+        _fontPrograms = new Lazy<Dictionary<int, HashSet<int>>>(() =>
+            _analysis.Value is { } analysis ? FontProgramMerger.MergeablePrograms(_a, analysis, _decodeLimit) : new Dictionary<int, HashSet<int>>());
+    }
+
+    private ContentAnalysis? Analyze(CancellationToken ct)
+    {
+        try
+        {
+            ObjectGraph graph = ObjectGraph.Collect(_a, stripThumbnails: false, stripPieceInfo: false, ct);
+            return ContentAnalysis.Run(_a, graph.Order, _ignoredSourceKeys, _decodeLimit, ct);
+        }
+        catch (PdfFormatException)
+        {
+            return null;
+        }
     }
 
     /// <param name="Images">Source and output geometry, set when the image may have been resampled.</param>
@@ -45,23 +73,11 @@ internal sealed class EquivalenceVerifier
 
     public int StreamsCompared { get; private set; }
 
-    /// <param name="ignoredSourceKeys">Keys allowed to exist only in the source, for opt-in stripping.</param>
-    /// <param name="mayRequantize">
-    /// Called with a source object number; true accepts a JPEG image there whose coefficients are
-    /// exactly the source's requantized to coarser tables. Everything else about it must still match.
-    /// </param>
+    /// <param name="rules">The changes beyond re-encoding that the output may contain.</param>
     /// <returns>Null when equivalent, otherwise a description of the first difference found.</returns>
-    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, Predicate<int> mayRequantize, int parallelism, CancellationToken ct, out int objectsCompared)
-        => Verify(source, output, ignoredSourceKeys, decodeLimit, new ImageAllowance(mayRequantize, static _ => false, null), parallelism, ct, out objectsCompared);
-
-    /// <param name="allowance">
-    /// Lossy image changes to accept, by source object number: requantization, proven exactly,
-    /// and resampling or conversion to JPEG, proven by SSIM. Everything else about such an image
-    /// must still match. With a gate, requantized images must also meet it.
-    /// </param>
-    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, ImageAllowance allowance, int parallelism, CancellationToken ct, out int objectsCompared)
+    public static string? Verify(PdfFile source, PdfFile output, VerificationRules rules, long decodeLimit, int parallelism, CancellationToken ct, out int objectsCompared)
     {
-        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, allowance);
+        var v = new EquivalenceVerifier(source, output, rules, decodeLimit, ct);
         string? difference = v.Run(parallelism, ct);
         objectsCompared = v.ObjectsCompared;
         return difference;
@@ -175,7 +191,7 @@ internal sealed class EquivalenceVerifier
             }
 
             case PdfDictionary aDict:
-                return b is PdfDictionary bDict ? CompareDictionaries(aDict, bDict, path, depth, isStream: false) : path + ": dictionary vs other";
+                return b is PdfDictionary bDict ? CompareDictionaries(aDict, bDict, path, depth, -1) : path + ": dictionary vs other";
             case PdfStream aStream:
             {
                 if (b is not PdfStream bStream) return path + ": stream vs other";
@@ -196,7 +212,7 @@ internal sealed class EquivalenceVerifier
                     images = (ga, gb);
                 }
 
-                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, isStream: true, sizeMayChange: images is not null);
+                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, numberA, isStream: true, sizeMayChange: images is not null);
                 if (d is not null) return d;
 
                 // Parameters of filters that stay encoded (JBIG2Globals, DCT settings) are part of
@@ -223,13 +239,33 @@ internal sealed class EquivalenceVerifier
         }
     }
 
-    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, bool isStream, bool sizeMayChange = false)
+    /// <param name="numberA">Object number of the source stream whose dictionary this is, else -1.</param>
+    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, int numberA, bool isStream = false, bool sizeMayChange = false)
     {
+        // A merged TrueType program has a new length; /Length1 describes the encoding of the data.
+        bool mergedProgram = isStream && _rules.AllowFontMerging && numberA >= 0 && a["Length1"] is not null && _fontPrograms.Value.ContainsKey(numberA);
+
+        // Inherited page attributes may move between tree nodes and pages. Nodes are not compared
+        // on them; each page is compared on the values it ends up with.
+        bool page = !isStream && _rules.AllowInheritedAttributes && a.GetName("Type") == "Page" && b.GetName("Type") == "Page";
+        bool node = !isStream && _rules.AllowInheritedAttributes && a.GetName("Type") == "Pages" && b.GetName("Type") == "Pages";
+        if (page)
+        {
+            foreach (string key in InheritedAttributes.Keys)
+            {
+                string? d = Compare(Effective(_a, a, key), Effective(_b, b, key), path + "/" + key, depth + 1);
+                if (d is not null) return d;
+            }
+        }
+
         foreach (string key in a.Keys)
         {
             if (isStream && EncodingKeys.Contains(key)) continue;
             if (sizeMayChange && SizeKeys.Contains(key)) continue;
+            if (mergedProgram && key == "Length1") continue;
+            if ((page || node) && Inheritable(key)) continue;
             if (_ignoredSourceKeys.Contains(key) && b[key] is null) continue;
+            if (b[key] is null && _rules.AllowResourcePruning && Unused(a, key)) continue;
             string? d = Compare(a[key], b[key] ?? PdfNull.Instance, path + "/" + key, depth + 1);
             if (d is not null) return d;
         }
@@ -237,12 +273,37 @@ internal sealed class EquivalenceVerifier
         foreach (string key in b.Keys)
         {
             if (isStream && EncodingKeys.Contains(key)) continue;
+            if (sizeMayChange && SizeKeys.Contains(key)) continue;
+            if (mergedProgram && key == "Length1") continue;
+            if ((page || node) && Inheritable(key)) continue;
             if (a.ContainsKey(key)) continue;
             if (_b.Resolve(b[key]) is not PdfNull) return path + "/" + key + ": key only in output";
         }
 
         return null;
     }
+
+    private static bool Inheritable(string key) => Array.IndexOf(InheritedAttributes.Keys, key) >= 0;
+
+    /// <summary>A page's value for an inheritable attribute: its own, or the nearest ancestor's.</summary>
+    private static PdfObject Effective(PdfFile file, PdfDictionary page, string key)
+    {
+        PdfDictionary? d = page;
+        var seen = new HashSet<PdfDictionary>();
+        for (int depth = 0; d is not null && depth <= 64 && seen.Add(d); depth++)
+        {
+            if (d[key] is { } value && file.Resolve(value) is not PdfNull) return value;
+            d = file.ResolveDictionary(d["Parent"]);
+        }
+
+        return PdfNull.Instance;
+    }
+
+    /// <summary>True when the source analysis proves no content can look <paramref name="key"/> up in <paramref name="category"/>.</summary>
+    private bool Unused(PdfDictionary category, string key) =>
+        _analysis.Value is { Complete: true } analysis &&
+        analysis.PrunableCategories.TryGetValue(category, out HashSet<string>? used) &&
+        ResourcePruner.MayRemove(used, key);
 
     private static List<FilterSpec>? SafeFilters(PdfFile file, PdfStream s)
     {
@@ -308,6 +369,19 @@ internal sealed class EquivalenceVerifier
         if (!SameFilterChain(da.Remaining, db.Remaining)) return path + ": remaining filters differ";
         if (da.Data.Span.SequenceEqual(db.Data.Span)) return null;
 
+        bool plain = da.PendingPredictor is null && da.Remaining.Count == 0;
+        if (plain && numberA >= 0 && _rules.AllowContentCompaction && _analysis.Value is { } analysis && analysis.ContentStreams.Contains(numberA))
+        {
+            string? difference = ContentCompactor.FindDifference(da.Data, db.Data);
+            return difference is null ? null : path + ": content " + difference;
+        }
+
+        if (plain && numberA >= 0 && _rules.AllowFontMerging && _fontPrograms.Value.TryGetValue(numberA, out HashSet<int>? glyphs))
+        {
+            string? difference = TrueTypeGlyphs.FindDifference(da.Data.Span, db.Data.Span, glyphs);
+            return difference is null ? null : path + ": font program " + difference;
+        }
+
         // Re-encoded JPEG data differs in bytes; equality is decided on its coefficients.
         if (da.PendingPredictor is null && da.Remaining is [{ Name: "DCTDecode" } dct])
         {
@@ -371,4 +445,33 @@ internal sealed class EquivalenceVerifier
             _ => false,
         };
     }
+}
+
+/// <summary>What the verifier accepts beyond a different encoding of the same streams.</summary>
+internal sealed record VerificationRules
+{
+    /// <summary>Keys allowed to exist only in the source, for opt-in stripping.</summary>
+    public IReadOnlyCollection<string> IgnoredSourceKeys { get; init; } = [];
+
+    /// <summary>
+    /// Lossy image changes to accept, by source object number: requantization, proven exactly,
+    /// and resampling or conversion to JPEG, proven by SSIM. Everything else about such an image
+    /// must still match. With a gate, requantized images must also meet it. None by default.
+    /// </summary>
+    public ImageAllowance Images { get; init; } = ImageAllowance.None;
+
+    /// <summary>Resource entries no content can name may be missing from the output.</summary>
+    public bool AllowResourcePruning { get; init; }
+
+    /// <summary>Content streams may be laid out differently if they read as the same tokens.</summary>
+    public bool AllowContentCompaction { get; init; }
+
+    /// <summary>TrueType programs of identity mapped composite fonts may change where no shown glyph is affected.</summary>
+    public bool AllowFontMerging { get; init; }
+
+    /// <summary>Inheritable page attributes may move from page tree nodes onto the pages that inherit them.</summary>
+    public bool AllowInheritedAttributes { get; init; }
+
+    /// <summary>Every lossless structural change the optimizer makes, and no lossy image change.</summary>
+    public static VerificationRules Lossless { get; } = new() { AllowResourcePruning = true, AllowContentCompaction = true, AllowFontMerging = true, AllowInheritedAttributes = true };
 }

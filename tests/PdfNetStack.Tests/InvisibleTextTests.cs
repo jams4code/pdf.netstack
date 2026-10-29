@@ -11,6 +11,9 @@ namespace PdfNetStack.Tests;
 [TestClass]
 public sealed class InvisibleTextTests
 {
+    // These tests read the drawing operators as written, before the optimizer compacts them.
+    private static readonly PdfSaveOptions Unoptimized = new() { Optimize = false };
+
     private static PdfDocument Draw(Action<PdfGraphics> draw, int pages = 1)
     {
         PdfDocument doc = PdfDocument.Create();
@@ -20,7 +23,7 @@ public sealed class InvisibleTextTests
             draw(g);
         }
 
-        return PdfDocument.Open(doc.ToArray());
+        return PdfDocument.Open(doc.ToArray(Unoptimized));
     }
 
     private static string Content(PdfDocument doc, int page = 0)

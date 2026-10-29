@@ -169,19 +169,19 @@ public sealed class HtmlConverterTests
 
         // A wave is a run of curves, clipped to the text; a solid line is one straight segment.
         string solid = Decorated("underline");
-        Assert.AreEqual(0, Count(solid, @"\sc\n"));
-        Assert.AreEqual(1, Count(solid, @"\sl\n"));
+        Assert.AreEqual(0, Count(solid, @"\sc(?=\s|$)"));
+        Assert.AreEqual(1, Count(solid, @"\sl(?=\s|$)"));
         string wavy = Decorated("underline wavy");
-        int curves = Count(wavy, @"\sc\n");
+        int curves = Count(wavy, @"\sc(?=\s|$)");
         Assert.IsGreaterThan(20, curves, "a curve every few px across the text");
-        Assert.AreEqual(0, Count(wavy, @"\sl\n"));
+        Assert.AreEqual(0, Count(wavy, @"\sl(?=\s|$)"));
         StringAssert.Matches(wavy, new Regex(@"re\s+W\s+n"), "the wave is clipped to the run");
-        Assert.AreEqual(3 * curves, Count(Decorated("underline overline line-through wavy"), @"\sc\n"), "every line waves");
+        Assert.AreEqual(3 * curves, Count(Decorated("underline overline line-through wavy"), @"\sc(?=\s|$)"), "every line waves");
 
         // The other styles still draw straight lines.
-        StringAssert.Contains(Decorated("underline dotted"), "[0 2] 0 d");
-        StringAssert.Contains(Decorated("underline dashed"), "[3 2] 0 d");
-        Assert.AreEqual(2, Count(Decorated("line-through double"), @"\sl\n"));
+        StringAssert.Matches(Decorated("underline dotted"), new Regex(@"\[0 2\]\s*0\s+d"));
+        StringAssert.Matches(Decorated("underline dashed"), new Regex(@"\[3 2\]\s*0\s+d"));
+        Assert.AreEqual(2, Count(Decorated("line-through double"), @"\sl(?=\s|$)"));
     }
 
     [TestMethod]
@@ -511,7 +511,7 @@ public sealed class HtmlConverterTests
         StringAssert.Contains(content, "0 1 0 rg", "the body background covers the page");
         StringAssert.Contains(content, "1 0 0 rg");
         StringAssert.Contains(content, "0 0 1 RG");
-        StringAssert.Contains(content, "] 0 d", "dashed borders set a dash pattern");
+        StringAssert.Matches(content, new Regex(@"\]\s?0 d"), "dashed borders set a dash pattern");
         StringAssert.Contains(Text(doc, 0), "under");
     }
 

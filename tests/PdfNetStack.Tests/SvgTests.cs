@@ -11,6 +11,9 @@ namespace PdfNetStack.Tests;
 [TestClass]
 public sealed class SvgTests
 {
+    // These tests read the drawing operators as written, before the optimizer compacts them.
+    private static readonly PdfSaveOptions Unoptimized = new() { Optimize = false };
+
     private const string Ns = "xmlns=\"http://www.w3.org/2000/svg\"";
 
     /// <summary>The content of the form an SVG becomes, decoded.</summary>
@@ -20,7 +23,7 @@ public sealed class SvgTests
         PdfDocument doc = PdfDocument.Create();
         PdfPage page = doc.Pages.Add(PdfRectangle.A4);
         using (PdfGraphics g = page.CreateGraphics()) g.DrawSvg(drawing, 10, 10);
-        doc = PdfDocument.Open(doc.ToArray());
+        doc = PdfDocument.Open(doc.ToArray(Unoptimized));
         var dict = (PdfDictionary)doc.Resolve(doc.Pages[0].Dictionary["Resources"])!;
         var xobjects = (PdfDictionary)doc.Resolve(dict["XObject"])!;
         var form = (PdfStream)doc.Resolve(xobjects.First().Value)!;
@@ -141,7 +144,7 @@ public sealed class SvgTests
             g.DrawSvg(logo, 100, 10, 40, 40);
         }
 
-        doc = PdfDocument.Open(doc.ToArray());
+        doc = PdfDocument.Open(doc.ToArray(Unoptimized));
         var forms = new HashSet<int>();
         foreach (PdfPage page in doc.Pages)
         {
@@ -200,7 +203,7 @@ public sealed class SvgTests
             <div style="width: 80px; height: 20px; background: url({uri}) repeat-x"></div>
             <svg width="30" height="30" viewBox="0 0 30 30"><rect width="10" height="10" fill="#00ff00"/><rect x="20" width="10" height="10" fill="#00ff00"/></svg>
             """;
-        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf(html, new HtmlConverterOptions { UseSystemFonts = false }));
+        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToDocument(html, new HtmlConverterOptions { UseSystemFonts = false }).ToArray(Unoptimized));
         PdfObject? contents = doc.Resolve(doc.Pages[0].Dictionary["Contents"]);
         IEnumerable<PdfObject> parts = contents is PdfArray a ? a : [contents!];
         string page = string.Concat(parts.Select(p => Encoding.ASCII.GetString(doc.GetStreamData((PdfStream)doc.Resolve(p)!))));

@@ -17,8 +17,9 @@ Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
 ## Features
 
 - **Lossless PDF compression:** object streams, compressed cross-reference streams, unused object
-  removal, Flate recompression at level 9, PNG prediction for raw images, duplicate font, image
-  and resource merging.
+  and resource removal, compact content streams, Flate recompression at level 9, PNG prediction
+  for raw images, duplicate font, image and resource merging, merging of separately embedded
+  subsets of one font. Optional linearized output for fast web view.
 - **Lossless JPEG optimization:** Huffman tables rebuilt per image, progressive JPEGs rewritten as
   baseline, metadata segments dropped. DCT coefficients stay identical.
 - **Optional lossy JPEG compression:** `JpegQuality` requantizes JPEG images at a libjpeg quality,
@@ -29,7 +30,7 @@ Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
 - **Built-in equivalence proof** on every rewrite, also available on its own as
   `PdfEquivalence.FindDifference` to check the output of any PDF tool.
 - **Editing:** open, create, merge, split, reorder, rotate, remove and import pages; document
-  info; bookmarks.
+  info; bookmarks. Large files open on demand from a stream and save as incremental updates.
 - **Encryption:** open RC4, AES-128 and AES-256 protected PDFs; write AES-256 or AES-128 with
   user and owner passwords and permissions.
 - **Safe on untrusted files:** bounded parsing and decoding, decompression bomb limits, fuzz

@@ -24,9 +24,80 @@ The source bytes and the candidate bytes are parsed independently. Starting at t
 - JPEG data whose bytes changed is decoded to DCT coefficients on both sides (see below),
 - streams that cannot be decoded must be byte identical with an identical filter chain.
 
-The only accepted differences are the encoding entries of streams: `/Length`, `/Filter`,
-`/DecodeParms` and `/DL`. With opt-in stripping enabled, `/Thumb` and `/PieceInfo` may be missing
-from the output.
+Apart from the structural changes below and the opt-in image changes described under JPEG
+images, the only accepted differences are the encoding entries of streams: `/Length`, `/Filter`, `/DecodeParms` and `/DL`. With opt-in stripping
+enabled, `/Thumb` and `/PieceInfo` may be missing from the output.
+
+### Structural changes
+
+The lossless structural passes change more than encoding, so each has a rule of its own. None
+is taken on trust: the verifier runs its own content analysis on its own parse of the source,
+and accepts a difference only where that analysis proves it invisible. `PdfEquivalence` and
+`pdfnetstack verify` apply the same rules.
+
+**Unused resources.** A resource entry (font, XObject, graphics state, pattern, shading, color
+space, property list) may be missing from the output only when no content that can use it names
+it. The analysis reads every content stream from the page tree and from annotation appearances
+(every state of /N, /R and /D), and follows form XObjects, tiling patterns, Type 3 glyph
+procedures, soft mask groups and fonts selected through graphics states. A name counts as used
+when it appears anywhere in the decoded content as a name token, whatever operator it belongs
+to, and even inside strings, comments or inline image data. A page's content parts are scanned
+joined with and without a separator between them, as readers differ. Content with resources of
+its own that names something those resources lack also keeps that name in the resources of the
+content that invoked it, since some readers look there. `DefaultGray`, `DefaultRGB` and
+`DefaultCMYK` are used implicitly and always kept.
+
+A category dictionary is pruned only when every resource dictionary holding it belongs to
+content the analysis read in full: a dictionary also reached as form default resources (`/DR`),
+from content that does not decode, from a holder that was never executed, or through any other
+key keeps every entry. When a work budget runs out (2 GB of decoded content or 50 million
+operators) nothing is pruned.
+
+**Content streams.** A stream that is only ever used as content (page contents, forms, tiling
+patterns, appearances, glyph procedures, soft mask groups, widget icons) may be rewritten when
+it reads as the same tokens. The comparison tokenizes both versions: operators must be byte
+identical, numbers equal by canonical value, names equal after `#xx` decoding, strings equal by
+their bytes whether written literal or hex, and inline image dictionaries equal by value with
+their data byte identical. Inline image data whose end is ambiguous (a filtered image without
+/L whose data contains `EI`, or rules that disagree) stops the rewrite: everything from that
+image on must be byte identical. Because readers join a page's parts in different ways, a
+leading or trailing white space byte must be kept, and a first or last token that touches the
+edge must keep its exact bytes. A stream that ends inside a comment is not changed.
+
+**Merged font programs.** The TrueType program behind a composite font may be replaced by a
+program shared with other subsets of the same font when: the font is Type0 with Identity-H or
+Identity-V, its descendant is a CIDFontType2 with an identity /CIDToGIDMap and no /CIDSet, the
+program is only reached through such fonts, and the analysis decoded every string shown with
+them. The glyphs a program must keep are the codes those fonts show, glyph 0 and every component
+of a composite glyph among them. For a merged program the verifier requires: every table other
+than glyf, loca, hmtx, hhea, maxp, head, post, name and cmap byte identical; the same version,
+revision, flags, units per em, style, recommended size, direction hint and glyph data format in
+head; the same ascender, descender, line gap, caret slope and metric format in hhea; the same maxp
+version and hinting limits at least as wide; and for each of those glyphs the same outline bytes
+(up to trailing zero padding), the same advance width and the same left side bearing. Glyph names
+(post) are dropped and the name and cmap tables come from one of the merged programs; a
+CIDFontType2 with an identity map selects glyphs by id and reads none of them.
+
+**Streams equal after decoding.** Deduplication compares streams by what they decode to, so two
+copies of a font program or image merge even when they were encoded differently. The comparison
+covers the decoded bytes, any predictor and filter still applied, and the stream dictionary
+without its encoding entries.
+
+**Inherited page attributes.** With `Linearize`, `/Resources`, `/MediaBox`, `/CropBox` and
+`/Rotate` move from intermediate page tree nodes onto the pages that inherit them. The verifier
+then compares each page by the value it ends up with, its own or its nearest ancestor's, and does
+not compare those keys on intermediate nodes, whose values matter only through the pages.
+
+### Linearized output
+
+A linearized file holds the same objects as any other rewrite, so the proof above covers its
+content. Its layout is checked separately. The tests read every linearized file back and check
+the linearization dictionary against the file (`/L`, `/O`, `/E`, `/N`, `/T`, `/H`), both
+cross-reference sections, and every entry of the page offset, shared object and outline hint
+tables against the real offsets and lengths of the objects. `tools/measure_optimizer.py
+--linearize` also runs qpdf's `--check-linearization` on each output when qpdf, or pikepdf with
+its bundled libqpdf, is installed. The objects are assigned to the parts of Annex F the way qpdf
+assigns them, so its check computes the same layout.
 
 ### JPEG images
 
@@ -82,6 +153,12 @@ python tools/render_compare.py ./corpus ./out --dpi 150 --pages 6
 
 Latest run: 1,068 optimized documents, 2,085 pages at 150 DPI, zero differing pixels.
 
+Structural passes, on synthetic samples from `tools/make_optimizer_samples.py` (unused
+resources, verbose content, separately embedded subsets of one font, inherited attributes with
+bookmarks, and all of them in one file): 88 pages rendered at 100 DPI from the default output
+and from the linearized output, zero differing pixels, identical text. Every linearized output
+passed qpdf 12.4's `--check-linearization`.
+
 ## 3. Tests
 
 - Syntax: literal and hex string escapes, names with `#xx`, number canonicalization, references,
@@ -93,6 +170,14 @@ Latest run: 1,068 optimized documents, 2,085 pages at 150 DPI, zero differing pi
   offsets, missing `startxref`, wrong stream lengths, missing objects, garbage input.
 - Optimizer: every pass, every refusal rule, dedup identity rules, PDF/A-1 layout, stripping,
   cancellation, atomic file output.
+- Structural passes: pruning through forms, patterns, Type 3 fonts, appearances, inherited and
+  shared resources, `/DR`, unreadable content and names split across parts; compaction of
+  numbers, names, strings, comments and inline images, a randomized round trip, and every kind
+  of token change caught; font merging with glyph conflicts, glyphs past the end of a subset and
+  changed outlines; mutated inputs that must never throw.
+- Linearization: the layout checks above on documents with one and many pages, shared fonts,
+  bookmarks in and out of the first page, form fields, an open action and inherited attributes;
+  page trees it cannot lay out; mutated inputs.
 - JPEG: libjpeg-turbo fixtures (4:2:0, 4:2:2, 4:4:4, gray, Adobe CMYK, untransformed RGB, odd
   sizes) in baseline, optimized, progressive and restart marker layouts; lossless and requantized
   round trips; soft masks, Flate wrapped JPEG, color space mismatches, palettes, damaged and

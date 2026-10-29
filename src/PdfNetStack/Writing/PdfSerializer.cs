@@ -19,6 +19,9 @@ internal sealed class ByteSink
 
     public void Clear() => Length = 0;
 
+    /// <summary>Drops everything written after the first <paramref name="length"/> bytes.</summary>
+    public void Truncate(int length) => Length = Math.Min(Length, Math.Max(0, length));
+
     public void Write(byte b)
     {
         if (Length == _buffer.Length) Grow(1);

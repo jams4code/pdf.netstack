@@ -102,6 +102,15 @@ public static class PdfEquivalence
     /// content compared after decoding and JPEG images compared by DCT coefficients. Otherwise
     /// returns the first difference found.
     /// </summary>
+    /// <remarks>
+    /// The lossless structural changes the optimizer makes are accepted, each proven against an
+    /// analysis of <paramref name="original"/>: resource entries that no content stream can name
+    /// may be missing, content streams may differ in white space, comments and number or string
+    /// notation as long as they read as the same tokens, and the TrueType program of an identity
+    /// mapped composite font may differ where none of the glyphs its fonts show is affected.
+    /// Inheritable page attributes may move from page tree nodes onto the pages, as long as every
+    /// page ends up with the same values. docs/FIDELITY.md gives the exact rules.
+    /// </remarks>
     /// <param name="original">The source PDF.</param>
     /// <param name="candidate">The PDF to check against it.</param>
     /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
@@ -118,8 +127,8 @@ public static class PdfEquivalence
     {
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        ImageAllowance allowance = LossyImages.AllowanceFor(a, allowJpegRequantization, null, CancellationToken.None);
-        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowance, Environment.ProcessorCount, CancellationToken.None, out _);
+        VerificationRules rules = VerificationRules.Lossless with { Images = LossyImages.AllowanceFor(a, allowJpegRequantization, null, CancellationToken.None) };
+        return EquivalenceVerifier.Verify(a, b, rules, maxDecodedStreamBytes, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 
     /// <summary>
@@ -148,7 +157,7 @@ public static class PdfEquivalence
         if (minImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(minImageSsim));
         PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
         PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
-        ImageAllowance allowance = LossyImages.AllowanceFor(a, allowJpegRequantization, minImageSsim, CancellationToken.None);
-        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowance, Environment.ProcessorCount, CancellationToken.None, out _);
+        VerificationRules rules = VerificationRules.Lossless with { Images = LossyImages.AllowanceFor(a, allowJpegRequantization, minImageSsim, CancellationToken.None) };
+        return EquivalenceVerifier.Verify(a, b, rules, maxDecodedStreamBytes, Environment.ProcessorCount, CancellationToken.None, out _);
     }
 }

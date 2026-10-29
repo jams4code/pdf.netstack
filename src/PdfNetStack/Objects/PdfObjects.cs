@@ -427,11 +427,58 @@ public sealed class PdfStream : PdfObject
         return new PdfStream(dictionary, Filters.StreamCodec.Deflate(data, System.IO.Compression.CompressionLevel.Optimal));
     }
 
+    /// <summary>A stream whose data stays in the file until it is asked for.</summary>
+    /// <param name="dictionary">The stream dictionary.</param>
+    /// <param name="load">Reads the encoded data; called on every access until the data is replaced.</param>
+    /// <param name="length">Length of the encoded data in the file.</param>
+    internal PdfStream(PdfDictionary dictionary, Func<ReadOnlyMemory<byte>> load, int length)
+    {
+        Dictionary = dictionary;
+        _load = load;
+        _loadLength = length;
+    }
+
+    private ReadOnlyMemory<byte> _data;
+    private Func<ReadOnlyMemory<byte>>? _load;
+    private int _loadLength;
+
     /// <summary>The stream dictionary. /Length is written on save and need not be kept current.</summary>
     public PdfDictionary Dictionary { get; }
 
-    /// <summary>Encoded stream bytes, exactly as stored between stream and endstream.</summary>
-    public ReadOnlyMemory<byte> Data { get; set; }
+    /// <summary>
+    /// Encoded stream bytes, exactly as stored between stream and endstream. For a document
+    /// opened from a stream without loading it, the bytes are read from the file on each access
+    /// and not kept, until new data is assigned.
+    /// </summary>
+    public ReadOnlyMemory<byte> Data
+    {
+        get => _load is { } load ? load() : _data;
+        set
+        {
+            _data = value;
+            _load = null;
+            Version++;
+        }
+    }
+
+    /// <summary>True while the data still lives in the file.</summary>
+    internal bool IsDeferred => _load is not null;
+
+    /// <summary>Length of the encoded data, without reading deferred data.</summary>
+    internal int EncodedLength => _load is null ? _data.Length : _loadLength;
+
+    /// <summary>Counts assignments to <see cref="Data"/>, so a writer can tell data that changed.</summary>
+    internal int Version { get; private set; }
+
+    /// <summary>
+    /// Applies <paramref name="transform"/> to the data: now when it is in memory, on every read
+    /// while it is deferred. Used for decryption, which must not force deferred data into memory.
+    /// </summary>
+    internal void Transform(Func<ReadOnlyMemory<byte>, ReadOnlyMemory<byte>> transform)
+    {
+        if (_load is { } load) _load = () => transform(load());
+        else _data = transform(_data);
+    }
 }
 
 /// <summary>

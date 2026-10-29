@@ -54,8 +54,43 @@ public sealed record PdfOptimizerOptions
     /// <summary>Objects per object stream. Larger compresses better; smaller loads pages faster. Default 200.</summary>
     public int ObjectsPerStream { get; init; } = 200;
 
-    /// <summary>Merge byte-identical fonts, images and other resources. Default true.</summary>
+    /// <summary>
+    /// Merge identical fonts, images and other resources. Streams are compared by what they decode
+    /// to, so copies encoded differently merge too. Default true.
+    /// </summary>
     public bool DeduplicateObjects { get; init; } = true;
+
+    /// <summary>
+    /// Remove resource entries (fonts, XObjects, graphics states, patterns, shadings, color spaces,
+    /// property lists) that no content stream using the resource dictionary can name. Lossless:
+    /// pages, forms, patterns, Type 3 glyphs and annotation appearances are all read, and anything
+    /// that cannot be read for certain keeps its resources. Default true.
+    /// </summary>
+    public bool PruneUnusedResources { get; init; } = true;
+
+    /// <summary>
+    /// Rewrite content streams with minimal white space, canonical numbers and no comments. Every
+    /// operator and operand stays the same; verification compares the streams token by token.
+    /// Default true.
+    /// </summary>
+    public bool CompactContentStreams { get; init; } = true;
+
+    /// <summary>
+    /// Merge subsets of one TrueType font that keep the original glyph ids (composite fonts with an
+    /// identity CIDToGIDMap) into a single program, when every glyph each font shows stays exactly
+    /// the same. Common in merged documents. Requires <see cref="DeduplicateObjects"/>. Default true.
+    /// </summary>
+    public bool MergeFontSubsets { get; init; } = true;
+
+    /// <summary>
+    /// Write a linearized file (ISO 32000-1, Annex F), which a viewer can start showing before the
+    /// whole file has arrived ("fast web view"). Inherited page attributes are moved onto the
+    /// pages, and every object is written on its own without object streams, so the output can
+    /// be larger than the input; a linearized rewrite of a file that is not linearized yet is kept
+    /// even then, provided it verifies. A page tree that cannot be laid out page by page, such as
+    /// one listing a page twice, is written as usual and the result says why. Default false.
+    /// </summary>
+    public bool Linearize { get; init; }
 
     /// <summary>Re-encode streams with better lossless compression. Default true.</summary>
     public bool RecompressStreams { get; init; } = true;

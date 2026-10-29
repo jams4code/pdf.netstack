@@ -43,7 +43,7 @@ internal static class PdfDocumentWriter
         long estimate = 1024;
         foreach (PdfObject o in objects)
         {
-            if (o is PdfStream s) estimate += s.Data.Length + 64;
+            if (o is PdfStream s) estimate += s.EncodedLength + 64;
             else estimate += 48;
         }
 
@@ -208,7 +208,8 @@ internal static class PdfDocumentWriter
         return n;
     }
 
-    private static void WriteIndirect(ByteSink sink, PdfSerializer serializer, int number, PdfObject obj, WriterSettings settings)
+    /// <summary>Writes one object as "n 0 obj ... endobj", a stream with its /Length set directly.</summary>
+    internal static void WriteIndirect(ByteSink sink, PdfSerializer serializer, int number, PdfObject obj, WriterSettings settings)
     {
         Security.StandardSecurity? encryption = number == settings.EncryptionDictionaryNumber ? null : settings.Encryption;
         serializer.StringTransform = encryption is null ? null : value => encryption.Encrypt(number, 0, value, isString: true);

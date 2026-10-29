@@ -102,10 +102,10 @@ public sealed class JpegOptimizationTests
         PdfFile source = PdfFile.Open(ImagePdf((photo, dictionary), (photo, dictionary)), 64 << 20);
         PdfFile output = PdfFile.Open(ImagePdf((coarse, dictionary), (coarse, dictionary)), 64 << 20);
 
-        string? difference = EquivalenceVerifier.Verify(source, output, [], 64 << 20, static n => n == 3, 1, CancellationToken.None, out _);
+        string? difference = EquivalenceVerifier.Verify(source, output, new VerificationRules { Images = new ImageAllowance(static n => n == 3, static _ => false, null) }, 64 << 20, 1, CancellationToken.None, out _);
         Assert.IsNotNull(difference);
         StringAssert.EndsWith(difference, "JPEG quantization changed");
-        Assert.IsNull(EquivalenceVerifier.Verify(source, output, [], 64 << 20, static n => n is 3 or 6, 1, CancellationToken.None, out _));
+        Assert.IsNull(EquivalenceVerifier.Verify(source, output, new VerificationRules { Images = new ImageAllowance(static n => n is 3 or 6, static _ => false, null) }, 64 << 20, 1, CancellationToken.None, out _));
     }
 
     [TestMethod]

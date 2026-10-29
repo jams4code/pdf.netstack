@@ -7,8 +7,10 @@ namespace PdfNetStack.Optimization;
 
 /// <summary>
 /// Merges indirect objects that are byte-for-byte identical once their references are
-/// canonicalized. Runs to a fixpoint, because merging two fonts can make the resource
-/// dictionaries that point at them identical too. Objects with identity semantics (pages,
+/// canonicalized. Streams compare by decoded content when the recompressor reported it, so two
+/// copies of a font program or image merge even when they were encoded differently. Runs to a
+/// fixpoint, because merging two fonts can make the resource dictionaries that point at them
+/// identical too. Objects with identity semantics (pages,
 /// annotations, structure elements, outline items and anything reached through such keys)
 /// are never merged.
 /// </summary>
@@ -37,8 +39,14 @@ internal static class Deduplicator
         return false;
     }
 
+    private static readonly HashSet<string> EncodingKeys = new(StringComparer.Ordinal) { "Length", "Filter", "DecodeParms", "DL" };
+
+    /// <param name="contentHashes">
+    /// Hashes of decoded stream content by object number. Such streams are keyed by content and
+    /// by their dictionary without its encoding entries.
+    /// </param>
     /// <returns>Representative object number for every number in the graph, and the merge count.</returns>
-    public static (Dictionary<int, int> Representative, int Merged) Run(PdfFile file, ObjectGraph graph, CancellationToken ct)
+    public static (Dictionary<int, int> Representative, int Merged) Run(PdfFile file, ObjectGraph graph, IReadOnlyDictionary<int, byte[]> contentHashes, CancellationToken ct)
     {
         var parent = new Dictionary<int, int>(graph.Order.Count);
         foreach (int n in graph.Order) parent[n] = n;
@@ -57,7 +65,7 @@ internal static class Deduplicator
             };
 
             if (dict is not null && HasIdentity(dict)) continue;
-            if (obj is PdfStream st) payloadHash[number] = Compat.Sha256(st.Data.Span);
+            if (obj is PdfStream st && !contentHashes.ContainsKey(number)) payloadHash[number] = Compat.Sha256(st.Data.Span);
             candidates.Add(number);
         }
 
@@ -88,11 +96,17 @@ internal static class Deduplicator
                 if (Find(number) != number) continue;
                 sink.Clear();
                 PdfObject obj = file.GetObject(number);
-                if (obj is PdfStream s)
+                if (obj is PdfStream s && contentHashes.TryGetValue(number, out byte[]? content))
+                {
+                    sink.Write((byte)'C');
+                    sink.Write(content);
+                    serializer.WriteDictionary(sink, WithoutEncoding(s.Dictionary), skipKey: null);
+                }
+                else if (obj is PdfStream raw)
                 {
                     sink.Write((byte)'S');
                     sink.Write(payloadHash[number]);
-                    serializer.WriteDictionary(sink, s.Dictionary, skipKey: "Length");
+                    serializer.WriteDictionary(sink, raw.Dictionary, skipKey: "Length");
                 }
                 else
                 {
@@ -121,6 +135,18 @@ internal static class Deduplicator
         var representative = new Dictionary<int, int>(parent.Count);
         foreach (int n in graph.Order) representative[n] = Find(n);
         return (representative, merged);
+    }
+
+    private static PdfDictionary WithoutEncoding(PdfDictionary d)
+    {
+        var copy = new PdfDictionary(d.Count);
+        for (int i = 0; i < d.Count; i++)
+        {
+            (string key, PdfObject value) = d.EntryAt(i);
+            if (!EncodingKeys.Contains(key)) copy.Set(key, value);
+        }
+
+        return copy;
     }
 
     private readonly struct HashKey : IEquatable<HashKey>

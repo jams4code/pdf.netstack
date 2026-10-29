@@ -40,6 +40,10 @@ namespace PdfNetStack.Cli
                                         percent smaller, many times slower
               --no-object-streams       Write a classic xref table, no object streams
               --no-dedup                Do not merge identical objects
+              --no-prune                Keep resources no content uses
+              --no-compact              Do not rewrite content streams compactly
+              --no-font-merge           Do not merge subsets of one TrueType font
+              --linearize               Write a linearized file (fast web view)
               --no-recompress           Do not re-encode streams
               --no-image-predictors     Do not try PNG prediction on raw images
               --no-jpeg                 Do not re-encode JPEG images
@@ -159,8 +163,10 @@ namespace PdfNetStack.Cli
                                           $"kept by the quality gate {s.ImagesKeptByQualityGate}");
                     }
 
+                    Console.WriteLine($"resources pruned {s.ResourcesPruned}, content streams compacted {s.ContentStreamsCompacted}, " +
+                                      $"font programs merged {s.FontProgramsMerged}{(s.Linearized ? ", linearized" : "")}");
                     PhaseTimings p = s.Phases;
-                    Console.WriteLine($"analyze {p.Analyze.TotalMilliseconds:F0} ms, recompress {p.Recompress.TotalMilliseconds:F0} ms, " +
+                    Console.WriteLine($"analyze {p.Analyze.TotalMilliseconds:F0} ms, content {p.Content.TotalMilliseconds:F0} ms, recompress {p.Recompress.TotalMilliseconds:F0} ms, " +
                                       $"dedup {p.Deduplicate.TotalMilliseconds:F0} ms, write {p.Write.TotalMilliseconds:F0} ms, verify {p.Verify.TotalMilliseconds:F0} ms");
                 }
             }
@@ -553,6 +559,10 @@ namespace PdfNetStack.Cli
                     case "--exhaustive": o = o with { Compression = CompressionEffort.Exhaustive }; break;
                     case "--no-object-streams": o = o with { UseObjectStreams = false }; break;
                     case "--no-dedup": o = o with { DeduplicateObjects = false }; break;
+                    case "--no-prune": o = o with { PruneUnusedResources = false }; break;
+                    case "--no-compact": o = o with { CompactContentStreams = false }; break;
+                    case "--no-font-merge": o = o with { MergeFontSubsets = false }; break;
+                    case "--linearize": o = o with { Linearize = true }; break;
                     case "--no-recompress": o = o with { RecompressStreams = false }; break;
                     case "--no-image-predictors": o = o with { UseImagePredictors = false }; break;
                     case "--no-jpeg": o = o with { OptimizeJpegImages = false }; break;

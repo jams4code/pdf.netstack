@@ -12,12 +12,15 @@ namespace PdfNetStack.Tests;
 [TestClass]
 public sealed class PaintTests
 {
+    // These tests read the drawing operators as written, before the optimizer compacts them.
+    private static readonly PdfSaveOptions Unoptimized = new() { Optimize = false };
+
     private static readonly string Png = "data:image/png;base64," + Convert.ToBase64String(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Images", "rgb8.png")));
 
     /// <summary>The first page's content stream, decoded.</summary>
     private static string Content(string html)
     {
-        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf(html, new HtmlConverterOptions { UseSystemFonts = false }));
+        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToDocument(html, new HtmlConverterOptions { UseSystemFonts = false }).ToArray(Unoptimized));
         PdfObject? contents = doc.Resolve(doc.Pages[0].Dictionary["Contents"]);
         IEnumerable<PdfObject> parts = contents is PdfArray a ? a : [contents!];
         return string.Concat(parts.Select(p => Encoding.GetEncoding("ISO-8859-1").GetString(doc.GetStreamData((PdfStream)doc.Resolve(p)!))));

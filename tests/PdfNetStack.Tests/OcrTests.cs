@@ -10,6 +10,9 @@ namespace PdfNetStack.Tests;
 [TestClass]
 public sealed class OcrTests
 {
+    // These tests read the drawing operators as written, before the optimizer compacts them.
+    private static readonly PdfSaveOptions Unoptimized = new() { Optimize = false };
+
     private const int ScanWidth = 200;
     private const int ScanHeight = 300;
 
@@ -63,7 +66,7 @@ public sealed class OcrTests
     {
         PdfDocument doc = PdfDocument.Create();
         build(doc);
-        return PdfDocument.Open(doc.ToArray());
+        return PdfDocument.Open(doc.ToArray(Unoptimized));
     }
 
     private static PdfPoint Center(PdfPoint[] quad) => new(quad.Average(p => p.X), quad.Average(p => p.Y));
@@ -218,7 +221,7 @@ public sealed class OcrTests
         Assert.AreEqual(ScanWidth - 20, shown.Y, 0.5);
 
         // The words are written as invisible text, and a second pass leaves the pages alone.
-        PdfDocument saved = PdfDocument.Open(doc.ToArray());
+        PdfDocument saved = PdfDocument.Open(doc.ToArray(Unoptimized));
         StringAssert.Contains(Content(saved, 0), "3 Tr");
         StringAssert.Contains(Content(saved, 0), "<0062006C006F0063006B>Tj");
         PdfOcrReport again = new PdfOcr(engine).MakeSearchable(saved);

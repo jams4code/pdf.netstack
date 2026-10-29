@@ -72,8 +72,8 @@ public sealed class OptimizerTests
         b.Set(4, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]/Resources<</XObject<</Im0 6 0 R>>/Font<</F1 10 0 R>>>>/Contents 8 0 R>>");
         b.SetStream(5, imageDict, pixels);
         b.SetStream(6, imageDict, pixels);
-        b.SetStream(7, "", "q 64 0 0 64 0 0 cm /Im0 Do Q"u8.ToArray());
-        b.SetStream(8, "", "q 32 0 0 32 0 0 cm /Im0 Do Q"u8.ToArray());
+        b.SetStream(7, "", "q 64 0 0 64 0 0 cm /Im0 Do Q BT /F1 12 Tf (a) Tj ET"u8.ToArray());
+        b.SetStream(8, "", "q 32 0 0 32 0 0 cm /Im0 Do Q BT /F1 12 Tf (b) Tj ET"u8.ToArray());
         b.Set(9, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>");
         b.Set(10, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>");
         byte[] input = b.Build();
@@ -144,6 +144,7 @@ public sealed class OptimizerTests
 
         int image = b.AddStream("/Type/XObject/Subtype/Image/Width 200/Height 100/ColorSpace/DeviceRGB/BitsPerComponent 8", pixels);
         b.Set(5, $"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</XObject<</I {image} 0 R>>>>/Contents 4 0 R>>");
+        b.SetStream(4, "", "q 200 0 0 100 0 0 cm /I Do Q"u8.ToArray());
         byte[] input = b.Build();
 
         (byte[] output, PdfOptimizationResult result) = Run(input);
@@ -162,6 +163,7 @@ public sealed class OptimizerTests
         jpeg[1] = 0xD8;
         int image = b.AddStream("/Type/XObject/Subtype/Image/Width 10/Height 10/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode", jpeg);
         b.Set(5, $"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</XObject<</I {image} 0 R>>>>/Contents 4 0 R>>");
+        b.SetStream(4, "", "q 200 0 0 100 0 0 cm /I Do Q"u8.ToArray());
         b.AddStream("", Repeat("padding ", 500));
         b.Set(1, "<</Type/Catalog/Pages 2 0 R/PieceInfo<</X<</Private 11 0 R>>>>>>");
         b.SetStream(11, "", Repeat("padding ", 500));

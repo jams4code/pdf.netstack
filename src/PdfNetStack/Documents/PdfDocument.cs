@@ -38,7 +38,8 @@ public sealed record PdfSaveOptions
 /// <summary>
 /// A PDF document opened for editing or created from scratch. Pages can be added, removed,
 /// reordered, rotated and imported from other documents; metadata and bookmarks can be read
-/// and changed. Saving writes a new, single revision file.
+/// and changed. Saving writes a new, single revision file; an opened document can also save its
+/// changes as an incremental update with <see cref="SaveIncremental(Stream)"/>.
 /// </summary>
 /// <remarks>
 /// Editing a digitally signed document invalidates its signatures. Content of imported pages, including fonts, images, annotations and their
@@ -72,7 +73,18 @@ public sealed class PdfDocument
     /// <summary>Encryption of the opened document and of the saved output.</summary>
     public PdfSecurity Security { get; }
 
-    internal Dictionary<int, PdfObject> Objects { get; } = new();
+    internal ObjectStore Objects { get; private set; } = new();
+
+    // The file an opened document came from, the stream it was read from when opened on demand,
+    // and what the page tree looked like after opening: what an incremental save compares with.
+    private PdfFile? _file;
+    private Stream? _sourceStream;
+    private List<int> _openedPages = [];
+    private bool _pageTreeMatchesFile = true;
+    private readonly Dictionary<int, List<(string Key, PdfObject Value)>> _inherited = new();
+
+    // What the file holds, parsed afresh, for incremental saves to compare with.
+    private PdfFile? _baseline;
 
     internal int NextNumber { get; set; } = 1;
 
@@ -165,22 +177,68 @@ public sealed class PdfDocument
         PdfFile file = PdfFile.Open(data, maxDecodedStreamBytes);
         if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
 
-        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes };
+        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes, _file = file };
         ObjectGraph graph = ObjectGraph.Collect(file, stripThumbnails: false, stripPieceInfo: false, CancellationToken.None);
         foreach (int number in graph.Order) doc.Objects[number] = file.GetObject(number);
         doc.NextNumber = (doc.Objects.Count == 0 ? 0 : doc.Objects.Keys.Max()) + 1;
+        doc.NextNumber = Math.Max(doc.NextNumber, FirstFreeNumber(file));
+        doc.Attach(file);
+        return doc;
+    }
 
-        if (file.Trailer["Root"] is not PdfReference root || doc.Resolve(root) is not PdfDictionary catalog)
+    /// <summary>
+    /// Opens a document from a seekable stream without reading the file into memory. The
+    /// cross-reference data and the page tree are read when opening; every other object is
+    /// parsed when first used, and stream data (page content, images, fonts) is read from
+    /// <paramref name="stream"/> each time it is needed and not kept. Memory use therefore
+    /// follows what the application touches, not the size of the file: a document of any size
+    /// can be read page by page, and <see cref="SaveIncremental(Stream)"/> writes only what
+    /// changed. <see cref="ToArray(PdfSaveOptions?)"/> still builds the whole output in memory.
+    /// </summary>
+    /// <param name="stream">A readable, seekable stream positioned anywhere. It must stay open and unchanged while the document is in use, and must not be read by anyone else meanwhile. The document never disposes it.</param>
+    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
+    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> cannot be read or cannot seek.</exception>
+    /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    public static PdfDocument OpenOnDemand(Stream stream, string? password = null, long maxDecodedStreamBytes = 256L << 20)
+    {
+        Compat.ThrowIfNull(stream, nameof(stream));
+        PdfFile file = PdfFile.Open(stream, maxDecodedStreamBytes);
+        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
+
+        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes, _file = file, _sourceStream = stream };
+        doc.Objects = new ObjectStore(file);
+        doc.NextNumber = FirstFreeNumber(file);
+        doc.Attach(file);
+        return doc;
+    }
+
+    /// <summary>
+    /// The first number no object of the file uses, so objects added later never take the number
+    /// of one the file still lists, such as an object stream an incremental update must not hide.
+    /// </summary>
+    private static int FirstFreeNumber(PdfFile file)
+    {
+        long highest = file.Xref.Count == 0 ? 0 : file.Xref.Keys.Max();
+        long size = file.Trailer["Size"] is PdfNumber { IsInteger: true } n && n.IntegerValue <= highest + 1_000_000 ? n.IntegerValue : 0;
+        return (int)Math.Min(int.MaxValue / 2, Math.Max(size, highest + 1));
+    }
+
+    /// <summary>Reads the catalog, document information and page tree of an opened file.</summary>
+    private void Attach(PdfFile file)
+    {
+        if (file.Trailer["Root"] is not PdfReference root || Resolve(root) is not PdfDictionary catalog)
         {
             throw new PdfFormatException("Document catalog is missing or not a dictionary.");
         }
 
-        doc.Catalog = catalog;
-        doc.CatalogNumber = root.Number;
-        if (file.Trailer["Info"] is PdfReference info && doc.Resolve(info) is PdfDictionary) doc.InfoNumber = info.Number;
-        if (file.Resolve(file.Trailer["ID"]) is PdfArray id) doc.Id = id;
-        doc.LoadPageTree();
-        return doc;
+        Catalog = catalog;
+        CatalogNumber = root.Number;
+        if (file.Trailer["Info"] is PdfReference info && Resolve(info) is PdfDictionary) InfoNumber = info.Number;
+        if (file.Resolve(file.Trailer["ID"]) is PdfArray id) Id = id;
+        LoadPageTree();
+        _openedPages = Pages.Select(p => p.Number).ToList();
     }
 
     /// <summary>Creates a document holding all pages of the given documents, in order.</summary>
@@ -244,6 +302,216 @@ public sealed class PdfDocument
     {
         Compat.ThrowIfNull(stream, nameof(stream));
         stream.Write(ToArray(options));
+    }
+
+    /// <summary>
+    /// Saves the changes made since the document was opened as an incremental update (ISO
+    /// 32000-1, 7.5.6): the original file byte for byte, followed by the objects that changed or
+    /// were added and a cross-reference section that points back to the original's. Signatures
+    /// over the original bytes stay valid, and for a large file only the update is new data.
+    /// </summary>
+    /// <remarks>
+    /// Each object the document has read is compared with the file: it is written when anything
+    /// in it differs. New objects are written when a written object refers to them. When pages
+    /// were added, removed or reordered, the page tree is written again as one node. Nothing is
+    /// recompressed or optimized, and <see cref="PdfSaveOptions"/> does not apply.
+    /// </remarks>
+    /// <param name="output">
+    /// Receives the original file followed by the update, written from its current position.
+    /// When it is the stream given to <see cref="OpenOnDemand"/>, only the update is written, at
+    /// the end of that stream, and later saves build on the updated file.
+    /// </param>
+    /// <exception cref="InvalidOperationException">The document was created rather than opened, or has no pages.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The document is encrypted or set to be encrypted, or it was damaged and had to be rebuilt
+    /// when opened. Save such documents in full with <see cref="Save(Stream, PdfSaveOptions?)"/>.
+    /// </exception>
+    public void SaveIncremental(Stream output)
+    {
+        Compat.ThrowIfNull(output, nameof(output));
+        if (_file is null) throw new InvalidOperationException("Only an opened document can be saved incrementally.");
+        if (Security.Source is not null || Security.Target is not null) throw new NotSupportedException("Incremental saving of encrypted documents is not supported.");
+        if (_file.WasReconstructed) throw new NotSupportedException("The document was damaged and rebuilt when opened; save it in full instead.");
+
+        FinishFonts();
+        if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
+        _outlines?.WriteTo(this);
+
+        PdfFile baseline = _baseline ??= _file.Fork();
+        if (!PageTreeUnchanged(baseline))
+        {
+            var pagesNode = new PdfDictionary { ["Type"] = new PdfName("Pages") };
+            int pagesNumber = Add(pagesNode);
+            var kids = new PdfArray();
+            foreach (PdfPage page in Pages)
+            {
+                page.Dictionary.Set("Parent", new PdfReference(pagesNumber, 0));
+                kids.Items.Add(new PdfReference(page.Number, baseline.GenerationOf(page.Number)));
+            }
+
+            pagesNode.Set("Kids", kids);
+            pagesNode.Set("Count", PdfNumber.FromInteger(Pages.Count));
+            Catalog.Set("Pages", new PdfReference(pagesNumber, 0));
+        }
+
+        Dictionary<int, (PdfObject Object, int Generation)> update = ChangedObjects(baseline);
+        var trailer = new PdfDictionary();
+        trailer.Set("Root", new PdfReference(CatalogNumber, baseline.GenerationOf(CatalogNumber)));
+        if (InfoNumber is { } info && Objects.ContainsKey(info)) trailer.Set("Info", new PdfReference(info, baseline.GenerationOf(info)));
+        if (Id is not null) trailer.Set("ID", Id);
+
+        long previousSize = baseline.Trailer["Size"] is PdfNumber { IsInteger: true } size ? size.IntegerValue : 0;
+        int xrefNumber = (int)Math.Min(int.MaxValue - 1, Math.Max(Math.Max(previousSize, NextNumber), update.Count == 0 ? 0 : update.Keys.Max() + 1L));
+        NextNumber = xrefNumber + 1;
+
+        bool inPlace = ReferenceEquals(output, _sourceStream);
+        if (!inPlace)
+        {
+            const int chunk = 1 << 20;
+            for (long at = 0; at < baseline.Length; at += chunk)
+            {
+                output.Write(baseline.Source.Read(at, Math.Min(baseline.Length, at + chunk)).Span);
+            }
+        }
+
+        // Nothing changed: the file as it is already says everything.
+        if (update.Count == 0)
+        {
+            output.Flush();
+            return;
+        }
+
+        ReadOnlySpan<byte> tail = baseline.Source.Read(baseline.Length - 1, baseline.Length).Span;
+        bool needsBreak = tail.Length == 1 && tail[0] is not ((byte)'\n' or (byte)'\r');
+        long start = baseline.Length + (needsBreak ? 1 : 0);
+        byte[] section = IncrementalWriter.Write(update, trailer, start, baseline.OffsetBase, previousSize,
+            baseline.LastStartXref(), baseline.UsesXrefStreams, xrefNumber);
+
+        if (inPlace) output.Seek(0, SeekOrigin.End);
+        if (needsBreak) output.WriteByte((byte)'\n');
+        output.Write(section);
+        output.Flush();
+
+        if (inPlace)
+        {
+            // The stream now holds the update; later saves compare with it and append to it.
+            _baseline = PdfFile.Open(output, DecodeLimit);
+            foreach (int number in update.Keys) _inherited.Remove(number);
+            _openedPages = Pages.Select(p => p.Number).ToList();
+            _pageTreeMatchesFile = true;
+        }
+    }
+
+    /// <summary>True when the pages are those the file's page tree lists, in its order, under its root.</summary>
+    private bool PageTreeUnchanged(PdfFile baseline) =>
+        _pageTreeMatchesFile
+        && Pages.Select(p => p.Number).SequenceEqual(_openedPages)
+        && Catalog["Pages"] is PdfReference pages
+        && baseline.ResolveDictionary(baseline.Trailer["Root"])?["Pages"] is PdfReference original
+        && pages.Number == original.Number
+        && Pages.All(p => p.Dictionary["Parent"] is PdfReference parent && baseline.Exists(parent.Number));
+
+    /// <summary>
+    /// Objects that differ from <paramref name="baseline"/>, and the objects new to the file that
+    /// they or the trailer reach, with the generation each is written under.
+    /// </summary>
+    private Dictionary<int, (PdfObject Object, int Generation)> ChangedObjects(PdfFile baseline)
+    {
+        var update = new Dictionary<int, (PdfObject, int)>();
+        var serializer = new PdfSerializer(r => r.Number) { KeepGenerations = true };
+        var x = new ByteSink(1024);
+        var y = new ByteSink(1024);
+        var candidates = new HashSet<int>(Objects.Held);
+        candidates.UnionWith(_file!.CachedNumbers);
+        var pending = new Queue<PdfObject>();
+        foreach (int number in candidates.OrderBy(n => n))
+        {
+            if (!baseline.Exists(number) || !Objects.TryGetValue(number, out PdfObject current)) continue;
+            if (!Differs(number, current, baseline.GetObject(number))) continue;
+            update[number] = (current, baseline.GenerationOf(number));
+            pending.Enqueue(current);
+        }
+
+        foreach (int number in new[] { CatalogNumber, InfoNumber ?? -1 })
+        {
+            if (number >= 0 && !baseline.Exists(number) && Objects.TryGetValue(number, out PdfObject root) && update.TryAdd(number, (root, 0))) pending.Enqueue(root);
+        }
+
+        while (pending.Count > 0)
+        {
+            foreach (int number in References(pending.Dequeue()))
+            {
+                if (baseline.Exists(number) || update.ContainsKey(number) || !Objects.TryGetValue(number, out PdfObject added)) continue;
+                update[number] = (added, 0);
+                pending.Enqueue(added);
+            }
+        }
+
+        return update;
+
+        bool Differs(int number, PdfObject current, PdfObject original)
+        {
+            if (current is PdfStream cs)
+            {
+                if (original is not PdfStream os || cs.Version != os.Version || cs.IsDeferred != os.IsDeferred) return true;
+                return !Same(cs.Dictionary, os.Dictionary);
+            }
+
+            if (original is PdfStream) return true;
+
+            if (current is PdfDictionary page && _inherited.TryGetValue(number, out List<(string Key, PdfObject Value)>? pushed))
+            {
+                // Inherited attributes were copied onto the page when it was opened; that is no change.
+                page = Clone(page);
+                foreach ((string key, PdfObject value) in pushed)
+                {
+                    if (ReferenceEquals(page[key], value)) page.Remove(key);
+                }
+
+                current = page;
+            }
+
+            return !Same(current, original);
+        }
+
+        bool Same(PdfObject a, PdfObject b)
+        {
+            x.Clear();
+            y.Clear();
+            serializer.Write(x, a);
+            serializer.Write(y, b);
+            return x.WrittenSpan.SequenceEqual(y.WrittenSpan);
+        }
+    }
+
+    /// <summary>Numbers of the objects <paramref name="obj"/> refers to directly.</summary>
+    private static List<int> References(PdfObject obj)
+    {
+        var found = new List<int>();
+        var stack = new Stack<(PdfObject Value, int Depth)>();
+        stack.Push((obj, 0));
+        while (stack.Count > 0)
+        {
+            (PdfObject value, int depth) = stack.Pop();
+            if (depth > PdfParser.MaxNesting) continue;
+            switch (value)
+            {
+                case PdfReference r:
+                    found.Add(r.Number);
+                    break;
+                case PdfStream s:
+                    stack.Push((s.Dictionary, depth + 1));
+                    break;
+                case PdfDictionary d:
+                    for (int i = 0; i < d.Count; i++) stack.Push((d.ValueAt(i), depth + 1));
+                    break;
+                case PdfArray array:
+                    foreach (PdfObject item in array.Items) stack.Push((item, depth + 1));
+                    break;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>Saves the document to a byte array.</summary>
@@ -591,11 +859,20 @@ public sealed class PdfDocument
                 // The same page object listed twice: give the second listing its own object.
                 dict = Clone(dict);
                 pageNumber = Add(dict);
+                _pageTreeMatchesFile = false;
             }
 
             foreach ((string key, PdfObject value) in inherited)
             {
-                if (dict[key] is null) dict.Set(key, value);
+                if (dict[key] is not null) continue;
+                dict.Set(key, value);
+                if (!_inherited.TryGetValue(pageNumber, out List<(string Key, PdfObject Value)>? keys))
+                {
+                    keys = [];
+                    _inherited[pageNumber] = keys;
+                }
+
+                keys.Add((key, value));
             }
 
             Pages.Attach(new PdfPage(this, pageNumber, dict));

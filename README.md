@@ -9,9 +9,11 @@ MIT licensed, no native binaries, no dependencies on .NET 8 and later.
 
 PdfNetStack makes PDFs smaller without changing a single rendered pixel. It rewrites the file
 with compressed object streams and a compressed cross-reference stream, drops objects nothing
-points to, recompresses streams, adds PNG prediction to raw images, and merges duplicate fonts,
-images and resources. Then it reads its own output back and proves, object by object, that the
-document is the same as the one you gave it. If anything is off, you get your original bytes back.
+points to and resources no page uses, recompresses streams, rewrites content streams compactly,
+adds PNG prediction to raw images, and merges duplicate fonts, images and resources, including
+separately embedded subsets of one font. Then it reads its own output back and proves, object by
+object, that the document is the same as the one you gave it. If anything is off, you get your
+original bytes back.
 
 ```csharp
 using PdfNetStack;
@@ -128,6 +130,17 @@ doc.Save("contract-final.pdf");                // optimized and verified by defa
 
 PdfDocument merged = PdfDocument.Merge([PdfDocument.Open("a.pdf"), PdfDocument.Open("b.pdf")]);
 foreach (PdfDocument single in merged.Split()) { /* one document per page */ }
+```
+
+Large files can be read without loading them, and changes saved as an incremental update that
+leaves the original bytes, and any signatures over them, untouched:
+
+```csharp
+using var stream = new FileStream("scan.pdf", FileMode.Open, FileAccess.ReadWrite);
+PdfDocument big = PdfDocument.OpenOnDemand(stream);  // reads the xref and page tree, nothing else
+string text = big.Pages[41].ExtractText();           // reads that page's content and fonts only
+big.Info.Title = "Scanned archive";
+big.SaveIncremental(stream);                         // appends the changed objects in place
 ```
 
 Named destinations, the anchors bookmarks and links point at by name, list, resolve and rename
@@ -499,6 +512,7 @@ pdfnetstack batch ./corpus                  # measure only, writes nothing
 pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
 pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
 pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
+pdfnetstack optimize in.pdf out.pdf --linearize         # fast web view
 pdfnetstack inspect in.pdf                  # where the bytes go
 pdfnetstack verify original.pdf other.pdf   # check any tool's output for equivalence
 
@@ -522,7 +536,11 @@ pdfnetstack decrypt in.pdf out.pdf --password o
 | Stream recompression | Removes ASCIIHex/ASCII85 layers, turns LZW and RunLength into Flate, recompresses Flate at zlib level 9, keeps a result only when smaller | Yes |
 | Image prediction | Tries PNG predictors on raw images of 8 bits or less per component | Yes |
 | JPEG re-encoding | Rebuilds each JPEG's Huffman tables for that image, writes progressive and restart-marked JPEGs as plain baseline, drops segments PDF readers ignore (Exif, XMP, embedded ICC, comments). Works on the DCT coefficients, which stay identical | Yes |
-| Deduplication | Merges byte identical fonts, images, ICC profiles, resource dictionaries and arrays, iterating until merges stop | Yes |
+| Deduplication | Merges identical fonts, images, ICC profiles, resource dictionaries and arrays, streams compared by what they decode to, iterating until merges stop | Yes |
+| Unused resources | Drops fonts, images, forms, graphics states, patterns, shadings, color spaces and property lists that no content using the resource dictionary names | Yes |
+| Content streams | Rewrites page, form, pattern and appearance content with minimal white space, canonical numbers and no comments; the same operators and operands | Yes |
+| Font subsets | Merges separately embedded subsets of one TrueType font (identity mapped composite fonts) into one program, when no glyph any page shows changes | Yes |
+| Linearization | `Linearize`: first page first, two cross-reference sections and a hint stream (Annex F), for fast web view | Yes, opt-in |
 | Compact syntax | Minimal separators, canonical numbers, null entries dropped | Yes |
 | Thumbnails, PieceInfo | Optional removal of page thumbnails and application private data | No, opt-in |
 | JPEG requantization | `JpegQuality`: coarser quantization at a libjpeg quality, never finer than the image's own; soft masks stay lossless | No, opt-in |
@@ -559,8 +577,12 @@ must have the same keys and values, arrays the same items, references must line 
 stream must decode to identical bytes with identical remaining filters. JPEG images are
 compared by DCT coefficient, so a re-encoded image passes only if every coefficient is the
 same. Encoding keys (`/Length`, `/Filter`, `/DecodeParms`) are the only other differences it
-accepts. With `JpegQuality` set, a JPEG image may also differ by exactly the requantization the
-optimizer applies, checked coefficient by coefficient, and by nothing else. A downsampled or
+accepts, besides the structural passes, each checked against its own analysis of the source: a
+resource entry may be missing only where no content can name it, a content stream may differ
+only in layout and must read as the same tokens, and a merged font program must keep every glyph
+the document shows byte for byte. With `JpegQuality` set, a JPEG image may also differ by
+exactly the requantization the optimizer applies, checked coefficient by coefficient, and by
+nothing else. A downsampled or
 converted image must keep its components and aspect, may not grow, and is decoded and compared
 with the source resampled to its new size: mean color, a coarse thumbnail and SSIM, at least
 `MinImageSsim` when set.
@@ -608,6 +630,10 @@ object streams have little left to gain losslessly.
 | `UseObjectStreams` | true | Off writes a classic xref table |
 | `ObjectsPerStream` | 200 | Larger compresses better, smaller loads single pages faster |
 | `DeduplicateObjects` | true | |
+| `PruneUnusedResources` | true | Resource entries no content names |
+| `CompactContentStreams` | true | Same tokens, fewer bytes |
+| `MergeFontSubsets` | true | Needs `DeduplicateObjects` |
+| `Linearize` | false | Fast web view. No object streams, so often larger; kept anyway for input not yet linearized |
 | `RecompressStreams` | true | |
 | `UseImagePredictors` | true | |
 | `OptimizeJpegImages` | true | Lossless JPEG re-encoding |

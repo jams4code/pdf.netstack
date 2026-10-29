@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Optimizer, lossless structural passes, each proven by the equivalence check against its own
+  analysis of the source (docs/FIDELITY.md gives the rules):
+  - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color
+    spaces and property lists that no content using the resource dictionary names, following
+    forms, tiling patterns, Type 3 glyph procedures, soft masks and annotation appearances, and
+    inherited and shared resource dictionaries. Anything it cannot read for certain is kept.
+  - `CompactContentStreams` rewrites content streams with minimal white space, canonical numbers,
+    shortest strings and no comments; inline image data is copied exactly.
+  - `MergeFontSubsets` merges subsets of one TrueType font embedded separately, as merged
+    documents carry them, into one program when no glyph any page shows changes.
+  - Deduplication compares streams by their decoded content, so differently encoded copies of a
+    font or image merge.
+  - `Linearize` (opt-in) writes a linearized file (Annex F) with page offset, shared object and
+    outline hint tables, laid out the way qpdf checks it. Inherited page attributes move onto the
+    pages. `OptimizationStatistics` reports `ResourcesPruned`, `ContentStreamsCompacted`,
+    `FontProgramsMerged` and `Linearized`; the command line tool takes `--linearize`,
+    `--no-prune`, `--no-compact` and `--no-font-merge`.
+- `PdfDocument.OpenOnDemand(Stream)` opens a document on a seekable stream without reading it into
+  memory: objects are parsed when first used and stream data is read when asked for, with 64 bit
+  offsets. `PdfDocument.SaveIncremental(Stream)` saves the changes since opening as an incremental
+  update, appending in place when given the source stream; existing signatures stay valid.
+- `PdfEquivalence.FindDifference` accepts the structural passes above and inherited page
+  attributes moved onto pages.
+- `tools/make_optimizer_samples.py` and `tools/measure_optimizer.py` measure each pass on
+  synthetic files and check linearized output with qpdf when it is installed.
 - Annotations: `PdfAnnotationCollection.AddStamp` (the fourteen standard stamps, or a custom one
   from a `PdfForm` or a drawing callback), `AddInk`, `AddSquare`, `AddCircle`, `AddLine` (with
   `PdfLineEnding` at either end), `AddPolygon`, `AddPolyline` and `AddFileAttachment` (the file
