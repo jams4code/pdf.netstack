@@ -66,9 +66,9 @@ Only the optional OCR add-on uses native code (ONNX Runtime).
 | Encryption | 1.0 | Yes |
 | PDF/A | 1.1: PDF/A-2b, 2u, 3b, 3u | Yes |
 | PDF/UA | Tagged PDF from HTML (1.1) | PDF/UA-1 |
-| E-invoice metadata (ZUGFeRD, Factur-X) | Attachments for PDF/A-3 (1.1); the metadata is on the roadmap | Yes, EN 16931 |
+| E-invoice metadata (ZUGFeRD, Factur-X) | 1.1: invoice attachment and XMP metadata with PDF/A-3 | Yes, EN 16931 |
 | Forms | 1.1: create, fill, flatten | Not listed |
-| Digital signatures | 1.1: PAdES B-B | Not listed |
+| Digital signatures | 1.1: PAdES B-B to B-LTA | Not listed |
 | Text extraction | 1.1 | Not listed |
 
 Sources for the QuestPDF column: [repository](https://github.com/QuestPDF/QuestPDF),

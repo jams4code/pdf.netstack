@@ -1,6 +1,6 @@
 ---
 title: Add images to PDF in C# and .NET
-description: Place JPEG, PNG, GIF and SVG images on PDF pages in C#, and reuse pages of other PDFs as watermarks, letterheads and n-up sheets. MIT licensed.
+description: Place JPEG, PNG, GIF, BMP, TIFF, WebP and SVG images on PDF pages in C#, fit them to boxes, and reuse pages of other PDFs as watermarks. MIT licensed.
 since: '1.1'
 sidebar:
   label: Images
@@ -31,11 +31,21 @@ the page. Each image is written once per document, however often it is drawn.
 | JPEG | Copied without recompression. EXIF orientation, Adobe CMYK, ICC profiles and JFIF density are honored |
 | PNG | All color types and bit depths, interlaced or not. Simple PNGs keep their compressed data; an alpha channel or tRNS transparency becomes a soft mask. ICC profiles and pixel density are kept |
 | GIF | GIF 87a and 89a, the first frame, interlaced or not, with its transparent color as a soft mask |
+| BMP | 1 to 32 bits per pixel, RLE4 and RLE8, bit fields, top down rows, alpha, or an embedded JPEG or PNG. Decoded and Flate compressed; palette images keep their palette |
+| TIFF | Strips and tiles, chunky and planar; uncompressed, PackBits, LZW and Deflate with the predictor, CCITT modified Huffman, Group 3 and Group 4, JPEG; bilevel, gray, palette, RGB, CMYK and YCbCr samples of 1 to 16 bits, associated and unassociated alpha, BigTIFF. A page stored as one strip of fax or JPEG data is embedded as is; other pages are decoded and Flate compressed |
+| WebP | Lossy and lossless, with alpha, the first frame of an animation. Lossy WebP decodes to the same pixels as libwebp |
 | SVG | `PdfSvg`: drawn as PDF vectors, see below |
 
-`PdfImage.Load` takes a path, a stream or a byte array, and reports `PixelWidth`, `PixelHeight`,
-`HorizontalResolution`, `VerticalResolution` and `HasTransparency`. An unsupported file raises a
-`FormatException`.
+`PdfImage.Load` takes a path, a stream or a byte array, and reports its `Format`, `PixelWidth`,
+`PixelHeight`, `HorizontalResolution`, `VerticalResolution` and `HasTransparency`. Alpha becomes a
+soft mask. Decoding is bounded, and an unsupported or damaged file raises a `FormatException`.
+
+```csharp sample="images-fit.cs" region="formats"
+```
+
+A TIFF file can hold several pages. `PdfImage.GetPageCount` counts them and `PdfImage.Load(path,
+page)` loads one, from 0; other formats have only page 0. The
+[TIFF to PDF recipe](/recipes/tiff-to-pdf/) puts every page of a TIFF on its own PDF page.
 
 ## Size and placement
 
@@ -45,6 +55,28 @@ y)` draws it at its natural size: its pixels at the resolution the file records,
 
 ```csharp sample="images-place.cs" region="size"
 ```
+
+## Fit, alignment and opacity
+
+`DrawImage(image, x, y, width, height, fit, alignment, opacity)` fits an image into a box the way
+CSS `object-fit` does, places it inside the box where it does not fill it, clips whatever spills
+over, and fades it as a whole on top of its own alpha.
+
+```csharp sample="images-fit.cs" region="fit"
+```
+
+![One photo fitted into four boxes with Fill, Contain, Cover and None, then faded to 40 percent](/previews/images-fit.webp)
+
+| `PdfImageFit` | Effect |
+|---|---|
+| `Fill` | Stretched to the box, aspect ratio ignored |
+| `Contain` | Scaled to fit inside the box, aspect ratio kept: the whole image shows |
+| `Cover` | Scaled to cover the box, aspect ratio kept: what spills over is clipped |
+| `None` | At its natural size, clipped to the box |
+| `ScaleDown` | At its natural size, or as `Contain` when that is smaller |
+
+`PdfImageAlignment` places the image: `TopLeft`, `Top`, `TopRight`, `Left`, `Center` (the default),
+`Right`, `BottomLeft`, `Bottom` or `BottomRight`.
 
 Images follow the current transform and clip of the canvas, so `RotateTransform`, `ScaleTransform`
 and `IntersectClip` work on them as on shapes. See [Drawing](/guides/drawing/).
@@ -90,8 +122,7 @@ Draw a page of a letterhead PDF underneath the content of every page with the ba
 
 ## Limits
 
-- Image input is JPEG, PNG, GIF and SVG. BMP, TIFF and WebP are on the [roadmap](/roadmap/).
-- GIF animations contribute their first frame only.
+- GIF and WebP animations contribute their first frame only.
 - SVG filters, masks, patterns, external references and animation are not drawn.
 - `PdfForm.FromPage` does not carry annotations, which are not part of a page's content. It throws
   when the source document does not permit copying its content.
@@ -101,4 +132,5 @@ Draw a page of a letterhead PDF underneath the content of every page with the ba
 - [Drawing](/guides/drawing/)
 - [Edit pages](/guides/edit-pages/): import whole pages instead of placing them as drawings
 - [Extract images](/guides/extract-images/): read images back out of a PDF
-- API: [PdfImage](/api/pdfnetstack-drawing/pdfimage/), [PdfSvg](/api/pdfnetstack-drawing/pdfsvg/), [PdfForm](/api/pdfnetstack-drawing/pdfform/), [PdfGraphics](/api/pdfnetstack-drawing/pdfgraphics/)
+- [Convert a TIFF to PDF](/recipes/tiff-to-pdf/)
+- API: [PdfImage](/api/pdfnetstack-drawing/pdfimage/), [PdfImageFit](/api/pdfnetstack-drawing/pdfimagefit/), [PdfImageAlignment](/api/pdfnetstack-drawing/pdfimagealignment/), [PdfSvg](/api/pdfnetstack-drawing/pdfsvg/), [PdfForm](/api/pdfnetstack-drawing/pdfform/), [PdfGraphics](/api/pdfnetstack-drawing/pdfgraphics/)

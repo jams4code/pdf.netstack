@@ -86,9 +86,10 @@ using PdfNetStack;
   `src/site.config.mjs`), else a `#:project` line for a clone of the repository.
 - The `since`, `preview` and `run` lines and the region markers never show on the site.
 - `scripts/run-samples.mjs` runs each sample in its own folder under `samples/work`, seeded with
-  the inputs `scripts/make_sample_inputs.py` and `samples/_inputs.cs` write: synthetic PDFs,
-  images and open fonts, nothing third party. A sample that fails to build, exits non-zero or
-  writes a PDF that does not open again fails the run. `SAMPLES_WORK=<dir>` uses another work
+  the inputs `scripts/make_sample_inputs.py` and `samples/_inputs.cs` write (synthetic PDFs,
+  images and open fonts) and the test suite's synthetic variable font. Nothing is third party.
+  A sample that fails to build, exits non-zero or writes a PDF that does not open again fails the
+  run. `SAMPLES_WORK=<dir>` uses another work
   folder; pass file names to run only those samples.
 - A page shows a preview with `![alt text](/previews/<name>.webp)`. `scripts/previews.py` renders
   them with PDFium; the images are committed so a local build works without running the samples,

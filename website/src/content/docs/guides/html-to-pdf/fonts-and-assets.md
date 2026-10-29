@@ -90,6 +90,7 @@ See [Fonts and text](/guides/fonts-and-text/) for the font engine itself.
 ```html
 <img class="photo" src="photo.jpg" alt="Landscape photograph">
 <img src="logo.png" alt="Logo" width="90">
+<img src="photo.webp" alt="The photograph as WebP" width="64">
 <svg width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#2563eb"/></svg>
 ```
 
@@ -99,7 +100,9 @@ See [Fonts and text](/guides/fonts-and-text/) for the font engine itself.
 | PNG | Every color type and bit depth, interlaced or not, transparency kept |
 | GIF | The first frame, with its transparent color |
 | SVG | Drawn as PDF vectors, sharp at any zoom, without filters, masks or patterns. Works in `<img>`, in CSS backgrounds and inline as `<svg>` |
-| WebP | Not supported yet |
+| BMP | 1 to 32 bits per pixel, with alpha |
+| TIFF | The first page; fax and JPEG strips, LZW, Deflate and PackBits, 1 to 16 bit samples |
+| WebP | Lossy and lossless, with alpha, the first frame of an animation |
 
 Images work in `<img>`, `background-image`, `list-style-image` and `content: url()`. Each image is
 written once per document however often it appears. Intrinsic sizes follow the pixel density a
@@ -117,7 +120,6 @@ images and fonts inside the HTML and need no files at all:
 
 ## Limits
 
-- WebP images do not load yet.
 - SVG filters, masks and patterns are not drawn.
 - A resource larger than 64 MiB is not loaded.
 - With `UseSystemFonts` off, text needs a supplied font that covers its characters: the standard

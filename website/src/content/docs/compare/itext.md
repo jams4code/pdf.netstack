@@ -26,7 +26,7 @@ pdfCalligraph adds scripts such as Arabic, Hebrew and Thai
 output equivalent to its source before returning it ([compression](/guides/compress-pdf/),
 [fidelity](/concepts/fidelity/)). It edits, merges, splits and encrypts documents (1.0, on
 NuGet). Version 1.1, in the main branch and not yet on NuGet, adds a drawing canvas, embedded
-OpenType fonts with Arabic and right to left shaping, forms, PAdES B-B signatures, PDF/A-2 and 3
+OpenType fonts with Arabic and right to left shaping, forms, PAdES B-B to B-LTA signatures, PDF/A-2 and 3
 output, text and image extraction, and HTML and CSS to PDF.
 
 ## Licensing in plain words
@@ -52,7 +52,7 @@ Read each license yourself, or ask your counsel, before you decide. This page is
 | Edit and merge | 1.0 | Yes |
 | Lossless compression, every output verified | 1.0 | Not listed |
 | Forms | 1.1: create, fill, flatten | Yes |
-| Digital signatures | 1.1: PAdES B-B, sign and verify | Yes |
+| Digital signatures | 1.1: PAdES B-B to B-LTA, sign and validate | Yes |
 | PDF/A | 1.1: PDF/A-2b, 2u, 3b, 3u | Yes |
 | PDF/UA | Tagged PDF from HTML (1.1) | Yes |
 | Text extraction | 1.1 | Yes |

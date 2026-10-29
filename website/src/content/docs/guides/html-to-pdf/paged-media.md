@@ -41,7 +41,7 @@ over two pages with its header repeated, a landscape annex and a watermark on ev
 ```csharp sample="html-paged.cs" region="css"
 ```
 
-![First page of the report: brand name in the top margin, a table with a blue header row, a translucent DRAFT watermark and a page number footer](/previews/html-paged.webp)
+![First page of the report: brand name in the top margin, a table with a blue header row, a DRAFT watermark behind the table and a page number footer](/previews/html-paged.webp)
 
 ## Page size and margins
 
@@ -89,8 +89,11 @@ width:
 .annex { page: wide }
 ```
 
-A change of page name starts a new page. The `page` property is read on the children of `body`,
-where sections usually sit.
+A change of page name forces a page break, and the content after it is laid out at its own page
+type's width. The `page` property works on any block in the block flow, nested or not: in the
+report above, the annex section sits inside another `div`. A box that spans the break is sliced,
+its top edge before the break and its bottom edge after. Inside a flex, grid or table container
+`page` has no effect, and the container stays on one page type.
 
 ## Running headers from the document
 
@@ -133,23 +136,27 @@ tr { break-inside: avoid }
 - `break-inside: avoid` keeps a row, a figure or a block on one page when it fits.
 - `orphans` and `widows` set the minimum number of lines a paragraph leaves at the bottom of a
   page and carries to the top of the next. Both default to 2.
+- A forced break before the first content or after the last adds no empty page, so
+  `break-before: page` on the first element still starts the document on page one.
 
 ## Repeated table headers and fixed boxes
 
 The rows of a `thead` repeat at the top of every page a table continues on; the report above
 shows its header on both pages of the table. A `position: fixed` box repeats on every page, which
-suits letterheads and watermarks:
+suits letterheads and watermarks. With a negative `z-index` it paints under the content of every
+page, so a watermark sits behind the table:
 
 ```css
-.draft { position: fixed; top: 110mm; left: 25mm; font-size: 90pt;
-         color: rgb(30 58 138 / 0.1); transform: rotate(-30deg) }
+.draft { position: fixed; z-index: -1; top: 110mm; left: 25mm; font-size: 90pt;
+         color: #e0e7ff; transform: rotate(-30deg) }
 ```
 
 Repeated table headers and fixed boxes are marked as artifacts in the tagged output.
 
 ## Limits
 
-- The `page` property is read on the children of `body`, not on nested elements.
+- The `page` property breaks between blocks of the block flow only: inside a flex, grid or table
+  container it has no effect.
 - An inline running element shows on every page rather than from where it stands.
 - `target-counter()` and `leader()`, used for tables of contents with page numbers, are not
   supported.

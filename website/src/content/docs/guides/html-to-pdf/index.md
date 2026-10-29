@@ -110,13 +110,14 @@ them; set `Bookmarks = false` to write none.
   `border`, `font`).
 - **CSS.** The cascade with `!important`, inheritance, `var()`, Selectors Level 4, `@media print`,
   `@import`, `@font-face`, `@page`, `calc()`, `min()`, `max()`, `clamp()` and CSS Color 4.
-- **Layout.** Block, inline, table, flex and grid layout, floats, relative, absolute and fixed
-  positioning, inline blocks, lists, counters and generated content.
+- **Layout.** Block, inline, table, flex and grid layout (with named lines, dense packing,
+  `subgrid`, `auto-fill` and `auto-fit`), floats, relative, absolute and fixed positioning in
+  `z-index` stacking order, inline blocks, lists, counters and generated content.
 - **Paged media.** Page sizes and margins, margin boxes, page counters, named pages, running
   headers and footers, forced and avoided breaks, repeated table headers. See
   [Paged media](/guides/html-to-pdf/paged-media/).
-- **Text.** Unicode line breaking, right to left and Arabic text with contextual shaping,
-  kerning, ligatures and fallback fonts per character.
+- **Text.** Unicode line breaking, right to left and Arabic text with contextual shaping, Indic
+  scripts, kerning, ligatures and fallback fonts per character.
 
 The full list, module by module, is on [CSS support](/guides/html-to-pdf/css-support/).
 
@@ -131,12 +132,12 @@ markup ends in a finite document rather than a hang or a crash.
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.
-- No multi-column layout or vertical writing modes yet. Grid has no dense packing, column flow,
-  subgrid or named lines.
-- Images: JPEG, PNG, GIF (the first frame) and SVG (drawn as vectors, without filters, masks or
-  patterns). WebP does not load yet.
-- The `page` property is read on the children of `body`, where sections usually sit. An inline
-  running element shows on every page rather than from where it stands.
+- No multi-column layout or vertical writing modes yet.
+- Images: JPEG, PNG, GIF, BMP, TIFF and WebP (the first frame of animations), and SVG drawn as
+  vectors without filters, masks or patterns.
+- The `page` property takes no effect inside flex, grid and table containers. An inline running
+  element shows on every page rather than from where it stands.
+- Variable fonts draw their default instance: `font-weight` does not choose an instance yet.
 - Box shadow blur is approximated, `text-shadow` blur is not drawn, and group opacity is applied
   per element.
 

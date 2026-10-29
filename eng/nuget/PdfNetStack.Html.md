@@ -153,8 +153,8 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.
 - No multi-column layout or vertical writing modes yet.
-- Images: JPEG, PNG, GIF (the first frame) and SVG (drawn as vectors, without filters, masks or
-  patterns). WebP does not load yet.
+- Images: JPEG, PNG, GIF (the first frame), BMP, TIFF (the first page), WebP (the first frame)
+  and SVG (drawn as vectors, without filters, masks or patterns).
 - The `page` property breaks between blocks of the block flow. Inside a flex, grid or table
   container it takes no effect, and the container stays on one page type. An inline running
   element shows on every page rather than from where it stands.

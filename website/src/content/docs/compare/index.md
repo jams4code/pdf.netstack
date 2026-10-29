@@ -29,11 +29,11 @@ other products.
 | Native binaries in the package | None | None | Yes: Skia based layer and qpdf | None | None |
 | Create PDFs | 1.1: canvas, fonts, paragraphs | Yes | Yes, fluent layout API | Yes | Basic, ASCII text only |
 | Edit pages, merge, split | 1.0 | Yes | Merge, extract pages, overlays | Yes | Merge, very limited editing |
-| Compress existing PDFs | 1.0, lossless, every output verified | Not listed | Not listed | Not listed | Not listed |
+| Compress existing PDFs | 1.0, lossless, every output verified; 1.1 adds opt-in image downsampling and JPEG conversion | Not listed | Not listed | Not listed | Not listed |
 | HTML to PDF | 1.1, `PdfNetStack.Html` | Not listed | No, by design | pdfHTML add-on | Not listed |
 | Forms | 1.1: create, fill, flatten | Not listed | Not listed | Yes | Read only |
-| Digital signatures | 1.1: PAdES B-B | Yes, since 6.2.0 | Not listed | Yes | Not listed |
-| PDF/A | 1.1: 2b, 2u, 3b, 3u | Documented | Yes | Yes | Not listed |
+| Digital signatures | 1.1: PAdES B-B to B-LTA, validation against your trust anchors | Yes, since 6.2.0 | Not listed | Yes | Not listed |
+| PDF/A | 1.1: 2b, 2u, 3b, 3u; Factur-X and ZUGFeRD | Documented | Yes | Yes | Not listed |
 | Encryption | 1.0: AES-256, AES-128 | Yes | Yes | Yes | Opens protected files |
 | Text extraction | 1.1: text, words, letters | Not listed | Not listed | Yes | Yes, with layout analysis |
 | OCR | Add-on, not on NuGet | Not listed | Not listed | pdfOCR add-on | Not listed |
@@ -46,7 +46,7 @@ other products.
 | License | MIT | LGPL-3.0 | MIT | MIT | AGPL-3.0 or commercial | Apache-2.0 |
 | What it runs | Managed .NET code | A native program on Qt WebKit | A downloaded Chrome or Firefox | A bundled Node.js and downloaded browsers | A native interpreter | A native C++ library and command line tool |
 | HTML to PDF | 1.1, no JavaScript | Yes | Yes | Yes | No, reads PostScript and PDF | No, transforms existing PDFs |
-| Compress or restructure PDFs | 1.0, lossless, verified | Not listed | Not listed | Not listed | Yes, by re-creating the PDF | Yes, content preserving |
+| Compress or restructure PDFs | 1.0, lossless, verified; 1.1 adds opt-in lossy image options | Not listed | Not listed | Not listed | Yes, by re-creating the PDF | Yes, content preserving |
 | Render PDF pages to images | No | Not listed | Not listed | Not listed | Yes | No |
 
 The wkhtmltopdf repository was archived by its owner on 2023-01-02.

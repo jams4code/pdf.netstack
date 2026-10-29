@@ -1,4 +1,5 @@
-"""Writes the synthetic images the code samples read: photo.jpg and logo.png.
+"""Writes the synthetic images the code samples read: photo.jpg, photo.webp, photo-large.png,
+logo.png, logo.bmp and scan.tif (two pages of bilevel fax data).
 
 Development tool only. Requires Pillow (see scripts/requirements.txt).
 Usage: python scripts/make_sample_inputs.py <output-dir>
@@ -7,7 +8,7 @@ Usage: python scripts/make_sample_inputs.py <output-dir>
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 
 def photo(path):
@@ -36,8 +37,37 @@ def logo(path):
     image.save(path, "PNG")
 
 
+def large_photo(source, path):
+    """The photo at 1600x1000 with grain, as a lossless PNG: what a raw scan or screenshot of a
+    photograph looks like inside a PDF, for the lossy image options."""
+    image = Image.open(source).convert("RGB").resize((1600, 1000), Image.Resampling.BICUBIC)
+    grain = Image.effect_noise((1600, 1000), 12).convert("RGB")
+    image = ImageChops.add(image, grain, scale=1.0, offset=-24)
+    image.save(path, "PNG")
+
+
+def scan(path):
+    """Two A4 pages at 100 dpi, bilevel, CCITT Group 4 compressed, one strip per page, in one
+    TIFF file: the layout scanners write and PdfImage embeds without decoding."""
+    pages = []
+    for number in (1, 2):
+        page = Image.new("1", (827, 1169), 1)
+        draw = ImageDraw.Draw(page)
+        draw.rectangle((80, 80, 747, 180), outline=0, width=4)
+        for line in range(24):
+            y = 240 + line * 36
+            draw.rectangle((80, y, 80 + (line * 97 + number * 131) % 500 + 160, y + 12), fill=0)
+        pages.append(page)
+    pages[0].save(path, "TIFF", compression="group4", save_all=True, append_images=pages[1:], dpi=(100, 100),
+                  tiffinfo={278: 1169})
+
+
 if __name__ == "__main__":
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
     photo(out / "photo.jpg")
     logo(out / "logo.png")
+    Image.open(out / "photo.jpg").save(out / "photo.webp", "WEBP", quality=80)
+    Image.open(out / "logo.png").save(out / "logo.bmp", "BMP")
+    large_photo(out / "photo.jpg", out / "photo-large.png")
+    scan(out / "scan.tif")

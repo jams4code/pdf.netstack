@@ -48,8 +48,9 @@ object.
 
 `GetStreamData` undoes the Flate, LZW, ASCIIHex, ASCII85 and RunLength filters and the PNG and
 TIFF predictors. Image codecs (DCTDecode, JPXDecode, JBIG2Decode, CCITTFaxDecode) are left in
-place, so an image stream comes back as its JPEG or JPEG 2000 file. Damaged data, or data over the
-document's decode limit, raises `PdfFormatException`.
+place, so an image stream comes back as its JPEG or JPEG 2000 file; for pixels, use
+[`PdfPageImage.Decode`](/guides/extract-images/). Damaged data, or data over the document's decode
+limit, raises `PdfFormatException`.
 
 ## Write
 

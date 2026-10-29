@@ -28,7 +28,10 @@ In the sample, the optimized copy is equivalent and the copy with a page removed
 
 This is the check the optimizer runs on its own output. Encoding keys such as `/Length`, `/Filter`
 and `/DecodeParms` may differ. JPEG images must match coefficient by coefficient; pass
-`allowJpegRequantization: true` to accept requantized JPEGs. The method and its limits are on the
+`allowJpegRequantization: true` to accept requantized JPEGs. From 1.1, an overload that also takes
+`minImageSsim` accepts images that another tool downsampled or converted to JPEG, when they match
+the source resampled to their size; soft masks, masks and stencil images must still match exactly.
+The method and its limits are on the
 [fidelity](/concepts/fidelity/) page.
 
 ## Related

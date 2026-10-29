@@ -48,8 +48,14 @@ It needs the .NET 8 or later runtime. `pdfnetstack --help` prints every command 
 ```bash
 pdfnetstack optimize <input.pdf> <output.pdf> [options]
 pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
+pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
+pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
 pdfnetstack optimize in.pdf out.pdf --json              # the full result as JSON
 ```
+
+The lossy image options (`--max-dpi`, `--to-jpeg`, `--min-ssim`) and `--progressive` and
+`--exhaustive` are in the main branch and ship with 1.1; the 1.0.0 tool on NuGet does not have
+them. The reason line names every lossy change.
 
 Prints the disposition, the sizes, the saving and the time, the reason, and for an optimized file
 the object counts and the time per phase. The output file is always written: the verified
@@ -92,11 +98,15 @@ The library equivalent is `PdfInspector.Inspect`.
 ```bash
 pdfnetstack verify <original.pdf> <candidate.pdf>
 pdfnetstack verify original.pdf other.pdf --jpeg-quality 60   # accept JPEG requantization
+pdfnetstack verify original.pdf other.pdf --min-ssim 0.95     # accept downsampled and converted images (1.1)
 ```
 
 Runs the equivalence check the optimizer runs on itself, on the output of any tool. Prints
 `Equivalent.` and exits 0, or `Different:` with the first difference and exits 1. With
 `--jpeg-quality`, JPEG images may also differ by exactly the requantization the optimizer applies.
+With `--min-ssim`, downsampled and converted images are accepted when they keep their components
+and aspect, are no larger, keep their mean colors and reach that SSIM against the original
+resampled to their size; requantized images must then reach it too.
 See [Fidelity and verification](/concepts/fidelity/).
 
 ## merge
@@ -174,12 +184,17 @@ Optimizer options apply to `optimize`, `batch` and, where they make sense, to `v
 | Option | Effect | Library option |
 |---|---|---|
 | `--fast`, `--balanced` | Faster Flate levels (default: maximum) | `Compression` |
+| `--exhaustive` | 1.1. Exhaustive Flate search for archival jobs: a few percent smaller, many times slower | `Compression = Exhaustive` |
 | `--no-object-streams` | Classic xref table, no object streams | `UseObjectStreams = false` |
 | `--no-dedup` | Do not merge identical objects | `DeduplicateObjects = false` |
 | `--no-recompress` | Do not re-encode streams | `RecompressStreams = false` |
 | `--no-image-predictors` | Do not try PNG prediction on raw images | `UseImagePredictors = false` |
 | `--no-jpeg` | Do not re-encode JPEG images | `OptimizeJpegImages = false` |
-| `--jpeg-quality <1-100>` | Requantize JPEG images (lossy) | `JpegQuality` |
+| `--jpeg-quality <1-100>` | Requantize JPEG images, and the quality of new JPEGs (lossy) | `JpegQuality` |
+| `--max-dpi <n>` | 1.1. Downsample images drawn above 1.5 times n dpi to n (lossy) | `MaxImageDpi` |
+| `--to-jpeg` | 1.1. Re-encode photographic raw images as JPEG at `--jpeg-quality` (lossy) | `ConvertImagesToJpeg` |
+| `--min-ssim <0-1>` | 1.1. Keep any image whose lossy change falls below this SSIM | `MinImageSsim` |
+| `--progressive` | 1.1. Write JPEG progressively when that is smaller (lossless) | `ProgressiveJpeg` |
 | `--no-verify` | Skip the equivalence proof (not recommended) | `Verify = false` |
 | `--allow-incremental` | Flatten files with incremental updates | `AllowIncrementalUpdates` |
 | `--allow-repaired` | Rewrite damaged files that needed repair | `AllowRepairedFiles` |
@@ -217,7 +232,9 @@ is refused by the [safety model](/concepts/safety-model/), is a success: the out
 ## Limits
 
 - The tool works on files only; it has no stdin or stdout mode.
-- Lossy compression covers JPEG images only.
+- Lossy options handle 8 bit gray, RGB and CMYK images, raw or JPEG; `--to-jpeg` needs
+  `--jpeg-quality`. JPEG 2000, JBIG2, CCITT, 16 bit, indexed, Lab, Separation and DeviceN images
+  keep their resolution.
 - Each document is held in memory while it is processed. For large image heavy files, lower
   `--threads` or `--jobs`, see [Memory and performance](/concepts/memory-and-performance/).
 

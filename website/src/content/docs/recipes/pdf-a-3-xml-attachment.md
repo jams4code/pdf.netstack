@@ -1,33 +1,34 @@
 ---
-title: PDF/A-3 with an XML attachment in C#
-description: Write a PDF/A-3b invoice with an embedded XML file in .NET, the structure e-invoice formats build on. MIT licensed, pure C#.
+title: Create a Factur-X invoice PDF in C#
+description: Make a Factur-X or ZUGFeRD e-invoice in .NET, a PDF/A-3 file with the invoice XML attached and described in its metadata. MIT licensed, pure C#.
 since: '1.1'
 sidebar:
-  label: PDF/A-3 with XML
+  label: Factur-X invoice
 ---
 
-Save a document as PDF/A-3 with an XML file attached, as e-invoices carry their data.
+Turn an invoice PDF and its XML into one Factur-X or ZUGFeRD hybrid invoice.
 
 ## Short answer
 
-Add the XML with `doc.Attachments.Add`, then save with `Conformance = PdfConformance.PdfA3B`.
-Saving checks what cannot be repaired, such as fonts that are not embedded, and lists every problem
-at once. It then adds an sRGB output intent, XMP metadata that matches the document information,
-and the associated file entries PDF/A-3 requires.
+Draw or convert the invoice, attach its XML with `PdfInvoice.Attach` and the profile it follows,
+then save as PDF/A-3b. The XML is checked for well formedness and embedded as `factur-x.xml`
+with the relationship the profile calls for, and saving writes the Factur-X XMP metadata with its
+extension schema.
 
-```csharp sample="recipe-pdf-a-3-xml-attachment.cs"
+```csharp sample="recipe-pdf-a-3-xml-attachment.cs" region="invoice"
 ```
 
 ## Notes
 
 - PDF/A needs embedded fonts, so the sample draws with an OpenType font rather than one of the
-  standard 14.
-- Factur-X and ZUGFeRD metadata is not written yet; it is on the [roadmap](/roadmap/). The
-  attachment and the PDF/A-3 structure are in place.
-- PDF/A-2b and 2u are available too; PDF/A-2 does not allow attachments.
+  standard 14. An invoice made with [HTML to PDF](/guides/html-to-pdf/) works the same way when
+  its fonts are embedded.
+- Profiles: `Minimum`, `BasicWL`, `Basic`, `EN16931`, `Extended` and `XRechnung`. PdfNetStack does
+  not validate the XML against the profile's rules; check the invoice data before you attach it.
+- To sign the invoice, sign the saved bytes last, see [Signatures](/guides/signatures/).
 
 ## Related
 
-- [PDF/A](/guides/pdf-a/)
+- [PDF/A](/guides/pdf-a/): levels, checks and the invoice options
 - [Convert an HTML invoice to PDF](/recipes/html-invoice-to-pdf/)
-- API: [PdfSaveOptions](/api/pdfnetstack/pdfsaveoptions/), [PdfAttachmentCollection](/api/pdfnetstack/pdfattachmentcollection/)
+- API: [PdfInvoice](/api/pdfnetstack/pdfinvoice/), [PdfInvoiceProfile](/api/pdfnetstack/pdfinvoiceprofile/), [PdfSaveOptions](/api/pdfnetstack/pdfsaveoptions/)

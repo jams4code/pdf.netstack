@@ -60,7 +60,36 @@ viewers show the AcroForm values.
 ```
 
 `Flatten` draws every field's current appearance into its page and removes the form. The values
-stay visible and printable but can no longer be edited. Hidden fields are dropped.
+stay visible and printable but can no longer be edited. Hidden fields are dropped. Each appearance
+is placed as annotation flattening places it, see
+[Annotations](/guides/annotations/#flatten-annotations), so a single field can also be flattened
+with `page.Annotations.Flatten(widget)`.
+
+## Formatted values
+
+Many forms format what a field shows with a format action, a call to one of the standard Acrobat
+form functions. PdfNetStack reads that call and does the formatting in C#: no JavaScript runs.
+The generated appearance shows the formatted value, and `PdfTextField.FormattedText` returns it,
+while `Text` keeps the value as stored.
+
+```csharp sample="forms-travel.cs" region="format"
+```
+
+`AFNumber_Format`, `AFPercent_Format`, `AFDate_Format`, `AFDate_FormatEx`, `AFTime_Format`,
+`AFTime_FormatEx` and `AFSpecial_Format` are understood, red for negative numbers included. A
+script that is anything else, or a value the format cannot read, shows the value as it is.
+
+## Fields in imported pages
+
+Fields travel with their pages. `Pages.Import`, `PdfDocument.Merge` and `Split` copy each widget's
+field and its parent fields into the target form, with the source form's default appearance,
+alignment, resources and calculation order.
+
+```csharp sample="forms-travel.cs" region="import"
+```
+
+A top level field whose name the target form already uses is renamed with the first free suffix,
+`_2`, `_3` and so on, so merging the same form twice gives two independent sets of fields.
 
 ## Creating fields
 
@@ -109,8 +138,8 @@ To sign a document, see [Signatures](/guides/signatures/).
 ## Limits
 
 - XFA forms are not supported: they are dropped when values change.
-- Importing fields together with their pages, and JavaScript formatting actions, are on the
-  [roadmap](/roadmap/).
+- No JavaScript runs. Format actions are read as calls to the standard Acrobat functions above;
+  keystroke, validation and calculation scripts are ignored.
 - New fields use the standard fonts, so their text is limited to what those fonts cover.
 
 ## Related

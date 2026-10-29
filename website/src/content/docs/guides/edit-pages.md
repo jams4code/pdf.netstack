@@ -77,7 +77,9 @@ same page may appear twice:
 ```
 
 Annotations travel with their page and are copied fresh for every import. Links to pages imported
-in the same call are remapped to the copies; links to pages left behind become empty. A document
+in the same call are remapped to the copies; links to pages left behind become empty. Since 1.1,
+form fields travel with their pages too, renamed with a `_2` suffix when the target form already
+has the name, see [Forms](/guides/forms/#fields-in-imported-pages). A document
 opened with only its user password gives up its pages only when its permissions allow copying.
 
 ## Metadata

@@ -1,6 +1,6 @@
 ---
 title: Extract text from PDF files in C#
-description: Read PDF text in reading order in .NET, with words and letters, their bounds, baselines, fonts and sizes. Columns, right to left and rotated text. MIT.
+description: Read PDF text in reading order in .NET, with words and letters, their bounds, fonts and sizes. Columns, right to left, rotated and CJK text. MIT.
 since: '1.1'
 sidebar:
   label: Extract text
@@ -96,9 +96,21 @@ from top to bottom.
 
 For each glyph, the text comes from the font's ToUnicode map, else from its encoding and glyph
 names (the Adobe Glyph List, `uniXXXX` and `uXXXX` names), else from an embedded TrueType cmap.
-ToUnicode maps with ranges, ligatures, surrogate pairs and codes of 1 to 4 bytes, embedded CMaps,
-and the Identity and Unicode predefined CMaps are read. A glyph with no Unicode mapping reads as
-U+FFFD.
+ToUnicode maps with ranges, ligatures, surrogate pairs and codes of 1 to 4 bytes, and embedded
+CMaps with `usecmap`, are read. A glyph with no Unicode mapping reads as U+FFFD.
+
+Chinese, Japanese and Korean text in composite fonts reads without a ToUnicode map too. Adobe's
+predefined CMaps for the Adobe-Japan1, GB1, CNS1, Korea1 and KR collections (all 180 of them,
+including every CJK CMap of ISO 32000-1 Table 118, such as 90ms-RKSJ-H, GBK-EUC-H, B5pc-H,
+KSCms-UHC-H and the UCS2, UTF16, UTF8 and UTF32 forms) split the codes and give the CIDs, so widths
+and vertical metrics follow the CMap. Adobe's CID to Unicode tables then give the text, chosen by
+the CMap's collection or the font's /CIDSystemInfo (ISO 32000-1, 9.10.2). The data is packed into
+one Brotli stream per collection, 196 KB in all, and decompressed on first use. An embedded CMap
+that uses a predefined one inherits its collection and keeps its own writing mode.
+
+A simple font without an /Encoding entry reads its codes through the built-in encoding of its
+embedded CFF program (FontFile3, Type1C or OpenType): the Standard and Expert encodings and custom
+encodings, with glyphs named through predefined or custom charsets.
 
 ## Coordinates
 
@@ -113,9 +125,8 @@ bounded and never throw, and at most 500,000 letters are read per page.
 
 ## Limits
 
-- Composite fonts with a predefined CJK CMap other than Identity and the Unicode CMaps (such as
-  90ms-RKSJ-H) rely on the font's ToUnicode map for text and use default widths for spacing.
-  Adobe CJK CMaps are on the [roadmap](/roadmap/).
+- Predefined CMaps outside Adobe's five CJK collections (such as the deprecated Hojo ones) give no
+  CIDs, so their fonts use default widths.
 - Text without a Unicode mapping reads as U+FFFD.
 - Scanned pages have no text until OCR adds it: see [OCR](/guides/ocr/).
 - At most 500,000 letters are read per page.

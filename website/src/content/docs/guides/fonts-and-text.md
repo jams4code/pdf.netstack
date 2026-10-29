@@ -1,6 +1,6 @@
 ---
 title: Fonts and text in PDF with C# and .NET
-description: Draw text in PDFs from C# with the 14 standard fonts or embedded, subset TrueType, OpenType and WOFF2 fonts, wrapped paragraphs and Arabic. MIT licensed.
+description: Draw text in PDFs from C# with standard fonts or embedded, subset OpenType, WOFF2 and variable fonts, wrapped paragraphs, Arabic and Indic. MIT licensed.
 since: '1.1'
 sidebar:
   label: Fonts and text
@@ -9,8 +9,10 @@ faq:
     a: Yes. Embedded fonts get a ToUnicode map, so text selects, copies and searches in any script the font covers. Shaped and right to left text also carries ActualText, so it copies in logical order.
   - q: Does embedding a font make the file large?
     a: No. Only the glyphs you draw are embedded, as a subset. The 14 standard fonts are not embedded at all, so a page of text in them weighs about 2 KB.
-  - q: Can I write Arabic or Hebrew?
-    a: Yes. Text runs through the Unicode bidirectional algorithm and an OpenType shaper, so Arabic letters join, ligatures form and mixed directions are ordered. Use a font that has the script's glyphs.
+  - q: Can I write Arabic, Hebrew or Hindi?
+    a: Yes. Text runs through the Unicode bidirectional algorithm and an OpenType shaper with Arabic and Indic shaping, so Arabic letters join, Devanagari syllables reorder and mixed directions are ordered. Use a font that has the script's glyphs.
+  - q: Are variable fonts supported?
+    a: Yes. PdfOpenTypeFont.GetInstance gives a named instance or any axis values of a TrueType or CFF2 variable font, embedded as a static font.
 ---
 
 Text on PDF pages: the standard fonts, embedded TrueType and OpenType fonts, wrapped and justified
@@ -71,6 +73,36 @@ ZapfDingbats. Viewers supply them, so nothing is embedded.
 - A font whose license forbids embedding (the OS/2 fsType flags) is refused when first drawn. A
   damaged file raises `FontFormatException`.
 
+## Variable fonts
+
+A variable font holds a range of styles along design axes such as weight (`wght`) or width
+(`wdth`). Drawn as loaded, it shows its default instance. `IsVariable`, `VariationAxes` and
+`NamedInstances` describe it:
+
+```csharp sample="fonts-variable.cs" region="axes"
+```
+
+`GetInstance(name)` gives a named instance, such as "Bold", and `GetInstance(axisValues)` any
+point in the design space. Axes left out keep their default, and values outside an axis's range
+are clamped to it. Each instance is a `PdfOpenTypeFont` embedded as a static font, subset like any
+other.
+
+```csharp sample="fonts-variable.cs" region="instances"
+```
+
+![The same words drawn from one variable font at the Thin, Regular, 550 and Bold weights](/previews/fonts-variable.webp)
+
+- TrueType outlines move by their gvar deltas, advances come from HVAR, font metrics from MVAR, and
+  control values from cvar, through the avar mapping. The weight and width classes and the italic
+  angle follow the axes.
+- CFF2 fonts load at their default instance and are converted to CID keyed CFF for embedding;
+  instances apply their blends.
+- Shaping applies the variation deltas of kerning and mark positions, and GSUB and GPOS feature
+  variations, so an instance can swap glyphs.
+- Outlines, advances and metrics match the fontTools instancer, and shaping matches HarfBuzz, on
+  the synthetic fixtures and variable fonts the test suite compares. Damaged variation data raises
+  `FontFormatException`.
+
 ## Font collections
 
 `PdfFontCollection` finds fonts by family, weight and style the way CSS matches them. Adding a file
@@ -128,6 +160,34 @@ matches HarfBuzz on the fonts the test suite compares.
 In a right to left paragraph, `Start` alignment means the right edge. Shaped and right to left
 text carries ActualText, so it copies and searches in logical order.
 
+### Kashida justification
+
+With `Kashida = true` and `Justify` alignment, justified Arabic lines elongate joined letters
+with tatweel before the spaces widen: one elongation per word, up to three tatweel widths, at the
+point Arabic typography prefers. Tatweels carry no text, so copying gives the original words. A
+font without a tatweel glyph justifies with spaces only. It is off by default.
+
+```csharp sample="fonts-text.cs" region="kashida"
+```
+
+## Indic scripts
+
+Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam are shaped
+per Microsoft's script development specifications: syllables are found, the base consonant, reph
+and pre-base matras reorder, the font's basic and presentation forms apply in order, and broken
+clusters get a dotted circle. Fonts built to the old (deva) and the new (dev2) specification both
+work. The shaper matches HarfBuzz on a synthetic Devanagari and Bengali fixture and on a font
+covering all nine scripts. Draw with a font that covers the script, through `DrawString`, `DrawText` or a fallback in `PdfTextStyle.Fallbacks`.
+
+## Unicode normalization
+
+The shaper normalizes text as HarfBuzz does. A character the font lacks is decomposed into ones it
+has, marks are sorted into canonical order, and a base and a mark are composed when the font has the
+composite glyph. Spaces and the non-breaking hyphen draw with the space and hyphen glyphs when the
+font has no glyph of their own. `CanRender`, font fallback and HTML text use the same coverage
+rules, so "é" typed as e plus a combining accent draws in a font that only has the precomposed
+letter.
+
 ## Text that continues on the next page
 
 `PdfTextLayout.Create` measures a paragraph without drawing it. Each line reports its `Top`,
@@ -139,9 +199,10 @@ text carries ActualText, so it copies and searches in logical order.
 
 ## Limits
 
-- CFF2 fonts are not supported yet. Variable fonts draw their default instance.
-- Indic and other complex shapers, kashida justification and dictionary hyphenation are on the
-  [roadmap](/roadmap/). Lines are filled greedily.
+- `PdfFontCollection` and HTML do not choose variable font instances yet: they draw a variable
+  font at its default instance. Use `GetInstance` for other styles.
+- Southeast Asian scripts (the Universal Shaping Engine), Khmer, Myanmar, Thai and Hangul shapers,
+  and dictionary hyphenation are on the [roadmap](/roadmap/). Lines are filled greedily.
 - Standard fonts cover Windows-1252 plus up to 37 further characters per font and document.
 
 ## Related
@@ -149,4 +210,4 @@ text carries ActualText, so it copies and searches in logical order.
 - [Drawing](/guides/drawing/)
 - [HTML to PDF](/guides/html-to-pdf/): CSS layout with `@font-face` and web fonts
 - [PDF/A](/guides/pdf-a/): archival output needs embedded fonts
-- API: [PdfFont](/api/pdfnetstack-fonts/pdffont/), [PdfStandardFont](/api/pdfnetstack-fonts/pdfstandardfont/), [PdfOpenTypeFont](/api/pdfnetstack-fonts/pdfopentypefont/), [PdfFontCollection](/api/pdfnetstack-fonts/pdffontcollection/), [PdfParagraph](/api/pdfnetstack-drawing/pdfparagraph/), [PdfTextStyle](/api/pdfnetstack-drawing/pdftextstyle/), [PdfTextLayout](/api/pdfnetstack-drawing/pdftextlayout/)
+- API: [PdfFont](/api/pdfnetstack-fonts/pdffont/), [PdfStandardFont](/api/pdfnetstack-fonts/pdfstandardfont/), [PdfOpenTypeFont](/api/pdfnetstack-fonts/pdfopentypefont/), [PdfFontAxis](/api/pdfnetstack-fonts/pdffontaxis/), [PdfFontCollection](/api/pdfnetstack-fonts/pdffontcollection/), [PdfParagraph](/api/pdfnetstack-drawing/pdfparagraph/), [PdfTextStyle](/api/pdfnetstack-drawing/pdftextstyle/), [PdfTextLayout](/api/pdfnetstack-drawing/pdftextlayout/)

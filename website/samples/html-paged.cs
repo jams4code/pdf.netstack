@@ -22,8 +22,8 @@ const string Css = """
 
     body { font-family: sans-serif; font-size: 10pt }
     .brand { position: running(brand); text-align: right; font-size: 8pt; font-weight: bold; color: #1e3a8a }
-    .draft { position: fixed; top: 110mm; left: 25mm; font-size: 90pt;
-             color: rgb(30 58 138 / 0.1); transform: rotate(-30deg) }
+    .draft { position: fixed; z-index: -1; top: 110mm; left: 25mm; font-size: 90pt;
+             color: #e0e7ff; transform: rotate(-30deg) }
 
     h1 { string-set: chapter content(text); color: #1e3a8a }
     .chapter + .chapter { break-before: page }
@@ -54,7 +54,7 @@ for (int i = 1; i <= 6; i++)
     html.Append($"<h2>Topic {i}</h2><p>{string.Concat(Enumerable.Repeat("The next quarter brings new orders, steady margins and a wider range of products. ", 6))}</p>");
 }
 html.Append("</section>");
-html.Append("<section class=\"annex\"><h1>Annex</h1><p>This section is laid out on a landscape page of its own.</p></section>");
+html.Append("<div class=\"back-matter\"><section class=\"annex\"><h1>Annex</h1><p>This section is laid out on a landscape page of its own.</p></section></div>");
 html.Append("</body></html>");
 
 PdfDocument doc = HtmlConverter.ConvertToDocument(html.ToString());

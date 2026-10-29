@@ -8,7 +8,7 @@ faq:
   - q: Are JPEG images re-encoded when extracted?
     a: No. GetEncodedData returns a DCTDecode image as the JPEG file stored in the PDF, byte for byte once general compression is undone.
   - q: Which image encodings can be decoded to pixels?
-    a: Raw samples of 1 to 16 bits, JPEG, CCITT fax (Group 3 and 4) and JBIG2. JPEG 2000 images come back encoded.
+    a: Raw samples of 1 to 16 bits, JPEG, JPEG 2000, CCITT fax (Group 3 and 4) and JBIG2.
 ---
 
 Find the images on a page, where they land and at what resolution, and save them as files.
@@ -58,17 +58,20 @@ images. The same XObject drawn twice appears twice, once per placement.
 
 `Decode()` returns a `PdfBitmap`: rows top to bottom, `Format` `Gray8` or `Rgb24`, with `Width`,
 `Height`, `Stride` and `Pixels`. `SavePng(path)`, `SavePng(stream)` and `ToPng()` write it as PNG.
-It returns null for an encoding not decoded yet (JPEG 2000) or a color space it does not support.
+It returns null for an unknown encoding or a color space it does not support.
 
 | Input | Decoded |
 |---|---|
 | Raw samples | 1 to 16 bits per component |
 | JPEG | Inverse DCT, upsampling and color conversion as libjpeg does them, within two steps per sample |
+| JPEG 2000 | JP2 files and raw codestreams (ITU-T T.800 part 1): every progression order, precincts, layers, tiles, ROI, the 5/3 and 9/7 wavelets, RCT and ICT, 1 to 16 bit components, JP2 palettes and channel definitions. Lossless images decode bit exact, lossy ones within one step of OpenJPEG |
 | CCITT fax | Group 3 one and two dimensional, Group 4, bit exact with libtiff |
 | JBIG2 | Generic, refinement, text and halftone regions, with JBIG2Globals |
 | Color spaces | DeviceGray, DeviceRGB, DeviceCMYK, CalGray, CalRGB, ICCBased, Indexed, Lab, Separation and DeviceN |
 
-The Decode array is applied, and stencil masks come back black where they paint.
+The Decode array is applied, and stencil masks come back black where they paint. For a JPEG 2000
+image, the color space in the image dictionary wins; without one, the JP2 header's applies, as
+ISO 32000-1, 7.4.9 says.
 
 ## Damaged and hostile files
 
@@ -77,10 +80,10 @@ data raises `PdfFormatException`; damaged page content is read as far as it goes
 
 ## Limits
 
-- JPEG 2000 images come back encoded (`GetEncodedData`). Decoding them is on the
-  [roadmap](/roadmap/).
 - Soft masks and transparency are not applied: an image with an alpha channel decodes without
-  it.
+  it, and neither is a JPEG 2000 image's own alpha (SMaskInData).
+- JPEG 2000 ICC profiles count only for their number of components, and HTJ2K (JPEG 2000 part
+  15) and part 2 extensions are not supported.
 - Separation and DeviceN colors other than a Type 2 tint transform are approximated as gray.
 - Rendering whole pages to images is out of scope.
 

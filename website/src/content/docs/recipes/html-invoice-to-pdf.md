@@ -29,5 +29,5 @@ runs, and nothing is fetched from the network.
 ## Related
 
 - [HTML to PDF](/guides/html-to-pdf/)
-- [PDF/A-3 with an XML attachment](/recipes/pdf-a-3-xml-attachment/)
+- [Create a Factur-X invoice](/recipes/pdf-a-3-xml-attachment/)
 - API: [HtmlConverter](/api/pdfnetstack-html/htmlconverter/), [HtmlConverterOptions](/api/pdfnetstack-html/htmlconverteroptions/)

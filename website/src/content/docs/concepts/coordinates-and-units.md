@@ -37,7 +37,7 @@ per inch.
 | API | Origin |
 |---|---|
 | `PdfPage.CreateGraphics()` and every `PdfGraphics` method | Top left corner of the media box, y down |
-| `page.Annotations.AddLink`, `AddNote`, `AddTextMarkup`, `AddFreeText` | Same as the canvas |
+| Every `page.Annotations.Add...` method: links, notes, markup, free text, stamps, shapes, lines, ink, attachments | Same as the canvas |
 | `doc.Form.AddTextField` and the other field methods | Same as the canvas |
 | `PdfForm.CreateGraphics()` | Top left corner of the form |
 | `PdfTextLayout` lines (`Top`, `Baseline`, `Left`) | Top left corner of the laid out paragraph |

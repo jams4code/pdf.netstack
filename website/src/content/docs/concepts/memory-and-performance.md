@@ -45,6 +45,8 @@ took about 5 seconds with all cores and peaked at a working set of about 690 MB.
 | `Compression = CompressionEffort.Maximum` (default) | zlib level 9 |
 | `Compression = CompressionEffort.Balanced` | zlib level 6. On the reference corpus it cut total time by about a third for about 2% larger output |
 | `Compression = CompressionEffort.Fast` | zlib level 1, for throughput bound batch jobs |
+| `Compression = CompressionEffort.Exhaustive` (1.1) | An optimal parsing Deflate search, kept only where it beats level 9. On synthetic files it saved 3 to 5% more on text, scans and photographs, for 2 to 150 times the CPU time |
+| `MaxImageDpi`, `ConvertImagesToJpeg`, `MinImageSsim` (1.1) | The lossy image options decode the images they consider to pixels, resample and encode them, and the proof decodes them again, so they cost time and memory the lossless passes do not. Without them the optimizer never decodes pixels |
 | `Verify = false` | Skips the equivalence proof. Only for inputs a validated pipeline already checked |
 | `ObjectsPerStream` (default 200) | Larger compresses better, smaller lets viewers load single pages faster |
 

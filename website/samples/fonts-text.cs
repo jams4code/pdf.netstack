@@ -51,6 +51,13 @@ var rtl = new PdfParagraph { Direction = PdfTextDirection.RightToLeft }
 g.DrawText(rtl, 40, 140 + layout.Height + 20, 300);          // start aligned: on the right
 #endregion
 
+#region kashida
+// Justified Arabic lines elongate one join per word with tatweel before spaces widen.
+var justified = new PdfParagraph { Direction = PdfTextDirection.RightToLeft, Alignment = PdfTextAlignment.Justify, Kashida = true }
+    .Add("هذا نص عربي يضبط على الجانبين بالكشيدة، فتطول الحروف المتصلة قبل أن تتسع المسافات بين الكلمات.", arabicStyle);
+g.DrawText(justified, 40, 420, 300);
+#endregion
+
 #region metrics
 double size = 11;
 Console.WriteLine($"Paragraph: {layout.Lines.Count} lines, {layout.Height:F1} points tall");

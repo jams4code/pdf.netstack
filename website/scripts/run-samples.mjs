@@ -70,7 +70,8 @@ if (!existsSync(join(website, '../src/PdfNetStack/bin/Release'))) {
   process.exit(1);
 }
 
-// Inputs: images, fonts from the npm font packages, then the generated documents.
+// Inputs: images, fonts from the npm font packages and the test fixtures, then the generated
+// documents.
 rmSync(work, { recursive: true, force: true });
 mkdirSync(join(inputs, 'fonts'), { recursive: true });
 const images = spawnSync(python, [join(website, 'scripts/make_sample_inputs.py'), inputs], { stdio: 'inherit' });
@@ -78,6 +79,8 @@ if (images.status !== 0) process.exit(1);
 for (const [name, from] of Object.entries(FONTS)) {
   copyFileSync(join(website, 'node_modules', from), join(inputs, 'fonts', name));
 }
+// The repository's synthetic variable font, from tools/make_variable_font_fixtures.py.
+copyFileSync(join(website, '../tests/PdfNetStack.Tests/Fixtures/Fonts/Test-Variable.ttf'), join(inputs, 'fonts', 'Variable.ttf'));
 const made = await runSample('_inputs.cs', inputs);
 if (made.code !== 0) {
   console.error(made.output);

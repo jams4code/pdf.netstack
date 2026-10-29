@@ -20,7 +20,7 @@ export const GET: APIRoute = async () => {
   const lines = [
     '# PdfNetStack',
     '',
-    '> PdfNetStack is an MIT licensed PDF library and command line tool for .NET, written in pure C# by Jamal Abdelkhalek at JADEV. It compresses PDFs losslessly and proves every output equivalent to its source, edits, merges, splits and encrypts documents, and, from version 1.1, draws pages, embeds fonts, fills and creates forms, signs (PAdES B-B), writes PDF/A, extracts text and images, and converts HTML and CSS to PDF without a browser. No native binaries, no dependencies on .NET 8 and later.',
+    '> PdfNetStack is an MIT licensed PDF library and command line tool for .NET, written in pure C# by Jamal Abdelkhalek at JADEV. It compresses PDFs losslessly and proves every output equivalent to its source, edits, merges, splits and encrypts documents, and, from version 1.1, draws pages, embeds fonts, fills and creates forms, signs and validates (PAdES B-B to B-LTA), writes PDF/A and Factur-X invoices, extracts text and images, downsamples images on request, and converts HTML and CSS to PDF without a browser. No native binaries, no dependencies on .NET 8 and later.',
     '',
     `- NuGet: \`PdfNetStack\` and \`PdfNetStack.Tool\` 1.0.0 (${NUGET}). Version 1.1 features are in the main branch and marked as not yet on NuGet.`,
     `- Source: ${REPO}`,

@@ -31,7 +31,10 @@ rendered identically to its original with PDFium at 150 DPI. The run took about 
 - **Render check.** Independent of the verifier: both files rendered with PDFium at 150 DPI,
   compared pixel for pixel, with page count, geometry and extracted text per page.
 
-The figures are those published with version 1.0.0, in October 2026.
+The figures are those published with version 1.0.0, in October 2026. They cover the lossless
+passes only. The lossy image options and `CompressionEffort.Exhaustive` of 1.1 were measured on
+synthetic files made by `tools/make_lossy_corpus.py`, not on this corpus; measuring them on a
+public corpus is on the [roadmap](/roadmap/).
 
 ## Results
 

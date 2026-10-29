@@ -31,6 +31,7 @@ string html = """
       <img class="photo" src="photo.jpg" alt="Landscape photograph">
       <div class="row">
         <img src="logo.png" alt="Logo" width="90">
+        <img src="photo.webp" alt="The photograph as WebP" width="64">
         <svg width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#2563eb"/></svg>
         <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' rx='8' fill='%2314b8a6'/%3E%3C/svg%3E" alt="">
         <span class="tag">Inter from WOFF2</span>
@@ -46,7 +47,7 @@ string html = """
 string folder = Path.GetFullPath(".") + Path.DirectorySeparatorChar;
 var options = new HtmlConverterOptions
 {
-    BaseUri = new Uri(folder),                           // fonts/, photo.jpg and logo.png resolve here
+    BaseUri = new Uri(folder),                           // fonts/, photo.jpg, logo.png and photo.webp resolve here
     UseSystemFonts = false,                              // only @font-face and the standard 14 fonts
     ResourceLoader = uri =>
     {

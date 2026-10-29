@@ -21,9 +21,8 @@ are decoded to 8 bit gray or RGB pixels with `Decode` and saved as PNG.
 
 - An image drawn on several pages is listed on each of them. `HorizontalResolution` and
   `VerticalResolution` give the dots per inch at which it is drawn.
-- `Decode` handles raw samples, JPEG, CCITT fax and JBIG2. JPEG 2000 images come back encoded
-  through `GetEncodedData`, and soft masks are not applied. `Decode` returns null for JPEG 2000
-  and for unsupported color spaces.
+- `Decode` handles raw samples, JPEG, JPEG 2000, CCITT fax and JBIG2. Soft masks are not applied,
+  and `Decode` returns null for an unsupported color space.
 
 ## Related
 

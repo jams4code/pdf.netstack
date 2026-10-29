@@ -6,7 +6,7 @@ sidebar:
   label: CSS support
 faq:
   - q: Does PdfNetStack.Html support flexbox and CSS grid?
-    a: Yes. Flexbox with wrap, gap, grow, shrink, alignment and order, and grid with fr tracks, minmax(), repeat(), named areas and auto-placement. Grid has no dense packing, column flow, subgrid or named lines yet.
+    a: Yes. Flexbox with wrap, gap, grow, shrink, alignment and order, and grid with fr tracks, minmax(), repeat() with auto-fill and auto-fit, named areas and lines, row and column auto-placement with dense packing, and subgrid.
   - q: Are @supports, @keyframes and animations supported?
     a: No. Rules that only matter on screen, such as @keyframes and @supports, are skipped. Print layout does not need them.
 ---
@@ -25,7 +25,7 @@ modes and no JavaScript.
 ```csharp sample="html-layout.cs" region="css"
 ```
 
-![A page laid out with a grid: a sidebar with a radial gradient, three cards in a wrapping flex row, a floated figure with a rotated badge, and numbered steps](/previews/html-layout.webp)
+![A page laid out with a grid: a sidebar with a radial gradient, three cards in a wrapping flex row, a floated figure with a rotated badge, a grid gallery with a spanning item, a subgrid table and numbered steps](/previews/html-layout.webp)
 
 ## Cascade and values
 
@@ -70,22 +70,22 @@ modes and no JavaScript.
 | Block | Margin collapsing, `box-sizing`, min and max sizes, `overflow` clipping |
 | Inline | Unicode line breaking, `text-align` with `justify`, `text-indent`, `white-space`, `vertical-align` (every value), soft hyphens, `overflow-wrap`, `word-break` |
 | Floats | `float`, `clear`, text wrapping around floats |
-| Positioning | `relative`, `absolute`, `fixed` (repeated on every page), `z-index` |
+| Positioning | `relative`, `absolute`, `fixed` (repeated on every page), `z-index` in stacking order: positioned boxes, flex and grid items with a `z-index`, and boxes with opacity below one or a transform start a stacking context; a negative `z-index` paints under the context's content |
 | Tables | Both border models, `rowspan` and `colspan`, fixed and automatic widths, captions, header and footer groups, header rows repeated on every page |
 | Flexbox | Direction, wrap, `gap`, grow, shrink and basis, `justify-content`, `align-items`, `align-self`, `align-content`, auto margins, `order` |
-| Grid | `fr`, `auto`, `min-content`, `max-content`, `minmax()`, `repeat()` with counts and `auto-fill`, implicit tracks, placement by lines, spans and named areas, row-major auto-placement, alignment |
+| Grid | `fr`, `auto`, `min-content`, `max-content`, `minmax()`, `repeat()` with counts, `auto-fill` and `auto-fit` (empty tracks collapse); line names in track lists and `repeat()`, placement by line, name, `span name` and named areas with their `-start` and `-end` lines; implicit tracks on both sides; `grid-auto-flow` with `row`, `column` and `dense`; `subgrid` on rows, columns or both; the `grid-template` and `grid` shorthands; alignment |
 | Other | `inline-block`, `inline-flex`, `inline-grid`, `flow-root`, `display: contents`, `display: none`, list items with markers |
-| Not supported | Multi-column layout, vertical writing modes, grid dense packing, column flow, subgrid and named lines |
+| Not supported | Multi-column layout, vertical writing modes |
 
 ## Text and fonts
 
 | Feature | Support |
 |---|---|
 | Font selection | `font-family` lists, `font-weight`, `font-style`, `font-size` keywords and lengths, the `font` shorthand |
-| Shaping | Kerning, ligatures, Arabic joining and vowel marks, matching HarfBuzz on the fonts compared in tests |
+| Shaping | Kerning, ligatures, Arabic joining and vowel marks, Indic scripts, Unicode normalization, matching HarfBuzz on the fonts compared in tests |
 | Direction | `direction`, `unicode-bidi`, `dir`, with the Unicode bidirectional algorithm |
 | Spacing and case | `letter-spacing`, `word-spacing`, `text-transform`, `line-height`, `tab-size` |
-| Decoration | `text-decoration` underline, overline and line-through, in solid, double, dotted and dashed, with color and thickness; `text-shadow` without blur |
+| Decoration | `text-decoration` underline, overline and line-through, in solid, double, dotted, dashed and wavy, with color and thickness; `text-shadow` without blur |
 | Not supported | `font-variant-*`, `font-feature-settings`, `font-stretch`, `hyphens: auto` (dictionary hyphenation), `text-overflow` |
 
 ## Generated content and lists
@@ -112,7 +112,7 @@ modes and no JavaScript.
 | Feature | Support |
 |---|---|
 | Breaks | `break-before`, `break-after`, `break-inside`, the legacy `page-break-*` properties, `orphans`, `widows` |
-| Named pages | `page` on the children of `body` |
+| Named pages | `page` on any block in the block flow; a change of page name forces a break. No effect inside flex, grid and table containers |
 | Running content | `string-set` and `string()`, `position: running()` and `element()`, `counter(page)` and `counter(pages)` |
 | Bookmarks | `bookmark-level` and `bookmark-label`; headings get levels by default |
 | Not supported | `target-counter()`, `leader()`, footnotes |
@@ -120,11 +120,11 @@ modes and no JavaScript.
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.
-- Images: JPEG, PNG, GIF (the first frame) and SVG without filters, masks or patterns. WebP does
-  not load yet.
+- Images: JPEG, PNG, GIF, BMP, TIFF and WebP (the first frame of animations), and SVG without
+  filters, masks or patterns.
 - An inline running element shows on every page rather than from where it stands.
-- The roadmap lists the next HTML and CSS items: the `page` property on nested elements, and grid
-  dense packing, column flow, subgrid and named lines.
+- `font-weight` and `font-variation-settings` do not choose a variable font instance yet; that is
+  on the [roadmap](/roadmap/).
 
 ## Related
 

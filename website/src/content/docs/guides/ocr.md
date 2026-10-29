@@ -148,7 +148,8 @@ itself, so its native runtime is copied next to the application.
 - A page is read when its scan is one image covering at least half of the page, upright or turned
   by quarter turns. Pages whose scan is made of several images are on the
   [roadmap](/roadmap/).
-- The scan must decode: JPEG 2000 scans are not read yet.
+- The scan must decode to pixels: raw samples, JPEG, JPEG 2000, CCITT fax or JBIG2, in a color
+  space [image extraction](/guides/extract-images/) supports.
 - Vector art is not rasterized; only the scan image is read.
 - Latin and Arabic script only.
 - Not on NuGet yet. A models package, then `PdfNetStack.Ocr` on NuGet, are on the roadmap.

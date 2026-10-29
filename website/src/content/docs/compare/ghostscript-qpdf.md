@@ -39,9 +39,11 @@ requantization is opt-in. It also edits, merges, splits and encrypts (1.0, on Nu
 Ghostscript rebuilds the document from what it interprets. That allows changes such as image
 downsampling, and the result is a new document that should look the same as the original.
 
-qpdf and PdfNetStack keep the document's content and change how it is stored. They cannot shrink
-images by resampling them. PdfNetStack adds a proof: every rewrite is compared to its source, and
-signed, encrypted and damaged files are returned unchanged by default
+qpdf and PdfNetStack keep the document's content and change how it is stored. qpdf does not
+resample images. PdfNetStack is lossless by default and, from 1.1, can downsample images and
+convert raw photographs to JPEG when you opt in, with a perceptual quality gate. It adds a proof:
+every rewrite is compared to its source, lossy image changes are checked against the resampled
+source, and signed, encrypted and damaged files are returned unchanged by default
 ([safety model](/concepts/safety-model/)).
 
 ## Licensing in plain words
@@ -65,8 +67,8 @@ Read each license yourself, or ask your counsel, before you decide. This page is
 | How it compresses | Rewrites storage, content unchanged, output verified | Re-creates the document | Rewrites storage, content preserved |
 | Object streams | Yes | Not listed | Yes, generated on request |
 | Flate recompression | Yes, level 9 by default | Not listed | Yes, chosen level |
-| Image downsampling | No | Yes, with presets | No |
-| JPEG | Lossless re-encoding; opt-in requantization | Not listed | Not listed |
+| Image downsampling | 1.1, opt-in (`MaxImageDpi`) | Yes, with presets | No |
+| JPEG | Lossless re-encoding; opt-in requantization; 1.1: opt-in conversion of raw photographs | Not listed | Not listed |
 | Equivalence check of the output | Yes, on every rewrite | Not listed | Not listed |
 | Linearized output | No | Not listed | Yes |
 | Encryption | AES-256 and AES-128 | Not listed | Yes |
@@ -83,7 +85,8 @@ Sources: [Ghostscript site](https://www.ghostscript.com/),
 
 ## When to pick Ghostscript
 
-- You need the smallest possible files and accept lossy changes, such as image downsampling.
+- You want presets such as `/screen` and `/ebook` that re-create the whole document for size, and
+  accept the changes that brings.
 - You need to render pages to images, or to process PostScript.
 - The AGPL fits your deployment, or a commercial license from Artifex suits you.
 

@@ -1,6 +1,6 @@
 ---
 title: Create PDF/A files in C# and .NET
-description: Save PDF/A-2b, 2u, 3b and 3u from .NET, with XML attachments for e-invoices, every blocking problem listed at once. Pure C#, MIT licensed.
+description: Save PDF/A-2b, 2u, 3b and 3u from .NET and make Factur-X and ZUGFeRD e-invoices, with every blocking problem listed at once. Pure C#, MIT.
 since: '1.1'
 sidebar:
   label: PDF/A
@@ -10,10 +10,12 @@ faq:
   - q: Does PdfNetStack ship a third party ICC profile?
     a: No. The sRGB output intent uses a profile the library computes from the sRGB definition, so nothing third party ships.
   - q: Can I make Factur-X or ZUGFeRD invoices?
-    a: PdfNetStack writes PDF/A-3 with the invoice XML attached and declared as an associated file. The Factur-X and ZUGFeRD XMP metadata is not written yet; it is on the roadmap.
+    a: Yes. PdfInvoice.Attach embeds the invoice XML as factur-x.xml with the profile's relationship, and saving as PDF/A-3 writes the Factur-X XMP properties with their extension schema. Profiles MINIMUM to EXTENDED and XRECHNUNG are supported.
+  - q: Is the output checked with veraPDF?
+    a: Yes. A CI job validates PDF/A-2b, 2u, 3b and 3u files made by the library with veraPDF, including a Factur-X invoice signed to PAdES B-LTA.
 ---
 
-Save a document as PDF/A for long term archiving, and attach the XML of an e-invoice to it.
+Save a document as PDF/A for long term archiving, and make it a Factur-X or ZUGFeRD e-invoice.
 
 ## Short answer
 
@@ -77,17 +79,48 @@ The document cannot be saved as PDF/A-2b:
 - Annotation flags: every annotation is set to print, and its invisible, hidden and no view
   flags are cleared.
 - For PDF/A-3, every attachment is declared as an associated file of the document, with a MIME
-  type and a modification date.
+  type and a modification date. Files of file attachment annotations are declared too; PDF/A-2
+  refuses them.
+- For a Factur-X or ZUGFeRD invoice, the `fx:` XMP properties and their extension schema.
 
 Set `doc.Info.Title` and `doc.Language` before saving: the title goes into the XMP metadata, and
 the language into the catalog, where viewers and screen readers read it.
 
-## Attachments for e-invoices
+## Factur-X and ZUGFeRD invoices
+
+A Factur-X or ZUGFeRD invoice is a PDF/A-3 file that carries the invoice XML as an associated
+file and describes it in its XMP metadata. The sample above makes one: `PdfInvoice.Attach`
+checks the XML is well formed (without resolving DTDs or external entities), embeds it as
+`factur-x.xml` with the relationship the profile calls for, and records the profile. Saving as
+PDF/A-3b or 3u then writes the `fx:` properties (document type, file name, version, conformance
+level) with their PDF/A extension schema, and checks the attachment is still there.
+
+```csharp sample="pdfa-invoice.cs" region="check"
+```
+
+| `PdfInvoiceProfile` | Profile | Default relationship |
+|---|---|---|
+| `Minimum` | MINIMUM: the invoice reference data only | `Data` |
+| `BasicWL` | BASIC WL: document level data without lines | `Data` |
+| `Basic` | BASIC: the EN 16931 core with lines | `Alternative` |
+| `EN16931` | EN 16931, also called COMFORT | `Alternative` |
+| `Extended` | EXTENDED: EN 16931 with additional data | `Alternative` |
+| `XRechnung` | XRECHNUNG: the German public sector's specialisation | `Alternative` |
+
+`PdfInvoiceOptions` changes the attachment's `FileName` (`factur-x.xml`; `xrechnung.xml` is
+also accepted for XRECHNUNG, as earlier ZUGFeRD 2 versions use), its `Relationship` (`Data`,
+`Source` or `Alternative`), the `Version` written to the metadata (1.0 by default) and the
+`Modified` date. An opened invoice keeps its Factur-X metadata when it is saved again.
+
+PdfNetStack does not check the XML against the profile's schema or business rules: validate the
+invoice data before you attach it.
+
+## Other attachments
 
 PDF/A-3 may embed files of any type: `doc.Attachments.Add(name, data, mimeType, description)`
 embeds one. Each attachment is declared with the relationship `Unspecified` unless it already has
-one. To declare another, such as `Alternative` or `Data`, set it on the attachment's dictionary
-through the [object model](/guides/low-level-objects/):
+one. To declare another, such as `Supplement`, set it on the attachment's dictionary through the
+[object model](/guides/low-level-objects/):
 
 ```csharp sample="pdfa-invoice.cs" region="relationship"
 ```
@@ -107,12 +140,17 @@ so the fonts it uses must be embedded.
   table when the optimizer rewrites them.
 - Problems are reported, not repaired: PdfNetStack does not embed missing fonts, convert CMYK or
   remove scripts for you.
-- The Factur-X and ZUGFeRD XMP metadata is not written yet, and veraPDF validation is not yet part
-  of CI. Both are on the [roadmap](/roadmap/).
+- PDF/A-1b and PDF/A-4 output are on the [roadmap](/roadmap/).
+- Invoice XML is checked for well formedness only, not against the Factur-X schemas or rules.
+
+## Checked with veraPDF
+
+A CI job validates PDF/A-2b, 2u, 3b and 3u files made by the library with the veraPDF command line
+tool, among them a Factur-X invoice signed to PAdES B-LTA.
 
 ## Related
 
-- [Signatures](/guides/signatures/): sign the archived file last
+- [Signatures](/guides/signatures/): sign the archived file last, up to PAdES B-LTA
 - [Fonts and text](/guides/fonts-and-text/): embedded fonts
 - [Low level objects](/guides/low-level-objects/)
-- API: [PdfSaveOptions](/api/pdfnetstack/pdfsaveoptions/), [PdfConformance](/api/pdfnetstack/pdfconformance/), [PdfAttachmentCollection](/api/pdfnetstack/pdfattachmentcollection/), [PdfAttachment](/api/pdfnetstack/pdfattachment/)
+- API: [PdfSaveOptions](/api/pdfnetstack/pdfsaveoptions/), [PdfConformance](/api/pdfnetstack/pdfconformance/), [PdfAttachmentCollection](/api/pdfnetstack/pdfattachmentcollection/), [PdfAttachment](/api/pdfnetstack/pdfattachment/), [PdfInvoice](/api/pdfnetstack/pdfinvoice/), [PdfInvoiceOptions](/api/pdfnetstack/pdfinvoiceoptions/)

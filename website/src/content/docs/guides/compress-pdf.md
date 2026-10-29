@@ -6,9 +6,11 @@ sidebar:
   label: Compress PDF
 faq:
   - q: Is PdfNetStack compression lossless?
-    a: Yes, by default. Text, vectors, fonts, images, forms, tags and metadata are carried over, and every output is compared to its source before it is returned. Lossy JPEG requantization is opt-in through JpegQuality.
+    a: Yes, by default. Text, vectors, fonts, images, forms, tags and metadata are carried over, and every output is compared to its source before it is returned. The lossy image options (JPEG requantization, downsampling, JPEG conversion) are opt-in.
   - q: How much smaller do PDFs get?
-    a: On a mixed corpus of 1,296 real world files the optimized ones went from 568.9 MiB to 469.0 MiB, 17.6% saved. Image heavy files often gain 20 to 40%. Files from producers that already use object streams gain little.
+    a: On a mixed corpus of 1,296 real world files the optimized ones went from 568.9 MiB to 469.0 MiB, 17.6% saved, losslessly. Image heavy files often gain 20 to 40%. Files from producers that already use object streams gain little.
+  - q: Can it downsample images?
+    a: Yes, from version 1.1, with MaxImageDpi. Images drawn above 1.5 times the target resolution are resampled with a Lanczos filter, and MinImageSsim keeps any image the change would visibly hurt.
   - q: Does the optimizer need Ghostscript or another native tool?
     a: No. It is one managed assembly with no native code and no external process, on Windows, Linux and macOS.
 ---
@@ -47,8 +49,8 @@ The same job on the command line is `pdfnetstack optimize in.pdf out.pdf`, see
 | `OriginalBytes`, `OutputBytes`, `SavingPercent` | Sizes before and after |
 | `SourceSha256`, `OutputSha256` | Hashes of the input and of what was written |
 | `PageCount` | Pages in the document |
-| `Reason` | A sentence that explains the disposition |
-| `Statistics` | Per pass counters and timings, such as objects merged and JPEG images re-encoded |
+| `Reason` | A sentence that explains the disposition and names every lossy change |
+| `Statistics` | Per pass counters and timings, such as objects merged, JPEG images re-encoded and images downsampled |
 
 The output is always a valid PDF: either the verified rewrite or the input unchanged.
 
@@ -73,14 +75,18 @@ Pass a `PdfOptimizerOptions` to change the defaults.
 | Option | Default | Notes |
 |---|---|---|
 | `MinSavingPercent` | 1.0 | Keep the original unless the rewrite saves at least this much |
-| `Compression` | `Maximum` | `Balanced` cut corpus time by about a third for about 2% larger output |
+| `Compression` | `Maximum` | `Fast` and `Balanced` trade size for speed: `Balanced` cut corpus time by about a third for about 2% larger output. `Exhaustive` (1.1) searches harder, see below |
 | `UseObjectStreams` | true | Off writes a classic xref table |
 | `ObjectsPerStream` | 200 | Larger compresses better, smaller loads single pages faster |
 | `DeduplicateObjects` | true | Merges byte identical fonts, images, ICC profiles, resources and arrays |
 | `RecompressStreams` | true | Recompresses Flate at zlib level 9, turns LZW and RunLength into Flate |
 | `UseImagePredictors` | true | Tries PNG predictors on raw images |
 | `OptimizeJpegImages` | true | Lossless JPEG re-encoding |
-| `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
+| `ProgressiveJpeg` | false | 1.1. Also tries progressive coding for every JPEG written, kept when smaller. Lossless |
+| `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy: requantizes JPEG images, and sets the quality of new JPEGs |
+| `MaxImageDpi` | null | 1.1. Downsamples images drawn above 1.5 times this resolution. Lossy |
+| `ConvertImagesToJpeg` | false | 1.1. Photographic raw images to JPEG at `JpegQuality`. Lossy |
+| `MinImageSsim` | null | 1.1. Quality gate, 0 to 1: any lossy image change below this SSIM is dropped |
 | `Verify` | true | Disable only for inputs you already trust |
 | `AllowIncrementalUpdates` | false | Flattens edit history into one revision |
 | `AllowRepairedFiles` | false | Rewrites damaged files into clean ones |
@@ -102,20 +108,87 @@ Pass a `PdfOptimizerOptions` to change the defaults.
 | JPEG re-encoding | Rebuilds Huffman tables per image, writes progressive and restart marked JPEGs as baseline, drops segments PDF readers ignore. The DCT coefficients stay identical | Yes |
 | Deduplication | Merges byte identical objects, iterating until merges stop | Yes |
 | Compact syntax | Minimal separators, canonical numbers, null entries dropped | Yes |
+| Progressive JPEG | `ProgressiveJpeg`: every JPEG written is also tried progressive, kept when smaller | Yes, opt-in |
+| Exhaustive Flate | `Compression = Exhaustive`: optimal parsing and block splitting in the manner of Zopfli, zlib kept when smaller | Yes, opt-in |
 | Thumbnails, PieceInfo | Optional removal of page thumbnails and application private data | No, opt-in |
 | JPEG requantization | `JpegQuality`: coarser quantization, never finer than the image's own. Soft masks stay lossless | No, opt-in |
+| Downsampling | `MaxImageDpi`: images drawn above 1.5 times the target resolution are resampled with a Lanczos filter | No, opt-in |
+| Photographs to JPEG | `ConvertImagesToJpeg`: raw gray and RGB images that look photographic become baseline JPEG | No, opt-in |
+| Quality gate | `MinImageSsim`: any lossy image change below this luminance SSIM is dropped | Opt-in |
 
-JPEG data is decoded to DCT coefficients and never to pixels, so components, chroma sampling and
-the color model pass through untouched: a CMYK image stays CMYK. JPEG 2000, JBIG2 and CCITT data
-is never touched.
+Without the lossy image options, JPEG data is decoded to DCT coefficients and never to pixels, so
+components, chroma sampling and the color model pass through untouched: a CMYK image stays CMYK.
+JPEG 2000, JBIG2 and CCITT data is never decoded or touched by the optimizer.
 
-## Smaller files with lossy JPEG
+## Lossy image options
 
-`JpegQuality` requantizes JPEG images at a libjpeg quality between 1 and 100. It never makes an
-image finer than it was, works on the coefficients so the color model cannot change, and leaves
-soft masks lossless. Verification still runs: each coefficient must be exactly the requantized
-source value, and everything else must be identical. `Statistics.JpegImagesRequantized` counts the
-images it changed. The command line takes the same setting as `--jpeg-quality 60`.
+:::note[Available since 1.1]
+`MaxImageDpi`, `ConvertImagesToJpeg`, `MinImageSsim`, `ProgressiveJpeg` and
+`CompressionEffort.Exhaustive` are in the main branch and ship with 1.1. `JpegQuality` is in 1.0.
+:::
+
+All of them are off by default. Turn them on together for the biggest saving on image heavy
+files:
+
+```csharp sample="compress-lossy.cs" region="lossy"
+```
+
+- `MaxImageDpi` measures each image at the largest size it is drawn anywhere: on pages, in forms,
+  tiling patterns, soft mask groups and annotation appearances. An image drawn above 1.5 times the
+  target is resampled to the target with a three lobe Lanczos filter. A downsampled JPEG stays a
+  JPEG, encoded at `JpegQuality` but never finer than it was; raw samples stay lossless after
+  resampling unless `ConvertImagesToJpeg` is set.
+- `ConvertImagesToJpeg` re-encodes raw 8 bit gray and RGB images as baseline JPEG at `JpegQuality`
+  (4:2:0 below quality 90, Huffman tables optimized per image). A classifier leaves line art,
+  screenshots, charts, palette and bilevel images lossless, and a JPEG is kept only when it is at
+  least 10% smaller than the best lossless encoding. It requires `JpegQuality`.
+- `MinImageSsim` is a perceptual gate on luminance SSIM. Any image whose lossy change,
+  requantization included, falls below it stays as it was, and `ImagesKeptByQualityGate` counts
+  those images. Around 0.95 keeps changes hard to see; 0.90 allows visible softening of fine
+  texture.
+- `ProgressiveJpeg` changes the coding, not the coefficients, so it is lossless.
+
+The result says what changed:
+
+```csharp sample="compress-lossy.cs" region="report"
+```
+
+`OptimizationStatistics` reports `ImagesDownsampled`, `ImagesConvertedToJpeg`,
+`JpegImagesRequantized` and `ImagesKeptByQualityGate`, and `Reason` names every lossy change, for
+example "1 image(s) downsampled to 150 dpi, 1 image(s) converted to JPEG at quality 90".
+
+### What the proof checks for changed images
+
+Verification still runs on every image the optimizer changed, but for pixels that changed it is a
+bound, not an identity. A downsampled or converted image must keep its components and aspect
+ratio, must not grow, and is decoded and compared with the source resampled to its new size: each
+channel's mean, a coarse thumbnail that catches mirrored, shifted or swapped pictures, and
+luminance SSIM of at least `MinImageSsim` (0.5 when no gate is set). Soft masks, masks, stencil
+masks and color keyed images must match exactly, and every other part of the document must be
+identical as before. The method is on the [fidelity](/concepts/fidelity/) page.
+
+### What is left alone
+
+Masks, images with a color key mask or a /Matte soft mask, bilevel, indexed, 16 bit, Lab,
+Separation and DeviceN images keep their size, and so do images reachable from anything the
+measurement does not walk, such as Type 3 glyphs and thumbnails. JPEG 2000, JBIG2 and CCITT images
+are never changed. A JPEG with a color key mask is never requantized, since the key matches exact
+sample values.
+
+These options were measured on synthetic files made by `tools/make_lossy_corpus.py`, not on a real
+corpus. The corpus results below are for the lossless passes only.
+
+## Exhaustive Flate
+
+`CompressionEffort.Exhaustive` is an original Deflate encoder in the manner of Zopfli: optimal
+parsing over every match length with costs refined over several passes, block splitting, and code
+lengths limited by package merge. Output stays standard Flate, and zlib's result is kept whenever
+it is smaller. On the synthetic files of `tools/make_lossy_corpus.py` it saved 3 to 5% more than
+level 9 on text, scans and photographs, and nothing on line art and screenshots, for 2 to 150
+times the CPU time. It suits archives written once and read often.
+
+```csharp sample="compress-lossy.cs" region="exhaustive"
+```
 
 ## Files the optimizer will not rewrite
 
@@ -134,12 +207,19 @@ tool:
 ```
 
 `FindDifference` returns `null` when the two documents are equivalent, or a description of the
-first difference. The method and its limits are on the [fidelity](/concepts/fidelity/) page.
+first difference. An overload takes `allowJpegRequantization` and `minImageSsim`, and then also
+accepts requantized, downsampled and converted images within the bounds above:
+
+```csharp sample="compress-lossy.cs" region="check"
+```
+
+The command line equivalent is `pdfnetstack verify original.pdf other.pdf --min-ssim 0.95`. The
+method and its limits are on the [fidelity](/concepts/fidelity/) page.
 
 ## Results
 
-Measured on a mixed real world corpus of 1,296 files (569 MiB) with default options, on an 8 core
-Windows machine:
+Measured on a mixed real world corpus of 1,296 files (569 MiB) with default options, lossless, on
+an 8 core Windows machine:
 
 | | |
 |---|---|
@@ -154,8 +234,9 @@ pages, zero differing pixels. See [Benchmarks](/benchmarks/) for the method.
 
 ## Limits
 
-- Lossy compression covers JPEG images only. It does not downsample and does not convert raw
-  images to JPEG.
+- Lossy image options handle 8 bit gray, RGB and CMYK images, raw or JPEG. JPEG 2000, JBIG2,
+  CCITT, 16 bit, indexed, Lab, Separation and DeviceN images keep their resolution, and images
+  inside Type 3 glyphs are never downsampled. The quality gate measures luminance only.
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.
@@ -166,6 +247,8 @@ pages, zero differing pixels. See [Benchmarks](/benchmarks/) for the method.
 ## Related
 
 - [Command line](/cli/): `optimize`, `batch`, `inspect` and `verify`
+- [Reduce PDF size for email](/recipes/reduce-pdf-size/) and
+  [Downsample images in a PDF](/recipes/downsample-pdf-images/)
 - [Edit pages](/guides/edit-pages/): saving an edited document runs the optimizer too
 - [Fidelity and verification](/concepts/fidelity/)
-- API: [PdfOptimizer](/api/pdfnetstack/pdfoptimizer/), [PdfOptimizerOptions](/api/pdfnetstack/pdfoptimizeroptions/), [PdfOptimizationResult](/api/pdfnetstack/pdfoptimizationresult/), [PdfEquivalence](/api/pdfnetstack/pdfequivalence/)
+- API: [PdfOptimizer](/api/pdfnetstack/pdfoptimizer/), [PdfOptimizerOptions](/api/pdfnetstack/pdfoptimizeroptions/), [PdfOptimizationResult](/api/pdfnetstack/pdfoptimizationresult/), [OptimizationStatistics](/api/pdfnetstack/optimizationstatistics/), [PdfEquivalence](/api/pdfnetstack/pdfequivalence/)

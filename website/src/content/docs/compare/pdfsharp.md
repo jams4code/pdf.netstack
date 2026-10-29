@@ -57,7 +57,7 @@ Read each license yourself, or ask your counsel, before you decide. This page is
 | Modify, merge, split | 1.0 | Yes |
 | Lossless compression, every output verified | 1.0 | Not listed |
 | Encryption | 1.0: AES-256 and AES-128 written; RC4, AES-128 and AES-256 read | Yes, 40 and 128 bit, AES 256 bit |
-| Digital signatures | 1.1: PAdES B-B, sign and verify | Yes, CMS based, since 6.2.0 |
+| Digital signatures | 1.1: PAdES B-B to B-LTA, sign and validate | Yes, CMS based, since 6.2.0 |
 | PDF/A | 1.1: PDF/A-2b, 2u, 3b, 3u | Documented |
 | Forms | 1.1: create, fill, flatten | Not listed |
 | Text extraction | 1.1 | Not listed |

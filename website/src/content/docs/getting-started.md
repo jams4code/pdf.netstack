@@ -77,8 +77,9 @@ More in [Drawing](/guides/drawing/) and [Fonts and text](/guides/fonts-and-text/
 
 ## Build from source
 
-Drawing, fonts, images, annotations, forms, signatures, PDF/A, text and image extraction, the
-object model and `PdfNetStack.Html` are in the main branch and ship with PdfNetStack 1.1. The 1.0.0
+Drawing, fonts, images, annotations, forms, signatures and long term validation, PDF/A and
+e-invoices, text and image extraction, the lossy image options of the optimizer, the object model
+and `PdfNetStack.Html` are in the main branch and ship with PdfNetStack 1.1. The 1.0.0
 packages on NuGet do not have them. To use them today, build against a clone of the repository.
 You need the .NET 10 SDK.
 

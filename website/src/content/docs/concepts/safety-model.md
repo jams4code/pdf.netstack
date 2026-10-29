@@ -67,6 +67,13 @@ coefficient. Encoding keys (`/Length`, `/Filter`, `/DecodeParms`, `/DL`) are the
 differences it accepts. With `JpegQuality` set, a JPEG image may also differ by exactly the
 requantization the optimizer applied, and by nothing else.
 
+The lossy image options of 1.1 (`MaxImageDpi`, `ConvertImagesToJpeg`) change pixels, so their proof
+is a bound rather than an identity, and only for the images the optimizer changed. A changed image
+must keep its components and aspect, must not grow, and is decoded and compared with the source
+resampled to its new size: mean colors, a coarse thumbnail, and luminance SSIM of at least
+`MinImageSsim` (0.5 without a gate). Soft masks, masks, stencil and color keyed images must still
+match exactly, and every other part of the document as before.
+
 `Verify = false` skips this step. Turn it off only for inputs a validated pipeline has already
 checked. The full method is on the [fidelity](/concepts/fidelity/) page.
 

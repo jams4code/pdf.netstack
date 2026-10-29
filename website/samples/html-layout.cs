@@ -26,7 +26,17 @@ const string Css = """
     .figure { float: right; width: 90pt; margin: 0 0 6pt 8pt; position: relative }
     .badge { position: absolute; top: -6pt; right: -6pt; padding: 2pt 4pt; color: white;
              background: #dc2626; border-radius: 4pt; transform: rotate(8deg) }
-    .note { width: calc(100% - 20pt); text-decoration: underline dotted #f59e0b }
+    .note { width: calc(100% - 20pt); text-decoration: underline wavy #f59e0b }
+
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(60pt, 1fr));
+               grid-auto-flow: row dense; gap: 4pt; margin: 6pt 0 }
+    .gallery div { background: #e0e7ff; padding: 4pt; border-radius: 3pt }
+    .gallery .wide { grid-column: span 2; background: #c7d2fe }
+
+    .specs { display: grid; grid-template-columns: [label] max-content [value] 1fr; column-gap: 8pt }
+    .specs > div { grid-column: label / -1; display: grid; grid-template-columns: subgrid;
+                   border-bottom: 0.5pt solid #cbd5e1 }
+    .specs b { grid-column: label }
 
     ol.steps { counter-reset: step; list-style: none; padding: 0 }
     ol.steps li { counter-increment: step; margin-bottom: 3pt }
@@ -50,7 +60,12 @@ string html = $$"""
         Text wraps around a floated box. The badge is positioned against it and rotated with a
         transform. Lines break at Unicode line break opportunities and the paragraph continues
         below the float once it ends, the way a browser lays it out for print.</p>
-        <p class="note">A width computed with calc() and a dotted underline.</p>
+        <p class="note">A width computed with calc() and a wavy underline.</p>
+        <div class="gallery"><div>One</div><div class="wide">Two, spanning two tracks</div><div>Three</div><div>Four</div><div>Five</div></div>
+        <div class="specs">
+          <div><b>Engine</b><span>C# layout, no browser</span></div>
+          <div><b>Grid</b><span>Named lines, dense packing, subgrid</span></div>
+        </div>
         <ol class="steps"><li>Write the HTML</li><li>Add the style sheet</li><li>Convert to PDF</li></ol>
       </main>
       <footer>Generated with PdfNetStack.Html</footer>

@@ -13,7 +13,7 @@ faq:
   - q: Is it compatible with trimming and Native AOT?
     a: Yes. The net8.0 and net10.0 builds of the library are marked trim and AOT compatible, and CI publishes the command line tool with Native AOT, failing on any trim or AOT warning.
   - q: Is the compression lossless?
-    a: Yes, by default. Text, vectors, fonts, images, annotations, forms, bookmarks, structure tags, metadata and attachments are carried over, and every output is compared to its source before it is returned. Lossy JPEG requantization exists, but only when you set JpegQuality.
+    a: Yes, by default. Text, vectors, fonts, images, annotations, forms, bookmarks, structure tags, metadata and attachments are carried over, and every output is compared to its source before it is returned. Lossy changes happen only when you ask for them, as JPEG requantization with JpegQuality, and from 1.1 image downsampling with MaxImageDpi and conversion of raw photographs to JPEG, both checked against the source and optionally held back by a perceptual quality gate.
   - q: How much smaller do files get?
     a: On a mixed corpus of 1,296 real world files, the 1,003 files that were optimized went from 568.9 MiB to 469.0 MiB, 17.6% saved, with zero differing pixels at 150 DPI. Image heavy files often gain 20 to 40%. Files from producers that already use object streams gain little.
   - q: What happens with encrypted or signed PDFs?
@@ -22,10 +22,12 @@ faq:
     a: No. Rendering pages to images is out of scope for the project. It extracts the images a page contains, and the text, but it does not rasterize pages.
   - q: Is the HTML to PDF converter a headless browser?
     a: No. PdfNetStack.Html is a layout engine written in C# with the CSS cascade, block, inline, table, flex and grid layout and paged media. It does not run JavaScript, so pages must be rendered HTML. It ships with version 1.1 and is not on NuGet yet.
-  - q: Does it handle Arabic and right to left text?
-    a: Yes, from version 1.1. Text goes through the Unicode bidirectional algorithm and an OpenType shaper, so Arabic letters join and take their contextual forms, and right to left text copies and searches in logical order.
+  - q: Does it handle Arabic, Indic and right to left text?
+    a: Yes, from version 1.1. Text goes through the Unicode bidirectional algorithm, Unicode normalization and an OpenType shaper, so Arabic letters join and take their contextual forms, the nine major Indic scripts reorder and form their conjuncts, and right to left text copies and searches in logical order. Thai, Khmer, Myanmar and Hangul shaping are on the roadmap.
   - q: Can it create PDF/A files?
-    a: Yes, from version 1.1. Saving with PdfSaveOptions.Conformance writes PDF/A-2b, 2u, 3b or 3u, after checking what cannot be repaired and listing every problem at once.
+    a: Yes, from version 1.1. Saving with PdfSaveOptions.Conformance writes PDF/A-2b, 2u, 3b or 3u, after checking what cannot be repaired and listing every problem at once. PdfInvoice adds Factur-X and ZUGFeRD invoice data to PDF/A-3 files, and CI validates the output with veraPDF.
+  - q: Does it support long term signatures?
+    a: Yes, from version 1.1. PdfNetStack signs to PAdES B-B, B-T, B-LT and B-LTA, and validates signatures against the trust anchors you supply. It makes no network calls; your application sends the timestamp requests and supplies the revocation data.
   - q: Can it make scanned PDFs searchable?
     a: Yes, with the PdfNetStack.Ocr add-on, for Latin and Arabic script. It is in the repository and is not on NuGet yet. The core library also has DrawInvisibleText to lay the words of any OCR engine over a scan.
   - q: How much memory does it use?
