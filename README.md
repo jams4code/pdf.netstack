@@ -180,6 +180,24 @@ the way CSS does. Text can be filled with a gradient, outlined with a pen, or bo
 parsed defensively: a damaged file raises `FontFormatException`, and a font whose license
 forbids embedding (OS/2 fsType) is refused. Not supported yet: WOFF2, CFF2 variable fonts.
 
+Paragraphs wrap, align and justify, with rich text and right to left scripts:
+
+```csharp
+var body = new PdfTextStyle(inter, 11) { Fallbacks = [notoArabic] };
+var p = new PdfParagraph { Alignment = PdfTextAlignment.Justify, LineHeight = 1.5 }
+    .Add("Payment is due within ", body)
+    .Add("30 days", body with { Font = interBold })
+    .Add(". المبلغ المستحق: 1,250.00 €", body);
+PdfTextLayout layout = g.DrawText(p, 50, 120, 300);   // layout.Height is the room it took
+```
+
+Text goes through the Unicode line breaking (UAX #14) and bidirectional (UAX #9) algorithms,
+both passing the full Unicode conformance suites, and an OpenType shaper that matches HarfBuzz
+glyph for glyph: ligatures, kerning, Arabic joining and vowel marks. Lines break greedily at
+break opportunities, overlong words break between characters, soft hyphens show a hyphen when
+used, and line height follows CSS. `PdfTextLayout` measures before drawing and can draw a range
+of lines, for text that continues on the next page.
+
 ### Encryption
 
 ```csharp
@@ -347,7 +365,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | Done (next release) |
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | Done (next release) |
 | Fonts | Standard 14 fonts, TrueType/OpenType/WOFF embedding with subsetting, kerning, font collections | Done (next release) |
-| Text layout | Line breaking, alignment, justification, Arabic and RTL | Planned |
+| Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | Done (next release) |
 | Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Planned |
 | Annotations and forms | Links, notes, stamps; AcroForm reading, filling and flattening | Planned |
 | Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |

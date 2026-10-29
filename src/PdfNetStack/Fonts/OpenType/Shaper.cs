@@ -842,11 +842,15 @@ internal sealed class Shaper
         return i + 1;
     }
 
-    /// <summary>A glyph's vertical offset, plus those of its cursive ancestors as they stand now.</summary>
+    /// <summary>
+    /// A glyph's vertical offset, plus those of its cursive ancestors as they stand now. Every
+    /// step is charged to the operation budget: many marks on a long chain cannot add up to
+    /// quadratic work.
+    /// </summary>
     private int CrossOffset(int glyph)
     {
         int offset = _buffer[glyph].YOffset;
-        for (int steps = 0, at = _buffer[glyph].CursiveParent; at >= 0 && at < _buffer.Count && steps < _buffer.Count; steps++, at = _buffer[at].CursiveParent)
+        for (int steps = 0, at = _buffer[glyph].CursiveParent; at >= 0 && at < _buffer.Count && steps < _buffer.Count && Budget(); steps++, at = _buffer[at].CursiveParent)
         {
             offset += _buffer[at].YOffset;
         }

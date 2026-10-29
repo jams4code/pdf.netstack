@@ -231,7 +231,74 @@ public sealed class PdfGraphics : IDisposable
         if (pen is null && brush is null) return;
         List<ShapedGlyph> glyphs = font.Shape(text);
         if (glyphs.Count == 0) return;
+        DrawGlyphs(glyphs, font, size, pen, brush, x, y, text);
+    }
 
+    /// <summary>
+    /// Lays out a paragraph at <paramref name="width"/> points, wrapping and aligning its lines,
+    /// and draws it with its top left corner at (<paramref name="x"/>, <paramref name="y"/>).
+    /// Returns the layout, whose <see cref="PdfTextLayout.Height"/> tells how much room it took.
+    /// </summary>
+    public PdfTextLayout DrawText(PdfParagraph paragraph, double x, double y, double width)
+    {
+        PdfTextLayout layout = PdfTextLayout.Create(paragraph, width);
+        DrawText(layout, x, y);
+        return layout;
+    }
+
+    /// <summary>Draws text in one style, wrapped to <paramref name="width"/> points; returns the layout.</summary>
+    public PdfTextLayout DrawText(string text, PdfTextStyle style, double x, double y, double width, PdfTextAlignment alignment = PdfTextAlignment.Start) =>
+        DrawText(new PdfParagraph { Alignment = alignment }.Add(text, style), x, y, width);
+
+    /// <summary>Draws a laid out paragraph with its top left corner at (<paramref name="x"/>, <paramref name="y"/>).</summary>
+    public void DrawText(PdfTextLayout layout, double x, double y)
+    {
+        Compat.ThrowIfNull(layout, nameof(layout));
+        DrawText(layout, x, y, 0, layout.Lines.Count);
+    }
+
+    /// <summary>
+    /// Draws <paramref name="count"/> lines of a layout from line <paramref name="first"/>, the
+    /// first of them at (<paramref name="x"/>, <paramref name="y"/>): for text that continues on
+    /// the next page or column.
+    /// </summary>
+    public void DrawText(PdfTextLayout layout, double x, double y, int first, int count)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(layout, nameof(layout));
+        if (first < 0 || count < 0 || first + count > layout.Lines.Count) throw new ArgumentOutOfRangeException(nameof(count), "The lines are outside the layout.");
+        if (count == 0) return;
+        double offset = layout.Lines[first].Top;
+        for (int l = first; l < first + count; l++)
+        {
+            PdfTextLine line = layout.Lines[l];
+            double baseline = y + line.Baseline - offset;
+            foreach (LineRun run in line.Runs)
+            {
+                if (run.Glyphs.Count == 0) continue;
+                double left = x + line.Left + run.X;
+                PdfTextStyle style = run.Style;
+                DrawGlyphs(run.Glyphs, run.Font, style.Size, style.Pen, style.Brush, left, baseline, run.Text);
+                PdfBrush decoration = style.Brush ?? (PdfBrush)(style.Pen?.Color ?? PdfColor.Black);
+                if (style.Underline)
+                {
+                    double thickness = run.Font.UnderlineThickness * style.Size;
+                    DrawRectangle(null, decoration, left, baseline + run.Font.UnderlinePosition * style.Size - thickness / 2, run.Width, thickness);
+                }
+
+                if (style.Strikethrough)
+                {
+                    double thickness = run.Font.StrikeoutThickness * style.Size;
+                    DrawRectangle(null, decoration, left, baseline - run.Font.StrikeoutPosition * style.Size - thickness / 2, run.Width, thickness);
+                }
+            }
+        }
+    }
+
+    /// <summary>Draws shaped glyphs, in visual order, with the baseline starting at (x, y).</summary>
+    private void DrawGlyphs(List<ShapedGlyph> glyphs, PdfFont font, double size, PdfPen? pen, PdfBrush? brush, double x, double y, string text)
+    {
+        if (pen is null && brush is null) return;
         FontResource resource = _page.Owner.GetFontResource(font);
         if (!_fontNames.TryGetValue(resource, out string? name))
         {

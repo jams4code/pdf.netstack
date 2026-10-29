@@ -27,9 +27,11 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    bidirectional algorithm (UAX #9), both passing the full Unicode 16 conformance suites; an
    OpenType shaper (GSUB and GPOS, all lookup types, contextual and chained lookups, Arabic
    joining, marks, cursive attachment) that matches HarfBuzz glyph for glyph on the fonts we
-   compare; ActualText so shaped and right to left text copies back in logical order. Next:
-   paragraphs (wrapping, alignment, justification, rich text runs, font fallback). Later: Unicode
-   normalization in the shaper (pointed Hebrew in older fonts), Indic and other complex shapers.
+   compare; ActualText so shaped and right to left text copies back in logical order; paragraph
+   layout (`PdfParagraph`, `PdfTextLayout`) with wrapping, alignment, justification, rich text
+   runs, font fallback, CSS line height, soft hyphens and tabs. Later: Unicode normalization in
+   the shaper (pointed Hebrew in older fonts), Indic and other complex shapers, kashida
+   justification, dictionary hyphenation.
 5. **Images and Form XObjects.** JPEG passthrough, PNG decoding (all color types, alpha into a soft
    mask, interlacing), image placement with aspect fitting. Pages of another PDF drawn as Form
    XObjects: overlays, watermarks, letterheads, n-up.

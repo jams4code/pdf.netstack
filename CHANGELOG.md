@@ -34,6 +34,11 @@
   ordered correctly with mirrored brackets, and kerning follows GPOS or the kern table as
   HarfBuzz applies them. Shaped and right to left text carries ActualText, so it copies and
   searches in logical order.
+- Paragraph layout: `PdfParagraph` (rich text spans of `PdfTextStyle`), `PdfTextLayout` and
+  `PdfGraphics.DrawText`. Wrapping at Unicode line break opportunities, start, end, left, right,
+  center and justified alignment, right to left paragraphs, fallback fonts per style, letter and
+  word spacing, underline and strikethrough, first line indent, CSS line height, soft hyphens,
+  tabs, and drawing a range of lines for text split across pages.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 
