@@ -36,6 +36,8 @@ namespace PdfNetStack.Cli
 
             Options:
               --fast | --balanced       Faster Flate levels (default: maximum)
+              --exhaustive              Exhaustive Flate search for archival jobs: a few
+                                        percent smaller, many times slower
               --no-object-streams       Write a classic xref table, no object streams
               --no-dedup                Do not merge identical objects
               --no-recompress           Do not re-encode streams
@@ -43,6 +45,13 @@ namespace PdfNetStack.Cli
               --no-jpeg                 Do not re-encode JPEG images
               --jpeg-quality <1-100>    Requantize JPEG images to this quality (lossy);
                                         verify: accept images requantized this way
+              --max-dpi <n>             Downsample images drawn above 1.5 times n dpi to n (lossy)
+              --to-jpeg                 Re-encode photographic raw images as JPEG at
+                                        --jpeg-quality (lossy)
+              --min-ssim <0-1>          Perceptual gate: keep any image whose lossy change
+                                        falls below this SSIM; verify: accept downsampled
+                                        and converted images that meet it
+              --progressive             Write JPEG progressively when that is smaller
               --no-verify               Skip the equivalence proof (not recommended)
               --allow-incremental       Flatten files with incremental updates
               --allow-repaired          Rewrite damaged files that needed repair
@@ -144,6 +153,12 @@ namespace PdfNetStack.Cli
                                       $"(unreachable {s.UnreachableRemoved}, merged {s.ObjectsDeduplicated}), " +
                                       $"streams re-encoded {s.StreamsRecompressed} (JPEG {s.JpegImagesRecompressed}, requantized {s.JpegImagesRequantized}), " +
                                       $"objects verified {s.ObjectsVerified}");
+                    if (s.ImagesDownsampled + s.ImagesConvertedToJpeg + s.ImagesKeptByQualityGate > 0)
+                    {
+                        Console.WriteLine($"images downsampled {s.ImagesDownsampled}, converted to JPEG {s.ImagesConvertedToJpeg}, " +
+                                          $"kept by the quality gate {s.ImagesKeptByQualityGate}");
+                    }
+
                     PhaseTimings p = s.Phases;
                     Console.WriteLine($"analyze {p.Analyze.TotalMilliseconds:F0} ms, recompress {p.Recompress.TotalMilliseconds:F0} ms, " +
                                       $"dedup {p.Deduplicate.TotalMilliseconds:F0} ms, write {p.Write.TotalMilliseconds:F0} ms, verify {p.Verify.TotalMilliseconds:F0} ms");
@@ -288,7 +303,7 @@ namespace PdfNetStack.Cli
         private static int Verify(Arguments a)
         {
             string? difference = PdfEquivalence.FindDifference(File.ReadAllBytes(a.Positional[0]), File.ReadAllBytes(a.Positional[1]),
-                a.Options.MaxDecodedStreamBytes, allowJpegRequantization: a.Options.JpegQuality is not null);
+                a.Options.MaxDecodedStreamBytes, a.Options.JpegQuality is not null, a.Options.MinImageSsim);
             Console.WriteLine(difference is null ? "Equivalent." : "Different: " + difference);
             return difference is null ? 0 : 1;
         }
@@ -535,12 +550,17 @@ namespace PdfNetStack.Cli
                     case "--json": a.Json = true; break;
                     case "--fast": o = o with { Compression = CompressionEffort.Fast }; break;
                     case "--balanced": o = o with { Compression = CompressionEffort.Balanced }; break;
+                    case "--exhaustive": o = o with { Compression = CompressionEffort.Exhaustive }; break;
                     case "--no-object-streams": o = o with { UseObjectStreams = false }; break;
                     case "--no-dedup": o = o with { DeduplicateObjects = false }; break;
                     case "--no-recompress": o = o with { RecompressStreams = false }; break;
                     case "--no-image-predictors": o = o with { UseImagePredictors = false }; break;
                     case "--no-jpeg": o = o with { OptimizeJpegImages = false }; break;
                     case "--jpeg-quality": o = o with { JpegQuality = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
+                    case "--max-dpi": o = o with { MaxImageDpi = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
+                    case "--to-jpeg": o = o with { ConvertImagesToJpeg = true }; break;
+                    case "--min-ssim": o = o with { MinImageSsim = double.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
+                    case "--progressive": o = o with { ProgressiveJpeg = true }; break;
                     case "--no-verify": o = o with { Verify = false }; break;
                     case "--allow-incremental": o = o with { AllowIncrementalUpdates = true }; break;
                     case "--allow-repaired": o = o with { AllowRepairedFiles = true }; break;

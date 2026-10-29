@@ -44,6 +44,17 @@ source coefficient requantized with the integer rounding the optimizer uses. Any
 including one coefficient off by one, fails verification. `pdfnetstack verify --jpeg-quality`
 and `PdfEquivalence.FindDifference(..., allowJpegRequantization: true)` apply the same rule.
 
+The lossy image options (`MaxImageDpi`, `ConvertImagesToJpeg`) change pixels, so their proof
+works on pixels and is a bound, not an identity. Only images the optimizer changed get it. Every
+other dictionary entry must still match; the output must have the same components, no larger a
+size, the same aspect within a pixel, and decode as its dictionary says (raw samples or one
+JPEG). Both images are decoded and the source is resampled to the output's size with the same
+filter. Then each channel's mean may move by at most 4 steps, 32 pixel thumbnails may differ by
+at most 12 steps on average, which catches mirrored, shifted or swapped pictures, and luminance
+SSIM must reach `MinImageSsim`, or 0.5 when no gate is set. With a gate, requantized JPEGs must
+also reach it. `pdfnetstack verify --min-ssim` and `PdfEquivalence.FindDifference(..., minImageSsim)`
+apply the same checks to any two files.
+
 The coefficient reader is itself checked against libjpeg: test fixtures written by libjpeg-turbo
 in baseline, optimized, progressive and restart marker layouts of the same image must decode to
 identical coefficients, and scaled tables must match libjpeg's own for the same quality.

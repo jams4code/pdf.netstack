@@ -13,6 +13,15 @@ public enum CompressionEffort
 
     /// <summary>zlib level 9. The default.</summary>
     Maximum,
+
+    /// <summary>
+    /// An exhaustive Deflate search for archival jobs: iterated optimal parsing over every match
+    /// length with a cost model refined from each pass, block splitting, and the smallest of
+    /// dynamic, fixed and stored blocks, in the manner of Zopfli. Output stays standard Flate and
+    /// is never larger than zlib level 9, which is kept whenever it wins. Expect a few percent
+    /// smaller streams for 2 to 150 times the CPU time, the most on long repetitive streams.
+    /// </summary>
+    Exhaustive,
 }
 
 /// <summary>
@@ -72,6 +81,48 @@ public sealed record PdfOptimizerOptions
     public int? JpegQuality { get; init; }
 
     /// <summary>
+    /// Downsample images drawn at more than 1.5 times this resolution, in pixels per inch, to
+    /// this resolution. The resolution is measured from the largest size at which the image is
+    /// drawn anywhere in the document: pages, forms, patterns, soft masks and annotation
+    /// appearances. Images drawn in a way the measurement cannot follow, masks, images whose
+    /// soft mask must match their size, and images that are not 8 bit gray, RGB or CMYK are left
+    /// alone. The filter is Lanczos with three lobes. A downsampled JPEG is encoded again, at
+    /// <see cref="JpegQuality"/> but never finer than it was; raw samples stay lossless after
+    /// resampling unless <see cref="ConvertImagesToJpeg"/> is set. JPEG sources need
+    /// <see cref="OptimizeJpegImages"/>. Not lossless. Null, the default, keeps every image's size.
+    /// Requires <see cref="RecompressStreams"/>.
+    /// </summary>
+    public int? MaxImageDpi { get; init; }
+
+    /// <summary>
+    /// Re-encode raw 8 bit gray and RGB images as JPEG at <see cref="JpegQuality"/> when they look
+    /// photographic. Bilevel, indexed, line art and screenshot-like images are recognized from
+    /// their pixels and left lossless, and a JPEG is kept only when it is at least 10% smaller
+    /// than the best lossless encoding. Not lossless. Default false. Requires
+    /// <see cref="JpegQuality"/> and <see cref="RecompressStreams"/>.
+    /// </summary>
+    public bool ConvertImagesToJpeg { get; init; }
+
+    /// <summary>
+    /// The perceptual gate for every lossy image change: the minimum structural similarity
+    /// (SSIM, on luminance, 0 to 1) a changed image must keep, or it stays as it was. A requantized
+    /// JPEG is compared with the original; a downsampled image with the exact resample of the
+    /// original, so the gate judges the encoding at the size the image is delivered rather than
+    /// the resolution target. Around 0.95 keeps changes hard to see; 0.90 allows visible
+    /// softening of fine texture. The proof checks the gate again on the output. Null, the
+    /// default, sets no gate.
+    /// </summary>
+    public double? MinImageSsim { get; init; }
+
+    /// <summary>
+    /// Also write JPEG images progressively (spectral selection and successive approximation, as
+    /// libjpeg's default progression) and keep that coding when it is smaller than optimized
+    /// sequential coding. Applies to every JPEG the optimizer writes, lossless or not. The decoded
+    /// image is the same either way. Default false. Requires <see cref="RecompressStreams"/>.
+    /// </summary>
+    public bool ProgressiveJpeg { get; init; }
+
+    /// <summary>
     /// Re-read the candidate and prove it equivalent to the source before returning it.
     /// Disable only for trusted, already validated pipelines. Default true.
     /// </summary>
@@ -119,6 +170,15 @@ public sealed record PdfOptimizerOptions
         if (JpegQuality is not null && !(RecompressStreams && OptimizeJpegImages))
         {
             throw new ArgumentException("JpegQuality needs RecompressStreams and OptimizeJpegImages enabled.", nameof(JpegQuality));
+        }
+
+        if (MaxImageDpi is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(MaxImageDpi));
+        if (MinImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(MinImageSsim));
+        if (MaxImageDpi is not null && !RecompressStreams) throw new ArgumentException("MaxImageDpi needs RecompressStreams enabled.", nameof(MaxImageDpi));
+        if (ProgressiveJpeg && !RecompressStreams) throw new ArgumentException("ProgressiveJpeg needs RecompressStreams enabled.", nameof(ProgressiveJpeg));
+        if (ConvertImagesToJpeg && (JpegQuality is null || !RecompressStreams))
+        {
+            throw new ArgumentException("ConvertImagesToJpeg needs JpegQuality set and RecompressStreams enabled.", nameof(ConvertImagesToJpeg));
         }
     }
 }

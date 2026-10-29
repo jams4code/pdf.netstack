@@ -10,6 +10,9 @@ internal sealed record WriterSettings(
     string Version,
     CompressionLevel CompressionLevel)
 {
+    /// <summary>Also run the exhaustive Flate encoder on object streams.</summary>
+    public bool Exhaustive { get; init; }
+
     /// <summary>Encrypts every in-file object except the encryption dictionary and the xref stream.</summary>
     public Security.StandardSecurity? Encryption { get; init; }
 
@@ -129,7 +132,7 @@ internal static class PdfDocumentWriter
             header.Write((byte)'\n');
             int firstOffset = header.Length;
             header.Write(body.WrittenSpan);
-            byte[] compressed = StreamCodec.Deflate(header.WrittenSpan, settings.CompressionLevel);
+            byte[] compressed = StreamCodec.Deflate(header.WrittenSpan, settings.CompressionLevel, settings.Exhaustive);
 
             // Objects inside an object stream are protected by encrypting the stream as a whole.
             if (settings.Encryption is { } encryption) compressed = encryption.Encrypt(streamNumber, 0, compressed, isString: false);

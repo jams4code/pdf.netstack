@@ -176,6 +176,18 @@ internal static class StreamCodec
             ? (int)n.IntegerValue
             : fallback;
 
+    /// <summary>
+    /// zlib at <paramref name="level"/>; with <paramref name="exhaustive"/>, also the exhaustive
+    /// encoder, keeping whichever output is smaller. <paramref name="ct"/> stops the exhaustive search.
+    /// </summary>
+    public static byte[] Deflate(ReadOnlySpan<byte> data, CompressionLevel level, bool exhaustive, CancellationToken ct = default)
+    {
+        byte[] zlib = Deflate(data, level);
+        if (!exhaustive) return zlib;
+        byte[]? smaller = ExhaustiveDeflate.TryCompress(data, ct: ct);
+        return smaller is not null && smaller.Length < zlib.Length ? smaller : zlib;
+    }
+
     public static byte[] Deflate(ReadOnlySpan<byte> data, CompressionLevel level)
     {
         using var output = new PooledWriteStream(Math.Max(256, data.Length / 2));

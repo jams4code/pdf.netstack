@@ -60,6 +60,29 @@ internal static class JpegQuantization
     }
 
     /// <summary>
+    /// The libjpeg quality whose luminance table is closest to <paramref name="table"/>, by the sum
+    /// of absolute differences. Ties go to the higher quality, so an estimate never undersells.
+    /// </summary>
+    public static int EstimateQuality(ushort[] table)
+    {
+        int best = 100;
+        long bestDistance = long.MaxValue;
+        for (int quality = 100; quality >= 1; quality--)
+        {
+            ushort[] candidate = ScaledTable(quality, chrominance: false);
+            long distance = 0;
+            for (int k = 0; k < 64; k++) distance += Math.Abs(candidate[k] - table[k]);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = quality;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
     /// Re-expresses a coefficient quantized with step <paramref name="from"/> in the coarser step
     /// <paramref name="to"/>, rounding half away from zero. Integer only, so every platform agrees.
     /// The verifier uses this same definition to prove a requantized image.

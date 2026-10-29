@@ -98,6 +98,9 @@ var options = new PdfOptimizerOptions
     AllowIncrementalUpdates = true,             // flatten edit history into one revision
     MaxDegreeOfParallelism = 2,                 // cap CPU and memory per document
     JpegQuality = 60,                           // opt-in, lossy: requantize JPEG images
+    MaxImageDpi = 150,                          // opt-in, lossy: downsample oversampled images
+    ConvertImagesToJpeg = true,                 // opt-in, lossy: photographs to JPEG at JpegQuality
+    MinImageSsim = 0.95,                        // keep any image a lossy change would hurt
 };
 ```
 
@@ -474,6 +477,8 @@ pdfnetstack optimize in.pdf out.pdf
 pdfnetstack batch ./incoming ./optimized --report report.csv
 pdfnetstack batch ./corpus                  # measure only, writes nothing
 pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
+pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
+pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
 pdfnetstack inspect in.pdf                  # where the bytes go
 pdfnetstack verify original.pdf other.pdf   # check any tool's output for equivalence
 
@@ -501,10 +506,15 @@ pdfnetstack decrypt in.pdf out.pdf --password o
 | Compact syntax | Minimal separators, canonical numbers, null entries dropped | Yes |
 | Thumbnails, PieceInfo | Optional removal of page thumbnails and application private data | No, opt-in |
 | JPEG requantization | `JpegQuality`: coarser quantization at a libjpeg quality, never finer than the image's own; soft masks stay lossless | No, opt-in |
+| Downsampling | `MaxImageDpi`: images drawn above 1.5 times the target resolution, measured at their largest placement, are resampled with a Lanczos filter; masks, bilevel, indexed and color keyed images are left alone | No, opt-in |
+| Photographs to JPEG | `ConvertImagesToJpeg`: raw gray and RGB images that look photographic become baseline JPEG at `JpegQuality`; line art, screenshots and palette images stay lossless | No, opt-in |
+| Quality gate | `MinImageSsim`: any lossy image change below this luminance SSIM is dropped and the image kept as it was | Opt-in |
+| Progressive JPEG | `ProgressiveJpeg`: every JPEG written is also tried progressive, kept when smaller | Yes, opt-in |
+| Exhaustive Flate | `Compression = Exhaustive`: optimal parsing and block splitting in the manner of Zopfli, zlib kept when smaller | Yes, opt-in |
 
-JPEG data is decoded to DCT coefficients and never to pixels, so components, chroma sampling and
-color model pass through untouched: a CMYK image stays CMYK. JPEG 2000, JBIG2 and CCITT data is
-never decoded or touched.
+Without the lossy image options, JPEG data is decoded to DCT coefficients and never to pixels, so
+components, chroma sampling and color model pass through untouched: a CMYK image stays CMYK.
+JPEG 2000, JBIG2 and CCITT data is never decoded or touched.
 
 ## Safety model
 
@@ -530,7 +540,10 @@ stream must decode to identical bytes with identical remaining filters. JPEG ima
 compared by DCT coefficient, so a re-encoded image passes only if every coefficient is the
 same. Encoding keys (`/Length`, `/Filter`, `/DecodeParms`) are the only other differences it
 accepts. With `JpegQuality` set, a JPEG image may also differ by exactly the requantization the
-optimizer applies, checked coefficient by coefficient, and by nothing else.
+optimizer applies, checked coefficient by coefficient, and by nothing else. A downsampled or
+converted image must keep its components and aspect, may not grow, and is decoded and compared
+with the source resampled to its new size: mean color, a coarse thumbnail and SSIM, at least
+`MinImageSsim` when set.
 See [docs/FIDELITY.md](docs/FIDELITY.md) for the full method and its limits.
 
 ## Results
@@ -571,7 +584,7 @@ object streams have little left to gain losslessly.
 | Option | Default | Notes |
 |---|---|---|
 | `MinSavingPercent` | 1.0 | Keep the original unless the rewrite saves at least this much |
-| `Compression` | `Maximum` | `Balanced` cut corpus time by about a third for about 2% larger output |
+| `Compression` | `Maximum` | `Balanced` cut corpus time by about a third for about 2% larger output; `Exhaustive` saved 3 to 5% more on synthetic files, for 2 to 150 times the time |
 | `UseObjectStreams` | true | Off writes a classic xref table |
 | `ObjectsPerStream` | 200 | Larger compresses better, smaller loads single pages faster |
 | `DeduplicateObjects` | true | |
@@ -579,6 +592,10 @@ object streams have little left to gain losslessly.
 | `UseImagePredictors` | true | |
 | `OptimizeJpegImages` | true | Lossless JPEG re-encoding |
 | `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
+| `MaxImageDpi` | null | Downsample images drawn above 1.5 times this resolution. Lossy |
+| `ConvertImagesToJpeg` | false | Photographic raw images to JPEG at `JpegQuality`. Lossy |
+| `MinImageSsim` | null | 0 to 1; around 0.95 keeps changes hard to see |
+| `ProgressiveJpeg` | false | Progressive JPEG when smaller. Lossless |
 | `Verify` | true | Disable only for inputs you already trust |
 | `AllowIncrementalUpdates` | false | Flattens edit history into one revision |
 | `AllowRepairedFiles` | false | Rewrites damaged files into clean ones |
@@ -623,9 +640,10 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 
 ## Limits
 
-- Lossy compression covers JPEG images only and works on their coefficients: it does not
-  downsample, does not convert raw images to JPEG, and has no perceptual quality gate yet. See the
-  [roadmap](docs/ROADMAP.md).
+- Lossy image options handle 8 bit gray, RGB and CMYK images, raw or JPEG. JPEG 2000, JBIG2,
+  CCITT, 16 bit, indexed, Lab, Separation and DeviceN images keep their resolution, and images
+  inside Type 3 glyphs are never downsampled. The quality gate measures luminance only. These
+  options were measured on synthetic files (`tools/make_lossy_corpus.py`), not on a real corpus.
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - Font subsetting, unused resource pruning and content stream rewriting are not done.

@@ -66,6 +66,36 @@
   instead of a copy of it.
 - CI: a veraPDF job validates PDF/A-2b, 2u, 3b and 3u files made by the library, including a
   Factur-X invoice signed to PAdES B-LTA.
+- Lossy image options for the optimizer, all off by default:
+  - `MaxImageDpi` (`--max-dpi`) downsamples images drawn above 1.5 times the target resolution,
+    measured from the largest placement found on pages, in forms, tiling patterns, soft mask
+    groups and annotation appearances. The filter is Lanczos with three lobes. Masks, images with
+    a color key mask or a /Matte soft mask, bilevel, indexed, 16 bit, Lab, Separation and DeviceN
+    images, and images reachable from anything the measurement does not walk (Type 3 glyphs,
+    thumbnails, alternates) are left alone. A downsampled JPEG stays a JPEG, never finer than it was.
+  - `ConvertImagesToJpeg` (`--to-jpeg`) re-encodes raw 8 bit gray and RGB photographs as baseline
+    JPEG at `JpegQuality` (forward DCT, libjpeg quality tables, 4:2:0 below quality 90, Huffman
+    tables optimized per image). A classifier leaves line art, screenshots, charts, palette and
+    bilevel images lossless. A lossy result is kept only when it is at least 10% smaller than the
+    best lossless one.
+  - `MinImageSsim` (`--min-ssim`) is a perceptual gate on luminance SSIM: any image whose lossy
+    change, requantization included, falls below it stays as it was, and
+    `ImagesKeptByQualityGate` counts them. The proof checks resampled and converted images
+    against the source resampled to their new size (components, aspect, mean color, a coarse
+    comparison and SSIM), and with a gate also requantized ones.
+    `PdfEquivalence.FindDifference` takes the same gate.
+  - `ProgressiveJpeg` (`--progressive`) also writes every JPEG the optimizer produces as
+    progressive, with libjpeg's scan script and Huffman tables per scan, and keeps it when
+    smaller. Coefficients are unchanged, so this one is lossless.
+  - `OptimizationStatistics` reports `ImagesDownsampled`, `ImagesConvertedToJpeg` and
+    `ImagesKeptByQualityGate`, and the result's reason names every lossy change.
+- `CompressionEffort.Exhaustive` (`--exhaustive`): an original Deflate encoder in the manner of
+  Zopfli, written from RFC 1951 and published descriptions: optimal parsing over every match
+  length with costs refined over several passes, block splitting, and code lengths limited by
+  package-merge. zlib's output is kept whenever it is smaller. On the synthetic files of
+  `tools/make_lossy_corpus.py` it saves 3 to 5% more than level 9 on text, scans and photographs
+  (nothing on line art and screenshots), for 2 to 150 times the CPU time, the most on long
+  repetitive streams.
 - `PdfNetStack.Azure` is discontinued so the project can focus on PDF itself. Reading from and
   writing to storage belongs to the application, around the stream APIs. Version 1.0.0 stays on
   NuGet and keeps working.

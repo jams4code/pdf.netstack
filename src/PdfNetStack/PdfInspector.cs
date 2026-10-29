@@ -120,4 +120,35 @@ public static class PdfEquivalence
         Predicate<int> mayRequantize = allowJpegRequantization ? static _ => true : static _ => false;
         return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, mayRequantize, Environment.ProcessorCount, CancellationToken.None, out _);
     }
+
+    /// <summary>
+    /// As <see cref="FindDifference(ReadOnlyMemory{byte}, ReadOnlyMemory{byte}, long, bool)"/>, and
+    /// with <paramref name="minImageSsim"/> also accepts images that were downsampled or converted
+    /// to JPEG, as <see cref="PdfOptimizerOptions.MaxImageDpi"/> and
+    /// <see cref="PdfOptimizerOptions.ConvertImagesToJpeg"/> produce: same components and aspect, no
+    /// larger, mean colors kept, and luminance SSIM against the original resampled to the new size
+    /// of at least <paramref name="minImageSsim"/>. Every other part of such an image must match.
+    /// Requantized images must then meet the same SSIM.
+    /// </summary>
+    /// <param name="original">The source PDF.</param>
+    /// <param name="candidate">The PDF to check against it.</param>
+    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
+    /// <param name="allowJpegRequantization">Also accept JPEG images requantized to coarser tables.</param>
+    /// <param name="minImageSsim">The SSIM, above 0 and at most 1, a changed image must keep; null accepts no resampled images.</param>
+    public static string? FindDifference(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        long maxDecodedStreamBytes,
+        bool allowJpegRequantization,
+        double? minImageSsim)
+    {
+        if (minImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(minImageSsim));
+        PdfFile a = PdfFile.Open(original, maxDecodedStreamBytes);
+        PdfFile b = PdfFile.Open(candidate, maxDecodedStreamBytes);
+        var allowance = new ImageAllowance(
+            allowJpegRequantization ? static _ => true : static _ => false,
+            minImageSsim is null ? static _ => false : static _ => true,
+            minImageSsim);
+        return EquivalenceVerifier.Verify(a, b, [], maxDecodedStreamBytes, allowance, Environment.ProcessorCount, CancellationToken.None, out _);
+    }
 }

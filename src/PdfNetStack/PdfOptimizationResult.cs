@@ -43,6 +43,18 @@ public sealed record OptimizationStatistics(
     /// <summary>JPEG images among <see cref="JpegImagesRecompressed"/> that were requantized, and so changed lossily.</summary>
     public int JpegImagesRequantized { get; init; }
 
+    /// <summary>Images downsampled to <see cref="PdfOptimizerOptions.MaxImageDpi"/>.</summary>
+    public int ImagesDownsampled { get; init; }
+
+    /// <summary>
+    /// Raw images re-encoded as JPEG by <see cref="PdfOptimizerOptions.ConvertImagesToJpeg"/>. An image
+    /// that was also downsampled counts here and in <see cref="ImagesDownsampled"/>.
+    /// </summary>
+    public int ImagesConvertedToJpeg { get; init; }
+
+    /// <summary>Images left as they were because their lossy change failed <see cref="PdfOptimizerOptions.MinImageSsim"/>.</summary>
+    public int ImagesKeptByQualityGate { get; init; }
+
     internal static OptimizationStatistics Empty(TimeSpan elapsed) => new(0, 0, 0, 0, 0, 0, 0, elapsed, new PhaseTimings());
 }
 

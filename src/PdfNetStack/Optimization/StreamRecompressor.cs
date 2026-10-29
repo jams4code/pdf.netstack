@@ -8,13 +8,32 @@ using PdfNetStack.Writing;
 namespace PdfNetStack.Optimization;
 
 /// <summary>What the JPEG pass may do. Null quality keeps every image lossless.</summary>
-internal readonly record struct JpegSettings(int? Quality);
+/// <param name="Quality">Requantization target, or null.</param>
+/// <param name="Progressive">Also try progressive coding.</param>
+/// <param name="MinSsim">The perceptual gate for requantization, or null for none.</param>
+internal readonly record struct JpegSettings(int? Quality, bool Progressive = false, double? MinSsim = null);
 
-/// <summary>Streams whose encoding changed, and how many of them were JPEG images.</summary>
+/// <summary>zlib at a level, optionally followed by the exhaustive encoder on data that is final.</summary>
+internal readonly record struct Flate(CompressionLevel Level, bool Exhaustive, CancellationToken Cancellation = default)
+{
+    public byte[] Encode(ReadOnlySpan<byte> data) => StreamCodec.Deflate(data, Level, Exhaustive, Cancellation);
+}
+
+/// <summary>Streams whose encoding changed, and what the image passes did.</summary>
 /// <param name="RequantizedObjects">Source object numbers of the JPEG images that were requantized.</param>
-internal readonly record struct RecompressionCounts(int Streams, int JpegImages, HashSet<int> RequantizedObjects)
+internal sealed record RecompressionCounts(int Streams, int JpegImages, HashSet<int> RequantizedObjects)
 {
     public int JpegRequantized => RequantizedObjects.Count;
+
+    /// <summary>Source object numbers of images that were downsampled or converted to JPEG.</summary>
+    public HashSet<int> ResampledObjects { get; init; } = [];
+
+    public int Downsampled { get; init; }
+
+    public int ConvertedToJpeg { get; init; }
+
+    /// <summary>Images kept as they were because every lossy candidate failed the perceptual gate.</summary>
+    public int KeptByGate { get; init; }
 }
 
 /// <summary>
@@ -28,7 +47,9 @@ internal static class StreamRecompressor
 {
     private const int FlateOverhead = 19; // "/Filter/FlateDecode"
 
-    public static RecompressionCounts Run(PdfFile file, ObjectGraph graph, CompressionLevel level, bool imagePredictors, JpegSettings? jpeg, long decodeLimit, int parallelism, CancellationToken ct)
+    /// <param name="exhaustive">Also run the exhaustive Flate encoder on each stream's winning data.</param>
+    /// <param name="images">The lossy image pass, or null to leave image samples alone.</param>
+    public static RecompressionCounts Run(PdfFile file, ObjectGraph graph, CompressionLevel level, bool exhaustive, bool imagePredictors, JpegSettings? jpeg, ImageSettings? images, long decodeLimit, int parallelism, CancellationToken ct)
     {
         var streams = new List<PdfStream>();
         var numbers = new List<int>();
@@ -40,30 +61,43 @@ internal static class StreamRecompressor
         }
 
         // Pre-resolve everything a worker may need so that workers never touch the parser.
-        HashSet<int> masks = jpeg?.Quality is null ? [] : SoftMaskTargets(file, streams);
+        HashSet<int> masks = jpeg?.Quality is null && images is null ? [] : SoftMaskTargets(file, streams);
+        Dictionary<int, PlacedSize> placed = images?.MaxDpi is null
+            ? []
+            : ImagePlacement.Measure(file, graph, [.. numbers.Where((n, i) => streams[i].Dictionary.GetName("Subtype") == "Image")], decodeLimit, ct);
         var plans = new Plan?[streams.Count];
         for (int i = 0; i < streams.Count; i++)
         {
-            JpegSettings? settings = jpeg is { } j && masks.Contains(numbers[i]) ? j with { Quality = null } : jpeg;
-            plans[i] = Prepare(file, streams[i], settings);
+            bool mask = masks.Contains(numbers[i]);
+            JpegSettings? settings = jpeg is { } j && mask ? j with { Quality = null } : jpeg;
+            plans[i] = Prepare(file, streams[i], settings, mask ? null : images, placed.TryGetValue(numbers[i], out PlacedSize size) ? size : null);
         }
 
         // Largest first, handed out one at a time, so one big image never runs alone at the end.
         int[] schedule = Enumerable.Range(0, streams.Count).OrderByDescending(i => streams[i].Data.Length).ToArray();
-        int changed = 0, jpegImages = 0;
+        int changed = 0, jpegImages = 0, keptByGate = 0;
         var requantized = new bool[streams.Count];
+        var lossyKinds = new LossyKind[streams.Count];
         var partitioner = System.Collections.Concurrent.Partitioner.Create(schedule, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
         Parallel.ForEach(partitioner, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, i =>
         {
             Plan? plan = plans[i];
             if (plan is null) return;
-            Result? result = Recompress(streams[i], plan, level, imagePredictors, decodeLimit);
+            Result? result = Recompress(streams[i], plan, new Flate(level, exhaustive, ct), imagePredictors, decodeLimit, out bool rejected);
+            if (rejected) Interlocked.Increment(ref keptByGate);
             if (result is null) return;
             if (result.Jpeg) Interlocked.Increment(ref jpegImages);
             requantized[i] = result.Requantized;
+            lossyKinds[i] = result.Lossy;
             PdfDictionary d = streams[i].Dictionary;
             streams[i].Data = result.Data;
             d.Remove("DL");
+            if ((result.Lossy & LossyKind.Downsampled) != 0)
+            {
+                d.Set("Width", PdfNumber.FromInteger(result.Width));
+                d.Set("Height", PdfNumber.FromInteger(result.Height));
+            }
+
             if (result.Filter is null)
             {
                 d.Remove("Filter");
@@ -80,23 +114,41 @@ internal static class StreamRecompressor
         });
 
         var requantizedObjects = new HashSet<int>();
+        var resampledObjects = new HashSet<int>();
         for (int i = 0; i < streams.Count; i++)
         {
             if (requantized[i]) requantizedObjects.Add(numbers[i]);
+            if (lossyKinds[i] != LossyKind.None) resampledObjects.Add(numbers[i]);
         }
 
-        return new RecompressionCounts(changed, jpegImages, requantizedObjects);
+        return new RecompressionCounts(changed, jpegImages, requantizedObjects)
+        {
+            ResampledObjects = resampledObjects,
+            Downsampled = lossyKinds.Count(k => (k & LossyKind.Downsampled) != 0),
+            ConvertedToJpeg = lossyKinds.Count(k => (k & LossyKind.ConvertedToJpeg) != 0),
+            KeptByGate = keptByGate,
+        };
     }
 
     /// <param name="Jpeg">Set for a JPEG image the JPEG pass may re-encode.</param>
-    private sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg);
+    /// <param name="Image">Set for an image the lossy image pass may change, with <paramref name="Images"/>.</param>
+    private sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg, ImagePlan? Image, ImageSettings? Images);
 
     /// <param name="Quality">Requantization target, or null to stay lossless.</param>
     /// <param name="ColorTransform">The DCTDecode /ColorTransform parameter, when present.</param>
     /// <param name="Components">Components the image's color space has; the JPEG must match.</param>
-    private sealed record JpegPlan(int? Quality, int? ColorTransform, int Components);
+    /// <param name="Progressive">Also try progressive coding.</param>
+    /// <param name="MinSsim">The perceptual gate for requantization, or null.</param>
+    private sealed record JpegPlan(int? Quality, int? ColorTransform, int Components, bool Progressive, double? MinSsim);
 
-    private sealed record Result(ReadOnlyMemory<byte> Data, PdfObject? Filter, PdfObject? DecodeParms, bool Jpeg = false, bool Requantized = false);
+    private sealed record Result(ReadOnlyMemory<byte> Data, PdfObject? Filter, PdfObject? DecodeParms, bool Jpeg = false, bool Requantized = false)
+    {
+        public LossyKind Lossy { get; init; }
+
+        public int Width { get; init; }
+
+        public int Height { get; init; }
+    }
 
     /// <summary>
     /// Images that serve as another image's soft mask or explicit mask. Their samples are opacity,
@@ -115,7 +167,7 @@ internal static class StreamRecompressor
         return targets;
     }
 
-    private static Plan? Prepare(PdfFile file, PdfStream stream, JpegSettings? jpeg)
+    private static Plan? Prepare(PdfFile file, PdfStream stream, JpegSettings? jpeg, ImageSettings? images, PlacedSize? placed)
     {
         PdfDictionary d = stream.Dictionary;
 
@@ -133,6 +185,7 @@ internal static class StreamRecompressor
         }
 
         JpegPlan? jpegPlan = jpeg is { } settings ? JpegPlanFor(file, d, filters, settings) : null;
+        ImagePlan? imagePlan = images is null ? null : LossyImages.PlanFor(file, d, filters, images, jpegPlan is not null, placed);
         if (filters.Count > 0 && !StreamCodec.IsDecodable(filters[0].Name) && jpegPlan is null) return null;
         if (filters.Exists(f => f.Name == "Crypt")) return null;
 
@@ -164,7 +217,7 @@ internal static class StreamRecompressor
             serializer.Write(probe, dp);
         }
 
-        return new Plan(resolved, probe.Length, ImageLayout(file, d), keepUnfiltered, jpegPlan);
+        return new Plan(resolved, probe.Length, ImageLayout(file, d), keepUnfiltered, jpegPlan, imagePlan, images);
     }
 
     /// <summary>
@@ -194,7 +247,7 @@ internal static class StreamRecompressor
             file.Resolve(parms["ColorTransform"]) is PdfNumber { IsInteger: true } ct && ct.IntegerValue is 0 or 1
                 ? (int)ct.IntegerValue
                 : null;
-        return new JpegPlan(settings.Quality, colorTransform, components);
+        return new JpegPlan(settings.Quality, colorTransform, components, settings.Progressive, settings.MinSsim);
     }
 
     /// <summary>
@@ -285,8 +338,9 @@ internal static class StreamRecompressor
     private static int IntOf(PdfFile file, PdfObject? o) =>
         file.Resolve(o) is PdfNumber { IsInteger: true } n && n.IntegerValue is > 0 and < int.MaxValue ? (int)n.IntegerValue : 0;
 
-    private static Result? Recompress(PdfStream stream, Plan plan, CompressionLevel level, bool imagePredictors, long decodeLimit)
+    private static Result? Recompress(PdfStream stream, Plan plan, Flate level, bool imagePredictors, long decodeLimit, out bool rejected)
     {
+        rejected = false;
         int originalCost = stream.Data.Length + plan.OriginalOverhead;
         DecodedStream decoded;
         try
@@ -300,37 +354,91 @@ internal static class StreamRecompressor
 
         using (decoded)
         {
-            return Choose(decoded, plan, originalCost, level, imagePredictors, decodeLimit);
+            Result? best = Choose(decoded, plan, originalCost, level, imagePredictors, decodeLimit, out rejected);
+            if (plan.Image is null || plan.Images is null) return best;
+
+            // Lossy candidates must beat the best lossless (or requantized) encoding by a clear margin.
+            int bestCost = best is null ? originalCost : best.Data.Length + Overhead(best.Filter, best.DecodeParms);
+            Result? lossy = ChooseLossy(decoded, plan.Image, plan.Images, bestCost, level, imagePredictors, decodeLimit, out bool gateRejected);
+            rejected |= gateRejected && lossy is null;
+            return lossy ?? best;
         }
     }
 
-    private static Result? Choose(DecodedStream decoded, Plan plan, int originalCost, CompressionLevel level, bool imagePredictors, long decodeLimit)
+    private static Result? ChooseLossy(DecodedStream decoded, ImagePlan image, ImageSettings settings, int bestCost, Flate level, bool imagePredictors, long decodeLimit, out bool rejected)
     {
+        rejected = false;
+        ReadOnlyMemory<byte> data = decoded.Data;
+        BoundedBuffer? unpredicted = null;
+        try
+        {
+            if (image.Jpeg)
+            {
+                if (decoded.PendingPredictor is not null || decoded.Remaining is not [{ Name: "DCTDecode" }]) return null;
+            }
+            else
+            {
+                if (decoded.Remaining.Count > 0) return null;
+                if (decoded.PendingPredictor is { } pending)
+                {
+                    if (!Predictors.TryDecode(data.Span, pending, decodeLimit, out unpredicted)) return null;
+                    data = unpredicted!.Memory;
+                }
+            }
+
+            Result? best = null;
+            int limit = (int)(bestCost * LossyImages.RequiredGain);
+            foreach (LossyCandidate c in LossyImages.Candidates(data.Span, image, settings, level, imagePredictors, decodeLimit, out rejected))
+            {
+                int cost = c.Data.Length + Overhead(c.Filter, c.DecodeParms);
+                if (cost >= limit) continue;
+                limit = cost;
+                best = new Result(c.Data, c.Filter, c.DecodeParms, Jpeg: image.Jpeg)
+                {
+                    Lossy = c.Kind,
+                    Width = c.Width,
+                    Height = c.Height,
+                };
+            }
+
+            return best;
+        }
+        finally
+        {
+            unpredicted?.Dispose();
+        }
+    }
+
+    /// <summary>Bytes the /Filter and /DecodeParms entries take in the dictionary.</summary>
+    private static int Overhead(PdfObject? filter, PdfObject? parms)
+    {
+        if (filter is null) return 0;
+        var probe = new ByteSink(64);
+        var serializer = new PdfSerializer(r => r.Number);
+        PdfSerializer.WriteName(probe, "Filter");
+        serializer.Write(probe, filter);
+        if (parms is not null)
+        {
+            PdfSerializer.WriteName(probe, "DecodeParms");
+            serializer.Write(probe, parms);
+        }
+
+        return probe.Length;
+    }
+
+    private static Result? Choose(DecodedStream decoded, Plan plan, int originalCost, Flate flate, bool imagePredictors, long decodeLimit, out bool rejected)
+    {
+        rejected = false;
         if (decoded.LayersDecoded == 0 && plan.Filters.Count > 0 && plan.Jpeg is null) return null;
 
+        CompressionLevel level = flate.Level;
         Result? best = null;
         int bestCost = originalCost;
 
         // Candidates that point into the pooled decode buffer are copied only if they win.
         void Consider(ReadOnlyMemory<byte> data, PdfObject? filter, PdfObject? parms, bool borrowed = false, bool jpeg = false, bool requantized = false)
         {
-            int overhead = 0;
-            if (filter is not null)
-            {
-                var probe = new ByteSink(64);
-                var serializer = new PdfSerializer(r => r.Number);
-                PdfSerializer.WriteName(probe, "Filter");
-                serializer.Write(probe, filter);
-                if (parms is not null)
-                {
-                    PdfSerializer.WriteName(probe, "DecodeParms");
-                    serializer.Write(probe, parms);
-                }
-
-                overhead = probe.Length;
-            }
-
-            int cost = data.Length + overhead;
+            int cost = data.Length + Overhead(filter, parms);
             if (cost < bestCost)
             {
                 bestCost = cost;
@@ -342,7 +450,7 @@ internal static class StreamRecompressor
         if (decoded.PendingPredictor is { } pending)
         {
             // Keep the existing predictor, recompress underneath it.
-            byte[] deflated = StreamCodec.Deflate(decoded.Data.Span, level);
+            byte[] deflated = flate.Encode(decoded.Data.Span);
             (PdfObject filter, PdfObject? parms) = BuildChain(remaining, StreamCodec.PredictorDictionary(pending));
             Consider(deflated, filter, parms);
             return best;
@@ -357,7 +465,7 @@ internal static class StreamRecompressor
                 decoded.Data.Length / plan.ImageLayout.Value.RowBytes > 1;
             if (!predictable)
             {
-                Consider(StreamCodec.Deflate(decoded.Data.Span, level), new PdfName("FlateDecode"), null);
+                Consider(flate.Encode(decoded.Data.Span), new PdfName("FlateDecode"), null);
                 return best;
             }
 
@@ -370,12 +478,12 @@ internal static class StreamRecompressor
                 || StreamCodec.Deflate(predicted, CompressionLevel.Fastest).Length < StreamCodec.Deflate(decoded.Data.Span, CompressionLevel.Fastest).Length;
             if (usePredictor)
             {
-                Consider(StreamCodec.Deflate(predicted, level), new PdfName("FlateDecode"), StreamCodec.PredictorDictionary(layout));
+                Consider(flate.Encode(predicted), new PdfName("FlateDecode"), StreamCodec.PredictorDictionary(layout));
                 if (level == CompressionLevel.Fastest) Consider(StreamCodec.Deflate(decoded.Data.Span, level), new PdfName("FlateDecode"), null);
             }
             else
             {
-                Consider(StreamCodec.Deflate(decoded.Data.Span, level), new PdfName("FlateDecode"), null);
+                Consider(flate.Encode(decoded.Data.Span), new PdfName("FlateDecode"), null);
             }
 
             return best;
@@ -386,7 +494,15 @@ internal static class StreamRecompressor
         (PdfObject innerFilter, PdfObject? innerParms) = BuildChain(remaining, null);
         if (plan.Jpeg is { } jpeg && remaining.Count == 1)
         {
-            byte[]? transcoded = JpegTranscoder.TryTranscode(decoded.Data.Span, jpeg.Quality, jpeg.ColorTransform, jpeg.Components, decodeLimit, out bool requantized);
+            byte[]? transcoded = JpegTranscoder.TryTranscode(decoded.Data.Span, jpeg.Quality, jpeg.ColorTransform, jpeg.Components, decodeLimit, out bool requantized, jpeg.Progressive);
+            if (transcoded is not null && requantized && jpeg.MinSsim is { } gate
+                && !LossyImages.RequantizationPasses(decoded.Data.Span, transcoded, jpeg.ColorTransform, gate, decodeLimit))
+            {
+                // The requantized image failed the gate: keep it lossless.
+                rejected = true;
+                transcoded = JpegTranscoder.TryTranscode(decoded.Data.Span, null, jpeg.ColorTransform, jpeg.Components, decodeLimit, out requantized, jpeg.Progressive);
+            }
+
             if (transcoded is not null) Consider(transcoded, innerFilter, innerParms, jpeg: true, requantized: requantized);
 
             // A bare JPEG has no layers to drop, and entropy coded data does not deflate.

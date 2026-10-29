@@ -338,7 +338,12 @@ public sealed class PdfDocument
         int Map(PdfReference r) => index.TryGetValue(r.Number, out int n) ? n : -1;
         bool objectStreams = options.UseObjectStreams;
         string version = objectStreams && string.CompareOrdinal(Version, "1.5") < 0 ? "1.5" : Version;
-        byte[] written = PdfDocumentWriter.Write(objects, trailer, Map, new WriterSettings(objectStreams, 200, version, level)).ToArray();
+        // The optimizer pass below does the exhaustive search; without it, the writer does.
+        var settings = new WriterSettings(objectStreams, 200, version, level)
+        {
+            Exhaustive = options.Compression == CompressionEffort.Exhaustive && !options.Optimize,
+        };
+        byte[] written = PdfDocumentWriter.Write(objects, trailer, Map, settings).ToArray();
         Objects.Remove(pagesNumber);
 
         if (options.Optimize)

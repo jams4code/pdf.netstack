@@ -221,8 +221,11 @@ public static partial class PdfOptimizer
             RecompressionCounts recompressed = new(0, 0, []);
             if (options.RecompressStreams)
             {
-                JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality) : null;
-                recompressed = StreamRecompressor.Run(file, graph, options.ZlibLevel, options.UseImagePredictors, jpeg,
+                JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality, options.ProgressiveJpeg, options.MinImageSsim) : null;
+                ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg
+                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg)
+                    : null;
+                recompressed = StreamRecompressor.Run(file, graph, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors, jpeg, images,
                     options.MaxDecodedStreamBytes, options.MaxDegreeOfParallelism, ct);
             }
 
@@ -266,7 +269,10 @@ public static partial class PdfOptimizer
 
             bool objectStreams = options.UseObjectStreams && !pdfA1;
             var settings = new WriterSettings(objectStreams, options.ObjectsPerStream,
-                OutputVersion(file.HeaderVersion, objectStreams), options.ZlibLevel);
+                OutputVersion(file.HeaderVersion, objectStreams), options.ZlibLevel)
+            {
+                Exhaustive = options.Compression == CompressionEffort.Exhaustive,
+            };
             ReadOnlyMemory<byte> candidate = PdfDocumentWriter.Write(objects, trailer, Map, settings);
             timings = timings with { Write = phase.Elapsed };
             phase.Restart();
@@ -284,6 +290,9 @@ public static partial class PdfOptimizer
             {
                 JpegImagesRecompressed = recompressed.JpegImages,
                 JpegImagesRequantized = recompressed.JpegRequantized,
+                ImagesDownsampled = recompressed.Downsampled,
+                ImagesConvertedToJpeg = recompressed.ConvertedToJpeg,
+                ImagesKeptByQualityGate = recompressed.KeptByGate,
             };
 
             double saving = 100.0 * (input.Length - candidate.Length) / input.Length;
@@ -307,8 +316,9 @@ public static partial class PdfOptimizer
                 var ignored = new List<string>();
                 if (options.RemovePageThumbnails) ignored.Add("Thumb");
                 if (options.RemovePieceInfo) ignored.Add("PieceInfo");
+                var allowance = new ImageAllowance(recompressed.RequantizedObjects.Contains, recompressed.ResampledObjects.Contains, options.MinImageSsim);
                 string? difference = EquivalenceVerifier.Verify(reference, written, ignored, options.MaxDecodedStreamBytes,
-                    recompressed.RequantizedObjects.Contains, options.MaxDegreeOfParallelism, ct, out int compared);
+                    allowance, options.MaxDegreeOfParallelism, ct, out int compared);
                 if (difference is not null)
                 {
                     return new Outcome(OptimizationDisposition.OriginalRetained, null, "Verification failed: " + difference, pageCount, stats);
@@ -317,17 +327,7 @@ public static partial class PdfOptimizer
                 stats = stats with { ObjectsVerified = compared, Phases = timings with { Verify = phase.Elapsed } };
             }
 
-            string reason = options.Verify
-                ? "Rewritten and verified equivalent to the source."
-                : "Rewritten. Verification was disabled.";
-            if (recompressed.JpegRequantized > 0)
-            {
-                reason = Compat.Format(options.Verify
-                        ? "Rewritten and verified. {0} JPEG image(s) requantized to quality {1}; everything else is equivalent to the source."
-                        : "Rewritten. {0} JPEG image(s) requantized to quality {1}. Verification was disabled.",
-                    recompressed.JpegRequantized, options.JpegQuality!.Value);
-            }
-            return new Outcome(OptimizationDisposition.Optimized, candidate, reason, pageCount, stats);
+            return new Outcome(OptimizationDisposition.Optimized, candidate, Reason(options, recompressed), pageCount, stats);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -335,6 +335,26 @@ public static partial class PdfOptimizer
         }
 
         Outcome Retained(OptimizationDisposition disposition, string reason) => new(disposition, null, reason, pageCount, null);
+    }
+
+    /// <summary>What was written, naming every lossy image change.</summary>
+    private static string Reason(PdfOptimizerOptions options, RecompressionCounts recompressed)
+    {
+        var lossy = new List<string>();
+        if (recompressed.JpegRequantized > 0) lossy.Add(Compat.Format("{0} JPEG image(s) requantized to quality {1}", recompressed.JpegRequantized, options.JpegQuality!.Value));
+        if (recompressed.Downsampled > 0) lossy.Add(Compat.Format("{0} image(s) downsampled to {1} dpi", recompressed.Downsampled, options.MaxImageDpi!.Value));
+        if (recompressed.ConvertedToJpeg > 0) lossy.Add(Compat.Format("{0} image(s) converted to JPEG at quality {1}", recompressed.ConvertedToJpeg, options.JpegQuality!.Value));
+        if (lossy.Count == 0)
+        {
+            return options.Verify
+                ? "Rewritten and verified equivalent to the source."
+                : "Rewritten. Verification was disabled.";
+        }
+
+        string changes = string.Join(", ", lossy);
+        return options.Verify
+            ? "Rewritten and verified. " + changes + "; everything else is equivalent to the source."
+            : "Rewritten. " + changes + ". Verification was disabled.";
     }
 
     internal static int CountPages(PdfFile file)

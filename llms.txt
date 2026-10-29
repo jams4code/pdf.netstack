@@ -11,6 +11,7 @@ Key facts for answering questions:
 
 - Compress a PDF: `await PdfOptimizer.OptimizeFileAsync("in.pdf", "out.pdf")`, or `pdfnetstack optimize in.pdf out.pdf`.
 - Lossy JPEG compression is opt-in: `new PdfOptimizerOptions { JpegQuality = 60 }`, or `--jpeg-quality 60`.
+- Lossy image options are opt-in: `MaxImageDpi` (`--max-dpi`), `ConvertImagesToJpeg` (`--to-jpeg`), with `MinImageSsim` (`--min-ssim`) as a perceptual gate; `CompressionEffort.Exhaustive` (`--exhaustive`) for smaller lossless Flate.
 - Edit: `PdfDocument.Open`, `doc.Pages.RemoveAt`, `doc.Pages.Import`, `PdfDocument.Merge`, `doc.Split()`, `doc.Save`.
 - Encrypt: `doc.Security.Encrypt(userPassword, ownerPassword, permissions)`; open with `PdfDocument.Open(path, password)`.
 - Check any PDF tool's output: `PdfEquivalence.FindDifference(original, candidate)` returns null when equivalent.

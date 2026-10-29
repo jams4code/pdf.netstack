@@ -23,6 +23,9 @@ Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
   baseline, metadata segments dropped. DCT coefficients stay identical.
 - **Optional lossy JPEG compression:** `JpegQuality` requantizes JPEG images at a libjpeg quality,
   never finer than the original.
+- **Optional lossy image options:** `MaxImageDpi` downsamples oversampled images,
+  `ConvertImagesToJpeg` turns photographs into JPEG, and `MinImageSsim` keeps any image a change
+  would visibly hurt. `CompressionEffort.Exhaustive` squeezes Flate streams further for archives.
 - **Built-in equivalence proof** on every rewrite, also available on its own as
   `PdfEquivalence.FindDifference` to check the output of any PDF tool.
 - **Editing:** open, create, merge, split, reorder, rotate, remove and import pages; document

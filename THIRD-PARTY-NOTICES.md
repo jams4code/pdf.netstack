@@ -226,6 +226,10 @@ and zlib licenses) through `tools/make_jpeg_fixtures.py`; no code from either is
 test fixtures are synthetic images written by Pillow with OpenJPEG (BSD-2-Clause) and by a small
 encoder in `tools/make_jpx_fixtures.py` written from ITU-T T.800; their references are OpenJPEG's
 decodes. No OpenJPEG code is used.
+`tools/make_lossy_corpus.py` draws its synthetic measurement files with NumPy and writes one
+JPEG with Pillow; the files are not committed. The JPEG encoder, the progressive writer, the
+resampler, SSIM and the exhaustive Deflate encoder are written from ITU T.81, RFC 1951 and
+published papers; no libjpeg, Zopfli or other code is used.
 `tools/make_standard_fonts.py` reads glyph name mappings from fontTools (MIT; the Adobe Glyph List
 it carries is BSD-3-Clause) and the Symbol and ZapfDingbats encoding tables from pypdf
 (BSD-3-Clause); only the resulting code point numbers end up in the generated file. The font

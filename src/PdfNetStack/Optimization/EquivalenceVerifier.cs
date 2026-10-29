@@ -19,22 +19,27 @@ internal sealed class EquivalenceVerifier
     private readonly PdfFile _a;
     private readonly PdfFile _b;
     private readonly HashSet<string> _ignoredSourceKeys;
+    private static readonly HashSet<string> SizeKeys = new(StringComparer.Ordinal) { "Width", "Height" };
+
     private readonly long _decodeLimit;
-    private readonly Predicate<int> _mayRequantize;
+    private readonly ImageAllowance _allowance;
     private readonly HashSet<(int, int)> _visited = new();
     private readonly Dictionary<int, int> _aToB = new();
     private readonly Dictionary<int, int> _bToA = new();
     private readonly Queue<(int A, int B, string Path)> _pending = new();
-    private readonly List<(PdfStream A, PdfStream B, int NumberA, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB)> _streams = new();
+    private readonly List<StreamJob> _streams = new();
 
-    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, Predicate<int> mayRequantize)
+    private EquivalenceVerifier(PdfFile a, PdfFile b, IEnumerable<string> ignoredSourceKeys, long decodeLimit, ImageAllowance allowance)
     {
         _a = a;
         _b = b;
         _ignoredSourceKeys = new HashSet<string>(ignoredSourceKeys, StringComparer.Ordinal);
         _decodeLimit = decodeLimit;
-        _mayRequantize = mayRequantize;
+        _allowance = allowance;
     }
+
+    /// <param name="Images">Source and output geometry, set when the image may have been resampled.</param>
+    private sealed record StreamJob(PdfStream A, PdfStream B, int NumberA, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB, (ImageGeometry A, ImageGeometry B)? Images);
 
     public int ObjectsCompared { get; private set; }
 
@@ -47,8 +52,16 @@ internal sealed class EquivalenceVerifier
     /// </param>
     /// <returns>Null when equivalent, otherwise a description of the first difference found.</returns>
     public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, Predicate<int> mayRequantize, int parallelism, CancellationToken ct, out int objectsCompared)
+        => Verify(source, output, ignoredSourceKeys, decodeLimit, new ImageAllowance(mayRequantize, static _ => false, null), parallelism, ct, out objectsCompared);
+
+    /// <param name="allowance">
+    /// Lossy image changes to accept, by source object number: requantization, proven exactly,
+    /// and resampling or conversion to JPEG, proven by SSIM. Everything else about such an image
+    /// must still match. With a gate, requantized images must also meet it.
+    /// </param>
+    public static string? Verify(PdfFile source, PdfFile output, IEnumerable<string> ignoredSourceKeys, long decodeLimit, ImageAllowance allowance, int parallelism, CancellationToken ct, out int objectsCompared)
     {
-        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, mayRequantize);
+        var v = new EquivalenceVerifier(source, output, ignoredSourceKeys, decodeLimit, allowance);
         string? difference = v.Run(parallelism, ct);
         objectsCompared = v.ObjectsCompared;
         return difference;
@@ -77,7 +90,7 @@ internal sealed class EquivalenceVerifier
         string? failure = null;
         Parallel.ForEach(jobs, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, (job, state) =>
         {
-            string? d = CompareStreamData(job.A, job.B, job.NumberA, job.FiltersA, job.FiltersB, job.Path);
+            string? d = CompareStreamData(job);
             if (d is not null)
             {
                 Interlocked.CompareExchange(ref failure, d, null);
@@ -166,14 +179,24 @@ internal sealed class EquivalenceVerifier
             case PdfStream aStream:
             {
                 if (b is not PdfStream bStream) return path + ": stream vs other";
-                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, isStream: true);
+                List<FilterSpec>? fa = SafeFilters(_a, aStream);
+                List<FilterSpec>? fb = SafeFilters(_b, bStream);
+
+                // A resampled image may change its size and its coding between raw samples and
+                // JPEG; the data comparison proves the rest.
+                (ImageGeometry, ImageGeometry)? images = null;
+                if (numberA >= 0 && _allowance.MayResample(numberA) && fa is not null && fb is not null
+                    && LossyImages.Geometry(_a, aStream.Dictionary, fa) is { } ga && LossyImages.Geometry(_b, bStream.Dictionary, fb) is { } gb)
+                {
+                    images = (ga, gb);
+                }
+
+                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, isStream: true, sizeMayChange: images is not null);
                 if (d is not null) return d;
 
                 // Parameters of filters that stay encoded (JBIG2Globals, DCT settings) are part of
                 // the content, and may reference other objects, so they go through the full walk.
-                List<FilterSpec>? fa = SafeFilters(_a, aStream);
-                List<FilterSpec>? fb = SafeFilters(_b, bStream);
-                if (fa is not null && fb is not null)
+                if (fa is not null && fb is not null && images is null)
                 {
                     var ka = fa.SkipWhile(f => StreamCodec.IsDecodable(f.Name)).ToList();
                     var kb = fb.SkipWhile(f => StreamCodec.IsDecodable(f.Name)).ToList();
@@ -186,7 +209,7 @@ internal sealed class EquivalenceVerifier
                     }
                 }
 
-                _streams.Add((aStream, bStream, numberA, path, fa, fb));
+                _streams.Add(new StreamJob(aStream, bStream, numberA, path, fa, fb, images));
                 return null;
             }
 
@@ -195,11 +218,12 @@ internal sealed class EquivalenceVerifier
         }
     }
 
-    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, bool isStream)
+    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, bool isStream, bool sizeMayChange = false)
     {
         foreach (string key in a.Keys)
         {
             if (isStream && EncodingKeys.Contains(key)) continue;
+            if (sizeMayChange && SizeKeys.Contains(key)) continue;
             if (_ignoredSourceKeys.Contains(key) && b[key] is null) continue;
             string? d = Compare(a[key], b[key] ?? PdfNull.Instance, path + "/" + key, depth + 1);
             if (d is not null) return d;
@@ -246,8 +270,9 @@ internal sealed class EquivalenceVerifier
         }
     }
 
-    private string? CompareStreamData(PdfStream a, PdfStream b, int numberA, List<FilterSpec>? fa, List<FilterSpec>? fb, string path)
+    private string? CompareStreamData(StreamJob job)
     {
+        (PdfStream a, PdfStream b, int numberA, string path, List<FilterSpec>? fa, List<FilterSpec>? fb) = (job.A, job.B, job.NumberA, job.Path, job.FiltersA, job.FiltersB);
         using DecodedStream? da = TryDecode(a, fa);
         using DecodedStream? db = TryDecode(b, fb);
         if (da is null || db is null)
@@ -257,14 +282,33 @@ internal sealed class EquivalenceVerifier
             return SameFilterChain(fa, fb) ? null : path + ": filter chain changed on undecodable stream";
         }
 
+        if (job.Images is { } images && !(SameFilterChain(da.Remaining, db.Remaining) && da.Data.Span.SequenceEqual(db.Data.Span)))
+        {
+            // Each side must decode as its own dictionary says: samples, or one JPEG.
+            static bool Coded(DecodedStream d, ImageGeometry g) =>
+                d.PendingPredictor is null && (g.Jpeg ? d.Remaining is [{ Name: "DCTDecode" }] : d.Remaining.Count == 0);
+            if (!Coded(da, images.A) || !Coded(db, images.B)) return path + ": resampled image is not coded as its dictionary says";
+            string? failure = LossyImages.Verify(da.Data.Span, images.A, db.Data.Span, images.B, _allowance.MinSsim, _decodeLimit);
+            return failure is null ? null : path + ": " + failure;
+        }
+
         if (da.PendingPredictor != db.PendingPredictor) return path + ": predictor differs";
         if (!SameFilterChain(da.Remaining, db.Remaining)) return path + ": remaining filters differ";
         if (da.Data.Span.SequenceEqual(db.Data.Span)) return null;
 
         // Re-encoded JPEG data differs in bytes; equality is decided on its coefficients.
-        if (da.PendingPredictor is null && da.Remaining is [{ Name: "DCTDecode" }])
+        if (da.PendingPredictor is null && da.Remaining is [{ Name: "DCTDecode" } dct])
         {
-            string? difference = JpegEquivalence.FindDifference(da.Data.Span, db.Data.Span, numberA >= 0 && _mayRequantize(numberA), _decodeLimit);
+            bool requantize = numberA >= 0 && _allowance.MayRequantize(numberA);
+            string? difference = JpegEquivalence.FindDifference(da.Data.Span, db.Data.Span, requantize, _decodeLimit);
+            if (difference is null && requantize && _allowance.MinSsim is { } gate)
+            {
+                int? colorTransform = dct.Parms is PdfDictionary parms && parms["ColorTransform"] is PdfNumber { IsInteger: true } t && t.IntegerValue is 0 or 1
+                    ? (int)t.IntegerValue
+                    : null;
+                if (!LossyImages.RequantizationPasses(da.Data.Span, db.Data.Span, colorTransform, gate, _decodeLimit)) difference = "requantized JPEG is below the perceptual gate";
+            }
+
             return difference is null ? null : path + ": " + difference;
         }
 

@@ -13,6 +13,7 @@ internal static class JpegTranscoder
     /// <param name="expectedComponents">Components the image's color space requires; a mismatch leaves the data alone.</param>
     /// <param name="coefficientByteLimit">Ceiling for the coefficient buffers.</param>
     /// <param name="requantized">Set when coefficients were requantized, so the output is no longer lossless.</param>
+    /// <param name="progressive">Also try progressive coding and keep it when smaller.</param>
     /// <returns>The re-encoded data, or null when it is not a supported JPEG.</returns>
     public static byte[]? TryTranscode(
         ReadOnlySpan<byte> jpeg,
@@ -20,7 +21,8 @@ internal static class JpegTranscoder
         int? pdfColorTransform,
         int expectedComponents,
         long coefficientByteLimit,
-        out bool requantized)
+        out bool requantized,
+        bool progressive = false)
     {
         requantized = false;
         JpegImage image;
@@ -37,7 +39,7 @@ internal static class JpegTranscoder
         {
             if (image.Components.Length != expectedComponents) return null;
             if (quality is { } q) requantized = JpegQuantization.Requantize(image, q, image.ChromaComponents(pdfColorTransform));
-            byte[]? output = JpegWriter.TryWrite(image, jpeg.Length);
+            byte[]? output = JpegWriter.TryWriteSmallest(image, jpeg.Length, progressive);
             if (output is null) requantized = false;
             return output;
         }

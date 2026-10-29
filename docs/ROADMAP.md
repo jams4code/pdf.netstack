@@ -27,6 +27,7 @@ Done and in the main branch:
 | Document features | Viewer preferences, page labels, language, custom properties, file attachments |
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; PDF/A-2b, 2u, 3b and 3u output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
 | Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
+| Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
 | HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, tagged PDF |
 
@@ -49,11 +50,9 @@ Done and in the main branch:
 - Pages whose scan is made of several images.
 
 **Optimizer**
-- A perceptual quality gate for lossy JPEG, downsampling of oversampled photographs, and raw
-  continuous tone images to JPEG.
 - Pruning of unused fonts, XObjects and graphics states.
 - Content stream compaction and font program deduplication.
-- An opt-in Zopfli style Flate encoder for archival jobs.
+- Lossy image options measured on the public benchmark corpus, once it exists.
 
 **Scale and performance**
 - Faster text extraction and HTML layout.
