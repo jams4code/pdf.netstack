@@ -126,10 +126,18 @@ launch:
 2. In `lighthouserc.json`, make `categories:seo` an error.
 3. Point the repository `llms.txt` and `PackageProjectUrl` at the site.
 
-The Cloudflare and GitHub steps are in the website plan. The `Docs` workflow deploys to the
-Cloudflare Pages project `pdfnetstack` once the `docs` environment holds `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID`; pull requests from this repository deploy a preview when the
-`docs-preview` environment holds them too.
+The `Docs` workflow deploys to the Cloudflare Pages project `pdfnetstack` once the `docs`
+environment holds `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; pull requests from this
+repository deploy a preview when the `docs-preview` environment holds them too. To set it up:
+
+1. In Cloudflare, create the Pages project `pdfnetstack` (direct upload) and attach the custom
+   domain `pdfnetstack.jadev-corp.com`. Cloudflare adds the DNS record itself.
+2. Create an API token with only the Account > Cloudflare Pages > Edit permission, for this
+   account. Nothing else.
+3. In the GitHub repository settings, create the `docs` environment, limit it to the `main`
+   branch, and add the two secrets.
+
+The deploy action is pinned to a commit; Dependabot proposes updates to it.
 
 ## Serving from a subpath
 
