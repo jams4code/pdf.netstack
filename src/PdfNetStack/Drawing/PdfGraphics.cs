@@ -417,8 +417,8 @@ public sealed class PdfGraphics : IDisposable
         }
     }
 
-    /// <summary>Draws shaped glyphs, in visual order, with the baseline starting at (x, y).</summary>
-    private void DrawGlyphs(List<ShapedGlyph> glyphs, PdfFont font, double size, PdfPen? pen, PdfBrush? brush, double x, double y, string text)
+    /// <summary>Draws shaped glyphs, in visual order, with the baseline starting at (x, y). The HTML engine draws its own lines through this.</summary>
+    internal void DrawGlyphs(List<ShapedGlyph> glyphs, PdfFont font, double size, PdfPen? pen, PdfBrush? brush, double x, double y, string text)
     {
         if (pen is null && brush is null) return;
         FontResource resource = _doc.GetFontResource(font);

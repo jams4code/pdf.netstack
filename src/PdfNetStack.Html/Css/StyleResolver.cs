@@ -252,6 +252,31 @@ internal sealed class StyleResolver
         return style;
     }
 
+    /// <summary>
+    /// The style of a page or margin box from its declarations, in increasing precedence
+    /// (CSS Paged Media 3, 7): the page context inherits from the root element.
+    /// </summary>
+    public ComputedStyle ComputeDeclarations(IEnumerable<CssDeclaration> declarations, ComputedStyle? parent)
+    {
+        var winners = new Dictionary<string, (CssDeclaration Declaration, long Rank)>(StringComparer.Ordinal);
+        long order = 0;
+        foreach (CssDeclaration d in declarations.SelectMany(d => CssProperties.Expand(d) ?? []))
+        {
+            long rank = ((d.Important ? 1L : 0L) << 40) | order++;
+            if (!winners.TryGetValue(d.Property, out var current) || rank >= current.Rank) winners[d.Property] = (d, rank);
+        }
+
+        var style = new ComputedStyle(parent, null);
+        ResolveCustomProperties(style, parent, winners);
+        Compute(style, parent, winners, "font-size");
+        foreach (string property in CssProperties.All.Keys)
+        {
+            if (property != "font-size") Compute(style, parent, winners, property);
+        }
+
+        return style;
+    }
+
     private readonly Dictionary<(ComputedStyle, string), ComputedStyle> _anonymous = [];
 
     /// <summary>The style of an anonymous box (CSS 2.1, 9.2.1.1): inherited values from the parent, the rest initial.</summary>

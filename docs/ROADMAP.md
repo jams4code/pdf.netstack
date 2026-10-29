@@ -80,15 +80,22 @@ quality output, built on the canvas, fonts and text layout above.
    markers sit on the first baseline. Fonts: `@font-face` (with weight ranges and `local()`),
    caller fonts, installed fonts, generic families as the standard 14 fonts, and installed
    fonts with wide coverage as fallbacks. Next: floats, absolute positioning, overflow.
-3. **Paged media.** `@page` sizes and margins, margin boxes for running headers and footers,
-   page counters, `break-before`, `break-after`, `break-inside`, orphans and widows.
-4. **Visual CSS.** Backgrounds and background images, borders with radius, box shadows,
-   linear and radial gradients, opacity, transforms, `object-fit`.
+3. **Paged media.** Done: `@page` with `:first`, `:left`, `:right`, named and custom sizes,
+   orientation and margins; margin boxes with text and `counter(page)` / `counter(pages)`;
+   breaks between lines and blocks, forced with `break-before` / `break-after` (and the
+   `page-break-*` aliases), avoided with `break-inside`, orphans and widows; margins truncated
+   at breaks. Next: named pages, `string-set`, running elements, table headers repeated per page.
+4. **Visual CSS.** Done: background colors (with `background-clip` and the root and body
+   background covering the page), solid, dashed, dotted and double borders, text decorations
+   in every style, opacity, `overflow` clipping, `visibility`. Next: background images and
+   gradients, border radius, box shadows, transforms, `object-fit`.
 5. **Flexbox, tables, then grid.** Table layout with header rows repeated across pages.
-6. **Resources.** `@font-face` from files, data URIs and URLs (Google Fonts works), images in
-   JPEG, PNG and SVG, a resource loader callback so servers control what may be fetched.
-7. **Links and structure.** Hyperlinks and internal anchors as PDF links, headings as bookmarks,
-   tagged PDF later.
+6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
+   the base folder load, so untrusted HTML cannot reach the network or other files. Style
+   sheets from `<link>` and `@import`, images in JPEG and PNG. Next: SVG images.
+7. **Links and structure.** Done: links to URLs and internal anchors, bookmarks from
+   `bookmark-level` (headings by default), title, author, subject, keywords and language from
+   the head. Tagged PDF later.
 
 `PdfNetStack.Chromium` is a separate, optional package for pages that need JavaScript or exact
 browser rendering: it drives headless Chrome and passes the result through the optimizer. The core
