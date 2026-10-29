@@ -85,6 +85,25 @@ internal static class Compat
         return new string(chars);
     }
 
+    /// <summary>Whether text ends with a character: string.EndsWith(char) is not on .NET Standard 2.0.</summary>
+    public static bool EndsWith(string s, char c) => s.Length > 0 && s[s.Length - 1] == c;
+
+    /// <summary>Whether text starts with a character: string.StartsWith(char) is not on .NET Standard 2.0.</summary>
+    public static bool StartsWith(string s, char c) => s.Length > 0 && s[0] == c;
+
+#pragma warning disable CA2249 // .NET Standard 2.0 has no Contains overload with a comparison.
+    /// <summary>Whether text contains a value under a comparison.</summary>
+    public static bool Contains(string s, string value, StringComparison comparison) => s.IndexOf(value, comparison) >= 0;
+#pragma warning restore CA2249
+
+    /// <summary>Parses part of a string as an invariant floating point number, without span overloads .NET Standard 2.0 lacks.</summary>
+    public static bool TryParseDouble(string s, int start, int length, out double value)
+    {
+#pragma warning disable CA1846 // .NET Standard 2.0 has no span overload.
+        return double.TryParse(s.Substring(start, length), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+#pragma warning restore CA1846
+    }
+
     public static string Format(string format, params object[] args) => string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args);
 
     public static void WriteInt32LittleEndian(Span<byte> destination, int value) => BinaryPrimitives.WriteInt32LittleEndian(destination, value);

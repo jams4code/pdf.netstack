@@ -177,7 +177,7 @@ internal sealed partial class Painter
                 {
                     Gradient(image, area.X, area.Y, area.W, area.H, opacity);
                 }
-                else if (Url(image) is string url && _images?.Invoke(url) is PdfImage picture)
+                else if (Url(image) is string url && _images?.Invoke(url) is HtmlImage picture)
                 {
                     Tiles(picture, area, clip, sizes[i % sizes.Count], positions[i % positions.Count], repeats[i % repeats.Count]);
                 }
@@ -191,10 +191,9 @@ internal sealed partial class Painter
         : null;
 
     /// <summary>A background image placed by background-size and background-position, repeated as asked.</summary>
-    private void Tiles(PdfImage image, (double X, double Y, double W, double H, PdfCornerRadii R) area, (double X, double Y, double W, double H, PdfCornerRadii R) clip, List<CssValue> size, List<CssValue> position, List<CssValue> repeat)
+    private void Tiles(HtmlImage image, (double X, double Y, double W, double H, PdfCornerRadii R) area, (double X, double Y, double W, double H, PdfCornerRadii R) clip, List<CssValue> size, List<CssValue> position, List<CssValue> repeat)
     {
-        double iw = image.PixelWidth * 96 / (image.HorizontalResolution > 0 ? image.HorizontalResolution : 96);
-        double ih = image.PixelHeight * 96 / (image.VerticalResolution > 0 ? image.VerticalResolution : 96);
+        double iw = image.Width, ih = image.Height;
         if (iw <= 0 || ih <= 0) return;
 
         // background-size: cover, contain, or a width and a height where auto keeps the ratio.
@@ -231,7 +230,7 @@ internal sealed partial class Painter
             for (double tx = startX; tx < endX - 0.01; tx += tw)
             {
                 if (++tiles > MaxTiles) return;
-                _g.DrawImage(image, tx, ty, tw, th);
+                image.Draw(_g, tx, ty, tw, th);
             }
         }
     }
@@ -491,7 +490,7 @@ internal sealed partial class Painter
             PdfCornerRadii inner = Inset(radii, content);
             if (!inner.IsZero) _g.IntersectClip(Shape(f.ContentX, f.ContentY, cw, ch, inner));
             else if (w > cw + 0.01 || h > ch + 0.01) _g.IntersectClip(f.ContentX, f.ContentY, cw, ch);
-            _g.DrawImage(image.Image, f.ContentX + px, f.ContentY + py, w, h);
+            image.Image.Draw(_g, f.ContentX + px, f.ContentY + py, w, h);
         }
     }
 

@@ -21,7 +21,7 @@ internal static class HtmlLayoutFixture
         var resolver = new StyleResolver(new CssMedia(width, 1000));
         if (css is not null) resolver.AddStyleSheet(css, CssOrigin.Author);
         resolver.AddDocument(doc);
-        BlockBox root = new BoxBuilder(resolver, src => src == "img.png" ? PdfImage.Load(ImageFixture) : null).Build(doc);
+        BlockBox root = new BoxBuilder(resolver, src => src == "img.png" ? new HtmlImage(PdfImage.Load(ImageFixture)) : null).Build(doc);
         return new LayoutEngine(new FontResolver(null, useSystemFonts: false)).Layout(root, width);
     }
 

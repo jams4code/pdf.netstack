@@ -114,7 +114,8 @@ quality output, built on the canvas, fonts and text layout above.
    subgrid and named lines.
 6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
    the base folder load, so untrusted HTML cannot reach the network or other files. Style
-   sheets from `<link>` and `@import`, images in JPEG and PNG. Next: SVG images.
+   sheets from `<link>` and `@import`, images in JPEG, PNG and SVG (files, data URIs, inline
+   `<svg>` and CSS backgrounds, drawn as vectors).
 7. **Links and structure.** Done: links to URLs and internal anchors, bookmarks from
    `bookmark-level` (headings by default), title, author, subject, keywords and language from
    the head. Tagged PDF later.

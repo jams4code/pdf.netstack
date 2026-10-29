@@ -248,6 +248,79 @@ public sealed class PdfPath
         return close && !first ? Close() : this;
     }
 
+    /// <summary>The box around every point and control point: a cheap, slightly loose bound. Zeros for an empty path.</summary>
+    internal (double MinX, double MinY, double MaxX, double MaxY) ControlBounds()
+    {
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        void Add(double x, double y)
+        {
+            minX = Math.Min(minX, x);
+            minY = Math.Min(minY, y);
+            maxX = Math.Max(maxX, x);
+            maxY = Math.Max(maxY, y);
+        }
+
+        foreach (Segment s in _segments)
+        {
+            switch (s.Kind)
+            {
+                case Kind.Move or Kind.Line:
+                    Add(s.A, s.B);
+                    break;
+                case Kind.Cubic:
+                    Add(s.A, s.B);
+                    Add(s.C, s.D);
+                    Add(s.E, s.F);
+                    break;
+                case Kind.Rectangle:
+                    Add(s.A, s.B);
+                    Add(s.A + s.C, s.B + s.D);
+                    break;
+            }
+        }
+
+        return minX > maxX ? (0, 0, 0, 0) : (minX, minY, maxX, maxY);
+    }
+
+    /// <summary>A copy with every point mapped through <paramref name="m"/>; rectangles become four lines.</summary>
+    internal PdfPath Transformed(PdfMatrix m)
+    {
+        var result = new PdfPath { FillRule = FillRule };
+        foreach (Segment s in _segments)
+        {
+            PdfPoint a = m.Transform(new PdfPoint(s.A, s.B));
+            switch (s.Kind)
+            {
+                case Kind.Move:
+                    result.MoveTo(a.X, a.Y);
+                    break;
+                case Kind.Line:
+                    result.LineTo(a.X, a.Y);
+                    break;
+                case Kind.Cubic:
+                    PdfPoint c = m.Transform(new PdfPoint(s.C, s.D)), e = m.Transform(new PdfPoint(s.E, s.F));
+                    result.CurveTo(a.X, a.Y, c.X, c.Y, e.X, e.Y);
+                    break;
+                case Kind.Rectangle:
+                    result.AddPolygon([a, m.Transform(new PdfPoint(s.A + s.C, s.B)), m.Transform(new PdfPoint(s.A + s.C, s.B + s.D)), m.Transform(new PdfPoint(s.A, s.B + s.D))]);
+                    break;
+                default:
+                    result.Close();
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Adds the subpaths of another path, as for a clip made of several shapes.</summary>
+    internal void Append(PdfPath other)
+    {
+        _segments.AddRange(other._segments);
+        _current = other._current;
+        _subpathStart = other._subpathStart;
+    }
+
     internal void Write(ContentWriter w)
     {
         foreach (Segment s in _segments)

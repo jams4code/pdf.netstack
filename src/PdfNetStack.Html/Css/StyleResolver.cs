@@ -657,13 +657,13 @@ internal sealed class StyleResolver
             if (v is "top" or "middle" or "bottom" or "baseline") css.Append("vertical-align:").Append(v).Append(';');
         }
 
-        if (e.Name is "table" or "td" or "th" or "col" or "colgroup" or "img" or "hr" or "iframe" or "video" or "canvas" or "object" or "embed" or "input"
+        if (e.Name is "table" or "td" or "th" or "col" or "colgroup" or "img" or "svg" or "hr" or "iframe" or "video" or "canvas" or "object" or "embed" or "input"
             && LegacyLength(Attr("width")) is string width)
         {
             css.Append("width:").Append(width).Append(';');
         }
 
-        if (e.Name is "table" or "td" or "th" or "tr" or "img" or "iframe" or "video" or "canvas" or "object" or "embed"
+        if (e.Name is "table" or "td" or "th" or "tr" or "img" or "svg" or "iframe" or "video" or "canvas" or "object" or "embed"
             && LegacyLength(Attr("height")) is string height)
         {
             css.Append("height:").Append(height).Append(';');

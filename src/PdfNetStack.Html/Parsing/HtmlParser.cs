@@ -270,7 +270,8 @@ internal sealed class HtmlParser
                 break;
         }
 
-        if (Void.Contains(name) || (selfClosing && name is "svg" or "math"))
+        // In SVG and MathML a trailing slash closes any element (HTML, 13.2.6.5): <path/><path/> are siblings.
+        if (Void.Contains(name) || (selfClosing && (name is "svg" or "math" || _stack.Any(open => open.Name is "svg" or "math"))))
         {
             Current.Append(element);
             return;

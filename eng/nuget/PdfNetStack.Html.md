@@ -118,7 +118,8 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
 - No JavaScript: pages must be rendered HTML, not built in the browser.
 - No multi-column layout or vertical writing modes yet. Grid has no dense packing, column
   flow, subgrid or named lines.
-- Images: JPEG and PNG. SVG, GIF and WebP do not load yet.
+- Images: JPEG, PNG and SVG (drawn as vectors, without filters, masks or patterns). GIF and WebP
+  do not load yet.
 - `@page` named pages, `string-set` and running elements are not supported yet; margin boxes
   take text and page counters.
 - Box shadow blur is approximated, `text-shadow` blur is not drawn, and group opacity is applied

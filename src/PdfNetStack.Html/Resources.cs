@@ -1,5 +1,6 @@
 using System.Text;
 using PdfNetStack.Drawing;
+using PdfNetStack.Html.Layout;
 
 namespace PdfNetStack.Html;
 
@@ -17,7 +18,7 @@ internal sealed class Resources
     private readonly Func<Uri, byte[]?>? _loader;
     private readonly string? _directory;
     private readonly Dictionary<string, byte[]?> _bytes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, PdfImage?> _images = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HtmlImage?> _images = new(StringComparer.Ordinal);
 
     public Resources(Uri? baseUri, Func<Uri, byte[]?>? loader)
     {
@@ -99,16 +100,16 @@ internal sealed class Resources
         return reader.ReadToEnd();
     }
 
-    /// <summary>An image, or null when it is missing or not a JPEG or PNG the library reads.</summary>
-    public PdfImage? LoadImage(string url)
+    /// <summary>An image: JPEG, PNG or SVG; null when it is missing or not an image the library reads.</summary>
+    public HtmlImage? LoadImage(string url)
     {
-        if (_images.TryGetValue(url, out PdfImage? cached)) return cached;
-        PdfImage? image = null;
+        if (_images.TryGetValue(url, out HtmlImage? cached)) return cached;
+        HtmlImage? image = null;
         if (Load(url) is byte[] data)
         {
             try
             {
-                image = PdfImage.Load(data);
+                image = PdfSvg.Sniff(data) ? new HtmlImage(PdfSvg.Load(data)) : new HtmlImage(PdfImage.Load(data));
             }
             catch (Exception e) when (e is FormatException or NotSupportedException or ArgumentException or InvalidDataException or EndOfStreamException)
             {

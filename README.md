@@ -206,13 +206,18 @@ PdfImage photo = PdfImage.Load("photo.jpg");      // JPEG copied as is, EXIF ori
 PdfImage logo = PdfImage.Load("logo.png");        // PNG with alpha becomes a soft mask
 g.DrawImage(logo, 40, 30, 120, 40);
 
+PdfSvg vector = PdfSvg.Load("logo.svg");          // SVG stays vector: sharp at any zoom
+g.DrawSvg(vector, 40, 80, 120, 40);
+
 PdfForm page = PdfForm.FromPage(doc, other.Pages[0]);   // any page of any document
 g.DrawForm(page, 0, 0, g.Width / 2, g.Height / 2);      // n-up, stamps, templates
 ```
 
 PNGs of every color type and bit depth are supported, interlaced or not; simple ones keep their
 compressed data, so embedding costs no recompression. ICC profiles and pixel density are kept.
-Each image and font is written once per document however often it is drawn.
+SVG drawings keep their paths, gradients, clipping and text as PDF vectors; filters, masks and
+patterns are not drawn. Each image, drawing and font is written once per document however often
+it is drawn.
 
 Annotations use the same top left coordinates and carry their own appearance, so every viewer
 shows them alike:

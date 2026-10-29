@@ -16,7 +16,7 @@ internal sealed partial class Painter
     private readonly double _bottom;
     private readonly Func<string, (PdfPage Page, double Top)?> _anchor;
     private readonly Box? _skipBackground;
-    private readonly Func<string, PdfImage?>? _images;
+    private readonly Func<string, HtmlImage?>? _images;
 
     /// <param name="graphics">The canvas, already scaled to px with the slice at the top of the page area.</param>
     /// <param name="top">The slice of the canvas this page shows.</param>
@@ -24,7 +24,7 @@ internal sealed partial class Painter
     /// <param name="anchor">Finds the page and position of an element id, for internal links.</param>
     /// <param name="skipBackground">The box whose background was propagated to the page and is not painted again.</param>
     /// <param name="images">Loads background images by URL; null to draw none.</param>
-    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, PdfImage?>? images = null)
+    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, HtmlImage?>? images = null)
     {
         _images = images;
         _g = graphics;

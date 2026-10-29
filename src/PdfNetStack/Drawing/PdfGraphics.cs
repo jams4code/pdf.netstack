@@ -493,6 +493,24 @@ public sealed class PdfGraphics : IDisposable
         _w.Name("Span").Raw("<</ActualText").HexString(bytes).Raw(">>").Op("BDC");
     }
 
+    /// <summary>Draws an SVG drawing at its own size, its top left corner at (x, y).</summary>
+    public void DrawSvg(PdfSvg svg, double x, double y)
+    {
+        Compat.ThrowIfNull(svg, nameof(svg));
+        DrawSvg(svg, x, y, svg.Width, svg.Height);
+    }
+
+    /// <summary>
+    /// Draws an SVG drawing scaled to fill width by height points; its viewBox and
+    /// preserveAspectRatio decide how it fits inside.
+    /// </summary>
+    public void DrawSvg(PdfSvg svg, double x, double y, double width, double height)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(svg, nameof(svg));
+        DrawForm(svg.FormFor(_doc), x, y, width, height);
+    }
+
     /// <summary>Draws an image at its natural size: its pixels at the resolution it records, else 96 per inch.</summary>
     public void DrawImage(PdfImage image, double x, double y)
     {

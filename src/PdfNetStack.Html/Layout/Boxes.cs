@@ -88,14 +88,14 @@ internal sealed class TextBox(ComputedStyle style, string text) : Box(style, nul
 internal sealed class LineBreakBox(ComputedStyle style, HtmlElement? element) : Box(style, element);
 
 /// <summary>A replaced element such as img: an image with intrinsic dimensions.</summary>
-internal sealed class ReplacedBox(ComputedStyle style, HtmlElement? element, PdfImage image) : Box(style, element)
+internal sealed class ReplacedBox(ComputedStyle style, HtmlElement? element, HtmlImage image) : Box(style, element)
 {
-    public PdfImage Image { get; } = image;
+    public HtmlImage Image { get; } = image;
 
-    /// <summary>Intrinsic width in CSS px, from the pixel size and resolution.</summary>
-    public double IntrinsicWidth => Image.PixelWidth * 96 / (Image.HorizontalResolution > 0 ? Image.HorizontalResolution : 96);
+    /// <summary>Intrinsic width in CSS px.</summary>
+    public double IntrinsicWidth => Image.Width;
 
-    public double IntrinsicHeight => Image.PixelHeight * 96 / (Image.VerticalResolution > 0 ? Image.VerticalResolution : 96);
+    public double IntrinsicHeight => Image.Height;
 
     public override bool IsBlockLevel => Style.Keyword("display") is "block" or "list-item" or "flex" or "grid" or "table" or "flow-root";
 }

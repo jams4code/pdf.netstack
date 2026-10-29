@@ -23,6 +23,13 @@
   - It depends on the exact `PdfNetStack` version it ships with.
 - The `PdfNetStack` and `PdfNetStack.Azure` packages are checked against 1.0.0 on every pack, so
   a change that would break code built against the published version fails the build.
+- SVG: `PdfSvg.Load` and `Parse`, and `PdfGraphics.DrawSvg`, draw SVG as PDF vectors: shapes,
+  paths with arcs, groups, `use` and `symbol`, nested viewports with `viewBox` and
+  `preserveAspectRatio`, transforms, solid colors, linear and radial gradients, clip paths,
+  opacity, dashes, text in the standard fonts, embedded images, and `<style>` rules with type,
+  class and id selectors. Each drawing is written once per document. Doctypes are skipped, so
+  entity expansion cannot be abused, and size, depth and `use` nesting are capped. In
+  `PdfNetStack.Html`, SVG works in `<img>`, CSS backgrounds and inline `<svg>`.
 - Public object model: `PdfObject`, `PdfNull`, `PdfBoolean`, `PdfNumber`, `PdfName`,
   `PdfString`, `PdfArray`, `PdfDictionary`, `PdfStream` and `PdfReference` in
   `PdfNetStack.Objects`, with `PdfDocument.Catalog`, `Resolve`, `AddObject` and

@@ -21,7 +21,7 @@ public sealed class BoxTreeTests
         return sb.ToString();
     }
 
-    private static Box Body(string html, string? css = null, Func<string, PdfImage?>? images = null)
+    private static Box Body(string html, string? css = null, Func<string, HtmlImage?>? images = null)
     {
         HtmlDocument doc = HtmlParser.Parse(html);
         var resolver = new StyleResolver(CssMedia.Default);
@@ -32,7 +32,7 @@ public sealed class BoxTreeTests
         return root.Children.Single();
     }
 
-    private static string Tree(string html, string? css = null, Func<string, PdfImage?>? images = null) =>
+    private static string Tree(string html, string? css = null, Func<string, HtmlImage?>? images = null) =>
         string.Join(" ", Body(html, css, images).Children.Select(Dump));
 
     [TestMethod]
@@ -160,11 +160,11 @@ public sealed class BoxTreeTests
     public void LoadsImagesOrShowsAltText()
     {
         string fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Images", "rgb8-interlaced-300dpi.png");
-        PdfImage? Load(string src) => src == "logo.png" ? PdfImage.Load(fixture) : null;
+        HtmlImage? Load(string src) => src == "logo.png" ? new HtmlImage(PdfImage.Load(fixture)) : null;
 
         var image = (ReplacedBox)Body("<p><img src=logo.png alt=Logo></p>", images: Load).Children.Single().Children.Single();
         // PNG stores pixels per meter: 300 dpi is 11811 ppm, 299.9994 dpi.
-        Assert.AreEqual(image.Image.PixelWidth * 96.0 / 300, image.IntrinsicWidth, 1e-4);
+        Assert.AreEqual(image.Image.Raster!.PixelWidth * 96.0 / 300, image.IntrinsicWidth, 1e-4);
         Assert.IsFalse(image.IsBlockLevel);
         Assert.IsTrue(((ReplacedBox)Body("<img src=logo.png style=\"display:block\">", images: Load).Children.Single()).IsBlockLevel);
 

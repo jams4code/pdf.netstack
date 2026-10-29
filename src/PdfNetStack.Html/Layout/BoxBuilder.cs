@@ -17,11 +17,11 @@ internal sealed class BoxBuilder
     private const int MaxSpan = 1000;
 
     private readonly StyleResolver _resolver;
-    private readonly Func<string, PdfImage?>? _loadImage;
+    private readonly Func<string, HtmlImage?>? _loadImage;
     private readonly CounterScopes _counters = new();
     private int _quoteDepth;
 
-    public BoxBuilder(StyleResolver resolver, Func<string, PdfImage?>? loadImage = null)
+    public BoxBuilder(StyleResolver resolver, Func<string, HtmlImage?>? loadImage = null)
     {
         _resolver = resolver;
         _loadImage = loadImage;
@@ -59,6 +59,7 @@ internal sealed class BoxBuilder
             ApplyCounters(e, style, display);
             if (e.Name == "br") return [new LineBreakBox(style, e)];
             if (e.Name == "img") return Image(e, style);
+            if (e.Name == "svg") return InlineSvg(e, style);
 
             Box? marker = display.Contains("list-item") ? Marker(e, style) : null;
             var children = new List<Box>();
@@ -126,7 +127,7 @@ internal sealed class BoxBuilder
 
     private List<Box> Image(HtmlElement e, ComputedStyle style)
     {
-        if (e.GetAttribute("src") is string src && _loadImage?.Invoke(src) is PdfImage image) return [new ReplacedBox(style, e, image)];
+        if (e.GetAttribute("src") is string src && _loadImage?.Invoke(src) is HtmlImage image) return [new ReplacedBox(style, e, image)];
 
         // A missing image shows its alt text.
         string? alt = e.GetAttribute("alt");
@@ -134,6 +135,58 @@ internal sealed class BoxBuilder
         var box = new InlineBox(style, e);
         box.Add(new TextBox(style, alt!));
         return [box];
+    }
+
+    /// <summary>Inline SVG: its subtree, written back out as markup, becomes a vector image.</summary>
+    private static List<Box> InlineSvg(HtmlElement e, ComputedStyle style)
+    {
+        var markup = new StringBuilder();
+        Serialize(e, markup);
+        try
+        {
+            return [new ReplacedBox(style, e, new HtmlImage(PdfSvg.Parse(markup.ToString())))];
+        }
+        catch (FormatException)
+        {
+            return [];
+        }
+    }
+
+    private static void Serialize(HtmlNode node, StringBuilder sb)
+    {
+        if (node is HtmlText text)
+        {
+            Escape(text.Data, sb, attribute: false);
+            return;
+        }
+
+        var element = (HtmlElement)node;
+        sb.Append('<').Append(element.Name);
+        foreach (KeyValuePair<string, string> a in element.Attributes)
+        {
+            sb.Append(' ').Append(a.Key).Append("=\"");
+            Escape(a.Value, sb, attribute: true);
+            sb.Append('"');
+        }
+
+        sb.Append('>');
+        foreach (HtmlNode child in element.Children) Serialize(child, sb);
+        sb.Append("</").Append(element.Name).Append('>');
+    }
+
+    private static void Escape(string s, StringBuilder sb, bool attribute)
+    {
+        foreach (char c in s)
+        {
+            sb.Append(c switch
+            {
+                '&' => "&amp;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                '"' when attribute => "&quot;",
+                _ => c.ToString(),
+            });
+        }
     }
 
     /// <summary>The text a form control shows, or null for other elements.</summary>
@@ -228,7 +281,7 @@ internal sealed class BoxBuilder
         {
             children = Content(e, ms, ms["content"]);
         }
-        else if (ImageUrl(style["list-style-image"]) is string url && _loadImage?.Invoke(url) is PdfImage image)
+        else if (ImageUrl(style["list-style-image"]) is string url && _loadImage?.Invoke(url) is HtmlImage image)
         {
             children = [new ReplacedBox(_resolver.Anonymous(ms, "inline"), null, image)];
         }
@@ -277,7 +330,7 @@ internal sealed class BoxBuilder
             }
             else if (ImageUrl([v]) is string url)
             {
-                if (_loadImage?.Invoke(url) is PdfImage image)
+                if (_loadImage?.Invoke(url) is HtmlImage image)
                 {
                     FlushText();
                     boxes.Add(new ReplacedBox(_resolver.Anonymous(style, "inline"), null, image));
