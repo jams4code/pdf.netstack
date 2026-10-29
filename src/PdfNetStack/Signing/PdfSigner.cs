@@ -262,9 +262,19 @@ public static class PdfSigner
                     continue;
                 }
 
+                // The gap must be exactly this signature's Contents string: '<', hex digits, '>'.
+                // The CMS is read from the gap itself and must match the dictionary's Contents, so
+                // a byte range pointing anywhere else cannot pass.
+                byte[]? fromGap = GapContents(pdf, (int)range[1], (int)range[2]);
+                byte[] declared = ((PdfString)doc.Resolve(sig["Contents"])!).Value;
+                if (fromGap is null || !fromGap.AsSpan().SequenceEqual(declared))
+                {
+                    info.Problem = "The byte range does not exclude exactly the signature's Contents.";
+                    continue;
+                }
+
                 info.CoversWholeDocument = range[2] + range[3] == pdf.Length;
-                byte[] cms = ((PdfString)doc.Resolve(sig["Contents"])!).Value;
-                Cms.Verify(cms, pdf, (int)range[1], (int)range[2], (int)(range[2] + range[3]), info);
+                Cms.Verify(fromGap, pdf, (int)range[1], (int)range[2], (int)(range[2] + range[3]), info);
             }
             catch (Exception e) when (e is FormatException or InvalidCastException or CryptographicException or NullReferenceException)
             {
@@ -273,6 +283,39 @@ public static class PdfSigner
         }
 
         return results;
+    }
+
+    /// <summary>The bytes of a hex string spanning exactly [start, end), or null when the span is anything else.</summary>
+    private static byte[]? GapContents(byte[] pdf, int start, int end)
+    {
+        if (end - start < 2 || pdf[start] != '<' || pdf[end - 1] != '>') return null;
+        var bytes = new List<byte>((end - start) / 2);
+        int high = -1;
+        for (int i = start + 1; i < end - 1; i++)
+        {
+            byte c = pdf[i];
+            if (c is (byte)' ' or (byte)'\r' or (byte)'\n' or (byte)'\t' or (byte)'\f') continue;
+            int v = c switch
+            {
+                >= (byte)'0' and <= (byte)'9' => c - '0',
+                >= (byte)'a' and <= (byte)'f' => c - 'a' + 10,
+                >= (byte)'A' and <= (byte)'F' => c - 'A' + 10,
+                _ => -1,
+            };
+            if (v < 0) return null;
+            if (high < 0)
+            {
+                high = v;
+            }
+            else
+            {
+                bytes.Add((byte)(high << 4 | v));
+                high = -1;
+            }
+        }
+
+        if (high >= 0) bytes.Add((byte)(high << 4));
+        return [.. bytes];
     }
 
     private static string UniqueFieldName(PdfDocument doc)

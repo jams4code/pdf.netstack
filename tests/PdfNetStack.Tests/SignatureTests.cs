@@ -82,6 +82,26 @@ public sealed class SignatureTests
     }
 
     [TestMethod]
+    public void ByteRangesMustExcludeExactlyTheContents()
+    {
+        byte[] signed = PdfSigner.Sign(Document(), Rsa());
+        PdfSignatureInfo good = PdfSigner.Verify(signed).Single();
+        Assert.IsTrue(good.IsIntact);
+
+        // Move the gap one byte: the same digit width keeps every offset in the file valid.
+        string text = System.Text.Encoding.ASCII.GetString(signed);
+        int at = text.IndexOf("/ByteRange[", StringComparison.Ordinal) + "/ByteRange[".Length;
+        string[] values = text.Substring(at, 43).Split(' ');
+        long start = long.Parse(values[1], System.Globalization.CultureInfo.InvariantCulture) + 1;
+        byte[] shifted = (byte[])signed.Clone();
+        System.Text.Encoding.ASCII.GetBytes(start.ToString("D10", System.Globalization.CultureInfo.InvariantCulture)).CopyTo(shifted, at + 11);
+
+        PdfSignatureInfo bad = PdfSigner.Verify(shifted).Single();
+        Assert.IsFalse(bad.IsIntact);
+        StringAssert.Contains(bad.Problem, "Contents");
+    }
+
+    [TestMethod]
     public void SecondSignatureKeepsTheFirstValid()
     {
         byte[] once = PdfSigner.Sign(Document(), Rsa("First Signer"));

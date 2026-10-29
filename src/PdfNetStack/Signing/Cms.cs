@@ -126,11 +126,17 @@ internal static class Cms
         return (P1363ToDer(raw), Der.Seq(Der.Oid(EcdsaOid(hash))));
     }
 
+    /// <summary>Verifies with the certificate's key; the signature algorithm must name that key type, and SHA-1 is refused.</summary>
     private static bool VerifyBytes(byte[] data, byte[] signature, HashAlgorithmName hash, string algorithm, X509Certificate2 certificate)
     {
+        if (algorithm is "1.2.840.113549.1.1.5" or "1.2.840.10045.4.1") return false; // SHA-1 with RSA or ECDSA
         using (RSA? rsa = certificate.GetRSAPublicKey())
         {
-            if (rsa is not null) return rsa.VerifyData(data, signature, hash, RSASignaturePadding.Pkcs1);
+            if (rsa is not null)
+            {
+                bool rsaAlgorithm = algorithm is RsaEncryption or "1.2.840.113549.1.1.11" or "1.2.840.113549.1.1.12" or "1.2.840.113549.1.1.13";
+                return rsaAlgorithm && rsa.VerifyData(data, signature, hash, RSASignaturePadding.Pkcs1);
+            }
         }
 
         using ECDsa? ecdsa = certificate.GetECDsaPublicKey();
@@ -194,7 +200,7 @@ internal static class Cms
         "2.16.840.1.101.3.4.2.1" => HashAlgorithmName.SHA256,
         "2.16.840.1.101.3.4.2.2" => HashAlgorithmName.SHA384,
         "2.16.840.1.101.3.4.2.3" => HashAlgorithmName.SHA512,
-        "1.3.14.3.2.26" => HashAlgorithmName.SHA1,
+        "1.3.14.3.2.26" => throw new FormatException("SHA-1 signatures are not accepted: SHA-1 is broken for signatures."),
         _ => throw new FormatException("Unsupported digest algorithm " + oid + "."),
     };
 }
