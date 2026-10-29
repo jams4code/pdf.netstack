@@ -198,6 +198,21 @@ break opportunities, overlong words break between characters, soft hyphens show 
 used, and line height follows CSS. `PdfTextLayout` measures before drawing and can draw a range
 of lines, for text that continues on the next page.
 
+Images and reusable drawings:
+
+```csharp
+PdfImage photo = PdfImage.Load("photo.jpg");      // JPEG copied as is, EXIF orientation honored
+PdfImage logo = PdfImage.Load("logo.png");        // PNG with alpha becomes a soft mask
+g.DrawImage(logo, 40, 30, 120, 40);
+
+PdfForm page = PdfForm.FromPage(doc, other.Pages[0]);   // any page of any document
+g.DrawForm(page, 0, 0, g.Width / 2, g.Height / 2);      // n-up, stamps, templates
+```
+
+PNGs of every color type and bit depth are supported, interlaced or not; simple ones keep their
+compressed data, so embedding costs no recompression. ICC profiles and pixel density are kept.
+Each image and font is written once per document however often it is drawn.
+
 ### Encryption
 
 ```csharp
@@ -366,7 +381,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | Done (next release) |
 | Fonts | Standard 14 fonts, TrueType/OpenType/WOFF embedding with subsetting, kerning, font collections | Done (next release) |
 | Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | Done (next release) |
-| Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Planned |
+| Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Done (next release) |
 | Annotations and forms | Links, notes, stamps; AcroForm reading, filling and flattening | Planned |
 | Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |
 | HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |

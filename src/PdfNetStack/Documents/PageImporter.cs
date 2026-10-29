@@ -77,6 +77,35 @@ internal sealed class PageImporter
         return result;
     }
 
+    /// <summary>
+    /// Copies an object and everything it references, such as a page's resources, into the
+    /// target. Objects already copied from this source are reused; references to pages become null.
+    /// </summary>
+    public PdfObject ImportObject(PdfObject value)
+    {
+        if (!SameDocument && !_source.Security.HasOwnerAccess && !_source.Security.Permissions.HasFlag(PdfPermissions.CopyContent))
+        {
+            throw new InvalidOperationException("The source document does not permit copying its content. Open it with the owner password.");
+        }
+
+        var pageMap = new Dictionary<int, int>();
+        var batch = new Dictionary<int, int>();
+        var work = new Queue<(PdfObject Source, int Target)>();
+        PdfObject copy = CopyValue(value, null, 0, pageMap, batch, work);
+        while (work.Count > 0)
+        {
+            (PdfObject source, int target) = work.Dequeue();
+            _target.Objects[target] = source switch
+            {
+                PdfStream s => new PdfStream(CopyDictionary(s.Dictionary, 0, pageMap, batch, work), s.Data),
+                PdfDictionary d => CopyDictionary(d, 0, pageMap, batch, work),
+                _ => CopyValue(source, null, 0, pageMap, batch, work),
+            };
+        }
+
+        return copy;
+    }
+
     private PdfDictionary CopyDictionary(PdfDictionary d, int depth, Dictionary<int, int> pageMap, Dictionary<int, int> batch, Queue<(PdfObject, int)> work)
     {
         var copy = new PdfDictionary(d.Count);

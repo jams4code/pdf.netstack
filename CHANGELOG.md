@@ -39,6 +39,14 @@
   center and justified alignment, right to left paragraphs, fallback fonts per style, letter and
   word spacing, underline and strikethrough, first line indent, CSS line height, soft hyphens,
   tabs, and drawing a range of lines for text split across pages.
+- Images: `PdfImage.Load` for JPEG (embedded without recompression, EXIF orientation, Adobe
+  CMYK, ICC profiles, JFIF density) and PNG (all color types and bit depths, Adam7 interlacing,
+  tRNS as color key or soft mask, alpha channels as soft masks, iCCP, pHYs; simple PNGs keep
+  their compressed data with PNG predictors). `PdfGraphics.DrawImage` at natural or given size.
+  Each image is written once per document.
+- Form XObjects: `PdfForm.Create` for reusable drawings, `PdfForm.FromPage` to place any page of
+  any document (rotation honored, resources imported once), `PdfGraphics.DrawForm`, and
+  `PdfGraphics.Form` for drawing into a form.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

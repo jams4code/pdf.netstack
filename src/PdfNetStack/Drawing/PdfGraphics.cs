@@ -25,7 +25,10 @@ public enum PdfGraphicsLayer
 /// </remarks>
 public sealed class PdfGraphics : IDisposable
 {
-    private readonly PdfPage _page;
+    private readonly PdfDocument _doc;
+    private readonly PdfPage? _page;
+    private readonly PdfForm? _form;
+    private readonly PdfDictionary _resourceOwner;
     private readonly PdfGraphicsLayer _layer;
     private readonly ContentWriter _w = new();
     private readonly Stack<State> _saved = new();
@@ -37,25 +40,40 @@ public sealed class PdfGraphics : IDisposable
     private bool _disposed;
 
     internal PdfGraphics(PdfPage page, PdfGraphicsLayer layer)
+        : this(page.Owner, page.Dictionary, page.MediaBox)
     {
         _page = page;
         _layer = layer;
-        PdfRectangle box = page.MediaBox;
+    }
+
+    internal PdfGraphics(PdfForm form)
+        : this(form.Document, form.Stream.Dictionary, new PdfRectangle(0, 0, form.Width, form.Height))
+    {
+        _form = form;
+    }
+
+    private PdfGraphics(PdfDocument doc, PdfDictionary resourceOwner, PdfRectangle box)
+    {
+        _doc = doc;
+        _resourceOwner = resourceOwner;
         Width = box.Width;
         Height = box.Height;
 
         // Flip to a top left origin with y down. Everything below is in canvas coordinates.
         _w.Op("q").Matrix(new PdfMatrix(1, 0, 0, -1, box.Left, box.Top)).Op("cm");
-        page.Owner.RegisterGraphics(this);
+        doc.RegisterGraphics(this);
     }
 
-    /// <summary>The page being drawn on.</summary>
-    public PdfPage Page => _page;
+    /// <summary>The page being drawn on, or null when drawing into a <see cref="PdfForm"/>.</summary>
+    public PdfPage? Page => _page;
 
-    /// <summary>Media box width in points.</summary>
+    /// <summary>The form being drawn into, or null when drawing on a page.</summary>
+    public PdfForm? Form => _form;
+
+    /// <summary>Width of the drawing area in points: the media box, or the form's width.</summary>
     public double Width { get; }
 
-    /// <summary>Media box height in points.</summary>
+    /// <summary>Height of the drawing area in points.</summary>
     public double Height { get; }
 
     /// <summary>The current transform from user coordinates to canvas coordinates.</summary>
@@ -299,7 +317,7 @@ public sealed class PdfGraphics : IDisposable
     private void DrawGlyphs(List<ShapedGlyph> glyphs, PdfFont font, double size, PdfPen? pen, PdfBrush? brush, double x, double y, string text)
     {
         if (pen is null && brush is null) return;
-        FontResource resource = _page.Owner.GetFontResource(font);
+        FontResource resource = _doc.GetFontResource(font);
         if (!_fontNames.TryGetValue(resource, out string? name))
         {
             name = AddResource("Font", "F", resource.Reference);
@@ -371,12 +389,57 @@ public sealed class PdfGraphics : IDisposable
         _w.Name("Span").Raw("<</ActualText").HexString(bytes).Raw(">>").Op("BDC");
     }
 
+    /// <summary>Draws an image at its natural size: its pixels at the resolution it records, else 96 per inch.</summary>
+    public void DrawImage(PdfImage image, double x, double y)
+    {
+        Compat.ThrowIfNull(image, nameof(image));
+        DrawImage(image, x, y, image.Width, image.Height);
+    }
+
+    /// <summary>
+    /// Draws an image stretched to the rectangle, upright as its EXIF orientation says. Painting
+    /// follows the current transform and clip; transparency comes from the image's alpha channel.
+    /// </summary>
+    public void DrawImage(PdfImage image, double x, double y, double width, double height)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(image, nameof(image));
+        string name = AddResource("XObject", "Im", _doc.GetImageReference(image));
+        using (Save())
+        {
+            _w.Matrix(image.Placement(x, y, width, height)).Op("cm").Name(name).Op("Do");
+        }
+    }
+
+    /// <summary>Draws a form at its own size, its top left corner at (x, y).</summary>
+    public void DrawForm(PdfForm form, double x, double y)
+    {
+        Compat.ThrowIfNull(form, nameof(form));
+        DrawForm(form, x, y, form.Width, form.Height);
+    }
+
+    /// <summary>Draws a form scaled into the rectangle: a stamp, a template, a page shown in miniature.</summary>
+    /// <exception cref="ArgumentException">The form belongs to another document.</exception>
+    public void DrawForm(PdfForm form, double x, double y, double width, double height)
+    {
+        ThrowIfDisposed();
+        Compat.ThrowIfNull(form, nameof(form));
+        if (!ReferenceEquals(form.Document, _doc)) throw new ArgumentException("The form belongs to another document. Use PdfForm.FromPage to bring a page over.", nameof(form));
+        if (ReferenceEquals(form, _form)) throw new ArgumentException("A form cannot draw itself.", nameof(form));
+        string name = AddResource("XObject", "Fm", form.Reference);
+        using (Save())
+        {
+            // The form's space has y up from its bottom left corner.
+            _w.Matrix(new PdfMatrix(width / form.Width, 0, 0, -height / form.Height, x, y + height)).Op("cm").Name(name).Op("Do");
+        }
+    }
+
     /// <summary>Writes the drawing into the page. Further drawing is not possible.</summary>
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _page.Owner.UnregisterGraphics(this);
+        _doc.UnregisterGraphics(this);
         while (_saved.Count > 0)
         {
             _saved.Pop();
@@ -389,8 +452,14 @@ public sealed class PdfGraphics : IDisposable
 
     private void Attach()
     {
-        PdfDocument doc = _page.Owner;
-        PdfDictionary page = _page.Dictionary;
+        if (_form is not null)
+        {
+            _form.AppendContent(_w.Written);
+            return;
+        }
+
+        PdfDocument doc = _doc;
+        PdfDictionary page = _page!.Dictionary;
         var existing = new List<PdfObject>();
         switch (doc.Resolve(page["Contents"]))
         {
@@ -682,13 +751,13 @@ public sealed class PdfGraphics : IDisposable
     /// <summary>Adds an entry to the page's resources under a fresh name and returns the name.</summary>
     internal string AddResource(string category, string prefix, PdfObject value)
     {
-        PdfDocument doc = _page.Owner;
+        PdfDocument doc = _doc;
         if (_resources is null)
         {
             // Resources may be shared with other pages; write into a private copy.
-            PdfDictionary current = doc.Resolve(_page.Dictionary["Resources"]) as PdfDictionary ?? new PdfDictionary();
+            PdfDictionary current = doc.Resolve(_resourceOwner["Resources"]) as PdfDictionary ?? new PdfDictionary();
             _resources = PdfDocument.Clone(current);
-            _page.Dictionary.Set("Resources", _resources);
+            _resourceOwner.Set("Resources", _resources);
         }
 
         // Each category dictionary is copied too: the shallow copy above still shares them.

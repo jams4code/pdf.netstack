@@ -44,6 +44,7 @@ public sealed class PdfDocument
     private readonly Dictionary<PdfDocument, PageImporter> _importers = new();
     private readonly List<Drawing.PdfGraphics> _openGraphics = new();
     private readonly Dictionary<Fonts.PdfFont, Fonts.FontResource> _fonts = new();
+    private readonly Dictionary<Drawing.PdfImage, PdfReference> _images = new();
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -402,6 +403,18 @@ public sealed class PdfDocument
     internal void RegisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Add(graphics);
 
     internal void UnregisterGraphics(Drawing.PdfGraphics graphics) => _openGraphics.Remove(graphics);
+
+    /// <summary>The image XObject for <paramref name="image"/> in this document, written on first use.</summary>
+    internal PdfReference GetImageReference(Drawing.PdfImage image)
+    {
+        if (!_images.TryGetValue(image, out PdfReference? reference))
+        {
+            reference = image.AddTo(this);
+            _images[image] = reference;
+        }
+
+        return reference;
+    }
 
     /// <summary>The document's resource for <paramref name="font"/>, created on first use.</summary>
     internal Fonts.FontResource GetFontResource(Fonts.PdfFont font)

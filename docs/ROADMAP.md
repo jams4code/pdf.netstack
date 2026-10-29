@@ -32,7 +32,8 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    runs, font fallback, CSS line height, soft hyphens and tabs. Later: Unicode normalization in
    the shaper (pointed Hebrew in older fonts), Indic and other complex shapers, kashida
    justification, dictionary hyphenation.
-5. **Images and Form XObjects.** JPEG passthrough, PNG decoding (all color types, alpha into a soft
+5. **Images and Form XObjects.** Done for 1.1: JPEG and PNG, forms and pages as forms. Still to
+   do: GIF, BMP and TIFF input, WebP, image interpolation and opacity options. Was: JPEG passthrough, PNG decoding (all color types, alpha into a soft
    mask, interlacing), image placement with aspect fitting. Pages of another PDF drawn as Form
    XObjects: overlays, watermarks, letterheads, n-up.
 6. **Annotations.** Links (to a page, a URL, a file), text notes, stamps and highlights, with
