@@ -626,10 +626,15 @@ internal sealed class InlineLayout
             if (hyphen.Count > 0)
             {
                 ShapedGlyph h = hyphen[0] with { Cluster = visibleEnd - 1, Text = "-" };
-                if (last.Item.Level % 2 == 1) last.Glyphs.Insert(0, h);
-                else last.Glyphs.Add(h);
+                last.Glyphs.Add(h);
                 last.Width += h.Advance * last.Item.Style.FontSize / 1000;
             }
+        }
+
+        // Shaping returns logical order; right to left runs are drawn reversed, as the core layout does.
+        foreach (Segment seg in segments)
+        {
+            if (seg.Item.Level % 2 == 1) seg.Glyphs.Reverse();
         }
 
         // The first and last segment of each inline box on this line carry its edges, even when

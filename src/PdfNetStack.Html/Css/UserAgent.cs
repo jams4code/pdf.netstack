@@ -28,6 +28,8 @@ internal static class UserAgent
         h5 { margin-top: 1.67em; margin-bottom: 1.67em; font-size: 0.83em }
         h6 { margin-top: 2.33em; margin-bottom: 2.33em; font-size: 0.67em }
         h1, h2, h3, h4, h5, h6 { font-weight: bold; break-after: avoid; break-inside: avoid }
+        h1 { bookmark-level: 1 } h2 { bookmark-level: 2 } h3 { bookmark-level: 3 }
+        h4 { bookmark-level: 4 } h5 { bookmark-level: 5 } h6 { bookmark-level: 6 }
 
         ul, ol, menu { margin-top: 1em; margin-bottom: 1em; padding-left: 40px }
         ul, menu { list-style-type: disc }
@@ -36,7 +38,7 @@ internal static class UserAgent
         :is(ul, ol, menu) :is(ul, menu) { list-style-type: circle }
         :is(ul, ol, menu) :is(ul, ol, menu) :is(ul, menu) { list-style-type: square }
         li { display: list-item; text-align: match-parent }
-        ::marker { unicode-bidi: isolate; font-variant-numeric: tabular-nums }
+        ::marker { unicode-bidi: isolate; font-variant-numeric: tabular-nums; white-space: pre; text-transform: none }
 
         pre, listing, xmp, plaintext, code, kbd, samp, tt { font-family: monospace }
         pre, listing, xmp, plaintext { white-space: pre }

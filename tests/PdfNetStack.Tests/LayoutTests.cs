@@ -195,12 +195,32 @@ public sealed class LayoutTests
         BoxFragment li = ById(root, "li");
         LineFragment marker = li.Marker!;
         Assert.AreEqual(li.ContentX, marker.X + marker.Width, Tolerance, "an outside marker ends at the content edge");
+        Assert.AreEqual(Measure(times, (char)0x2022 + " ", 16), marker.Width, Tolerance, "the space after the bullet is kept (::marker is white-space: pre)");
         Assert.AreEqual(Lines(li)[0].Baseline, marker.Baseline, Tolerance);
         Assert.AreEqual(40, li.ContentX, Tolerance);
 
         BoxFragment rtl = ById(root, "rtl");
         TextFragment text = Lines(rtl)[0].Items.OfType<TextFragment>().Single();
         Assert.AreEqual(rtl.ContentX + rtl.ContentWidth, text.X + text.Width, Tolerance, "right to left text starts at the right");
+    }
+
+    [TestMethod]
+    public void DrawsRightToLeftRunsInVisualOrder()
+    {
+        // The fixture font has Arabic joining forms; the HTML layout must match the core shaper's visual order.
+        var fonts = new PdfFontCollection();
+        fonts.AddFile(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts", "Test-Arabic.ttf"));
+        PdfOpenTypeFont arabic = fonts.Families.Select(f => fonts.Find(f)!).Single();
+        string word = new([(char)0x0628, (char)0x0645, (char)0x0645]); // beh meem meem: initial, medial, final forms
+        Assert.IsTrue(word.All(c => arabic.HasGlyph(c)), "the fixture covers the test word");
+
+        HtmlDocument doc = HtmlParser.Parse($"<p style=\"font-family: '{arabic.FamilyName}'\">{word}</p>");
+        var resolver = new StyleResolver(CssMedia.Default);
+        resolver.AddDocument(doc);
+        BlockBox root = new BoxBuilder(resolver).Build(doc);
+        BoxFragment layout = new LayoutEngine(new FontResolver(fonts, useSystemFonts: false)).Layout(root, 500);
+        TextFragment text = All(layout).OfType<TextFragment>().Single();
+        CollectionAssert.AreEqual(arabic.Shape(word).Select(g => g.Glyph).ToArray(), text.Glyphs.Select(g => g.Glyph).ToArray());
     }
 
     [TestMethod]
