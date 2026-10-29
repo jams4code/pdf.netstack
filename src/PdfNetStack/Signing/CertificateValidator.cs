@@ -92,7 +92,7 @@ internal sealed class CertificateValidator
             problems.Add("No chain leads from " + Name(path[path.Count - 1]) + " to a trust anchor.");
         }
 
-        (PdfCheckStatus[] nameStatus, string?[] nameProblem) = CheckNames(path);
+        (PdfCheckStatus[] nameStatus, string?[] nameProblem) = CheckNames(path, problems);
         CheckPolicies(path, anchored, result, problems);
 
         var checks = new List<PdfCertificateCheck>();
@@ -171,29 +171,40 @@ internal sealed class CertificateValidator
     /// <summary>
     /// Name constraints flow down from the top of the chain, the trust anchor's included: each
     /// certificate is checked against the constraints of every certificate above it, except a
-    /// self-issued CA inside the chain (RFC 5280, 6.1.3 (b)).
+    /// self-issued CA inside the chain (RFC 5280, 6.1.3 (b)). Constraints that cannot be read
+    /// fail closed: every certificate below them fails, the anchor's included, since an anchor's
+    /// own checks are not counted.
     /// </summary>
-    private static (PdfCheckStatus[] Status, string?[] Problem) CheckNames(List<X509Certificate2> path)
+    private static (PdfCheckStatus[] Status, string?[] Problem) CheckNames(List<X509Certificate2> path, List<string> problems)
     {
         var status = new PdfCheckStatus[path.Count];
         var problem = new string?[path.Count];
         var constraints = new NameConstraints();
+        string? unreadable = null;
         for (int i = path.Count - 1; i >= 0; i--)
         {
             X509Certificate2 cert = path[i];
             status[i] = PdfCheckStatus.Passed;
-            try
-            {
-                if (constraints.Any && !(i > 0 && Pkix.IsSelfIssued(cert)) && constraints.Check(cert) is string violation)
-                {
-                    status[i] = PdfCheckStatus.Failed;
-                    problem[i] = violation;
-                }
-            }
-            catch (Exception e) when (e is FormatException or CryptographicException)
+            if (unreadable is not null)
             {
                 status[i] = PdfCheckStatus.Failed;
-                problem[i] = "its names cannot be read";
+                problem[i] = "the name constraints of " + unreadable + " above it cannot be read, so its names cannot be checked";
+            }
+            else
+            {
+                try
+                {
+                    if (constraints.Any && !(i > 0 && Pkix.IsSelfIssued(cert)) && constraints.Check(cert) is string violation)
+                    {
+                        status[i] = PdfCheckStatus.Failed;
+                        problem[i] = violation;
+                    }
+                }
+                catch (Exception e) when (e is FormatException or CryptographicException)
+                {
+                    status[i] = PdfCheckStatus.Failed;
+                    problem[i] = "its names cannot be read";
+                }
             }
 
             if (i == 0) break;
@@ -205,6 +216,11 @@ internal sealed class CertificateValidator
             {
                 status[i] = PdfCheckStatus.Failed;
                 problem[i] = "its name constraints cannot be read";
+                if (unreadable is null)
+                {
+                    unreadable = Name(cert);
+                    problems.Add("The name constraints of " + unreadable + " cannot be read, so no certificate below it can be checked against them.");
+                }
             }
         }
 

@@ -24,10 +24,13 @@ public sealed class CertificatePolicyTests
     private static readonly X509Extension LeafUsage = new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.NonRepudiation, true);
 
     /// <summary>A certificate with the subject exactly as given; self-signed when there is no issuer.</summary>
-    private static X509Certificate2 Issue(string subject, X509Certificate2? issuer, IEnumerable<X509Extension> extensions)
+    private static X509Certificate2 Issue(string subject, X509Certificate2? issuer, IEnumerable<X509Extension> extensions) =>
+        Issue(new X500DistinguishedName(subject), issuer, extensions);
+
+    private static X509Certificate2 Issue(X500DistinguishedName subject, X509Certificate2? issuer, IEnumerable<X509Extension> extensions)
     {
         using RSA key = RSA.Create(2048);
-        var request = new CertificateRequest(new X500DistinguishedName(subject), key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var request = new CertificateRequest(subject, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         foreach (X509Extension e in extensions) request.CertificateExtensions.Add(e);
         DateTimeOffset from = DateTimeOffset.UtcNow.AddDays(-1), to = DateTimeOffset.UtcNow.AddYears(1);
         if (issuer is null) return request.CreateSelfSigned(from, to);
@@ -340,6 +343,97 @@ public sealed class CertificatePolicyTests
         // Without a trust anchor the policies are not judged.
         PdfCertificateValidation unanchored = PdfSigner.Verify(signed, new PdfValidationOptions { CheckRevocation = false }).Single().Validation!;
         Assert.AreEqual(PdfCheckStatus.NotChecked, unanchored.Policy);
+    }
+
+    [TestMethod]
+    public void UnreadableConstraintsFailEveryCertificateBelow()
+    {
+        // The anchor's own checks are not counted, so its unreadable constraints must fail what it issued.
+        var garbage = new X509Extension("2.5.29.30", [0x30, 0x03, 0xA0, 0x05, 0x00], true);
+        X509Certificate2 root = Root(garbage);
+        X509Certificate2 ca = Ca(root);
+        PdfCertificateValidation v = Validate(root, ca, Leaf(ca, Names(Dns("signer.example.com"))));
+        Assert.AreEqual(PdfCheckStatus.Failed, v.Status);
+        Assert.AreEqual(PdfCheckStatus.Failed, v.Certificates[0].NameConstraints);
+        Assert.AreEqual(PdfCheckStatus.Failed, v.Certificates[1].NameConstraints);
+        StringAssert.Contains(Problems(v), "The name constraints of Policy Root cannot be read");
+        StringAssert.Contains(v.Certificates[0].Problem, "above it cannot be read");
+
+        X509Certificate2 goodRoot = Root();
+        X509Certificate2 badCa = Ca(goodRoot, garbage);
+        PdfCertificateValidation below = Validate(goodRoot, badCa, Leaf(badCa));
+        Assert.AreEqual(PdfCheckStatus.Failed, below.Certificates[1].NameConstraints);
+        Assert.AreEqual(PdfCheckStatus.Failed, below.Certificates[0].NameConstraints);
+        Assert.AreEqual(PdfCheckStatus.Failed, below.Status);
+    }
+
+    [TestMethod]
+    public void HostsAreCanonicalAndAmbiguousOnesFailClosed()
+    {
+        X509Certificate2 root = Root();
+        X509Certificate2 ca = Ca(root, Constraints([], [Uri("good.example.com"), Uri("evil.example"), Uri("xn--bcher-kva.example"), Email("evil.example"), Dns("evil.example")]));
+        PdfCheckStatus Status(byte[] name) => Validate(root, ca, Leaf(ca, Names(name))).Certificates[0].NameConstraints;
+
+        Assert.AreEqual(PdfCheckStatus.Passed, Status(Uri("https://fine.example.org/")));
+        Assert.AreEqual(PdfCheckStatus.Passed, Status(Dns("fine.example.org")));
+
+        // A backslash is a slash to a browser: the host is good.example.com, not other.example.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Uri("https://good.example.com\\@other.example/")));
+
+        // One trailing dot names the same host, in every form.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Uri("https://EVIL.example./path")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Email("someone@evil.example.")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Dns("www.EVIL.example.")));
+
+        // Bytes outside IA5 cannot be read as a host, so an exclusion covers them.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Der.Tlv(0x86, Encoding.UTF8.GetBytes("https://b\u00FCcher.example/"))));
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(Uri("https://x%2eevil.example/")));
+
+        // Permitted subtrees: canonical forms match, and what cannot be read is not permitted.
+        X509Certificate2 permitting = Ca(root, Constraints([Uri(".example.com"), Uri("xn--bcher-kva.example"), Dns("Example.NET.")], []));
+        PdfCheckStatus Allowed(byte[] name) => Validate(root, permitting, Leaf(permitting, Names(name))).Certificates[0].NameConstraints;
+        Assert.AreEqual(PdfCheckStatus.Passed, Allowed(Uri("https://A.Example.COM./x")));
+        Assert.AreEqual(PdfCheckStatus.Passed, Allowed(Uri("http://xn--bcher-kva.example:8080/")));
+        Assert.AreEqual(PdfCheckStatus.Passed, Allowed(Dns("host.example.net")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Allowed(Uri("https://a.example.com\\x/")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Allowed(Uri("https://[2001:db8::1]/")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Allowed(Dns("bad..example.net")));
+    }
+
+    private static X500DistinguishedName Subject(byte organizationTag, byte[] organization) => new(Der.Seq(
+        Der.SetOf(Der.Seq(Der.Oid("2.5.4.10"), Der.Tlv(organizationTag, organization))),
+        Der.SetOf(Der.Seq(Der.Oid("2.5.4.3"), Der.Tlv(0x0C, "Directory Signer"u8)))));
+
+    private static byte[] Organization(string name) => Der.Context(4, true, Der.Seq(Der.SetOf(Der.Seq(Der.Oid("2.5.4.10"), Der.Tlv(0x0C, Encoding.UTF8.GetBytes(name))))));
+
+    [TestMethod]
+    public void DirectoryStringsAreDecodedAndPrepared()
+    {
+        X509Certificate2 root = Root();
+        X509Certificate2 ca = Ca(root, Constraints([], [Organization("Evil Corp")]));
+        PdfCheckStatus Status(byte tag, byte[] organization) =>
+            Validate(root, ca, Issue(Subject(tag, organization), ca, [LeafUsage])).Certificates[0].NameConstraints;
+
+        Assert.AreEqual(PdfCheckStatus.Passed, Status(0x0C, "Good Corp"u8.ToArray()));
+
+        // UniversalString is UTF-32BE; case and spacing do not matter.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(0x1C, new UTF32Encoding(true, false).GetBytes("EVIL   corp")));
+
+        // BMPString is UTF-16BE; full width letters fold to their compatibility forms.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(0x1E, Encoding.BigEndianUnicode.GetBytes("\uFF25\uFF56\uFF49\uFF4C Corp")));
+
+        // Soft hyphens are dropped; bytes that do not decode count as a match for an exclusion.
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(0x0C, Encoding.UTF8.GetBytes("Ev\u00ADil Corp")));
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(0x0C, [0x45, 0xFF, 0x69, 0x6C]));
+        Assert.AreEqual(PdfCheckStatus.Failed, Status(0x1C, [0, 0, 0]));
+
+        // In a permitted subtree the same decoding lets equal names pass, and undecodable ones not.
+        X509Certificate2 permitting = Ca(root, Constraints([Organization("PdfNetStack Tests")], []));
+        PdfCheckStatus Allowed(byte tag, byte[] organization) =>
+            Validate(root, permitting, Issue(Subject(tag, organization), permitting, [LeafUsage])).Certificates[0].NameConstraints;
+        Assert.AreEqual(PdfCheckStatus.Passed, Allowed(0x1C, new UTF32Encoding(true, false).GetBytes("pdfnetstack tests")));
+        Assert.AreEqual(PdfCheckStatus.Passed, Allowed(0x13, "PDFNETSTACK TESTS"u8.ToArray()));
+        Assert.AreEqual(PdfCheckStatus.Failed, Allowed(0x0C, [0x50, 0xC0]));
     }
 
     [TestMethod]

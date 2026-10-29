@@ -109,7 +109,9 @@ public sealed class PdfCertificateCheck
     /// The certificate's names (subject, alternative names, and email addresses in the subject
     /// when it has no alternative names) fall within the name constraints of the certificates
     /// above it, the trust anchor's included. Passed when no constraint applies. A self-issued
-    /// CA certificate inside the chain is not checked, as RFC 5280 says.
+    /// CA certificate inside the chain is not checked, as RFC 5280 says. Failed when a name
+    /// cannot be read or judged against a constraint, and when a certificate above has
+    /// constraints that cannot be read.
     /// </summary>
     public PdfCheckStatus NameConstraints { get; internal set; }
 

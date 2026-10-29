@@ -45,7 +45,11 @@
   of RFC 9618 (`PdfValidationOptions.AcceptablePolicies`, `RequireExplicitPolicy`,
   `InhibitPolicyMapping`, `InhibitAnyPolicy`; `PdfCertificateValidation.Policy` and
   `ValidPolicies`); name constraints on DNS names, email addresses, URI hosts, directory names
-  and IP addresses, the trust anchor's included (`PdfCertificateCheck.NameConstraints`); and the
+  and IP addresses, the trust anchor's included (`PdfCertificateCheck.NameConstraints`), with
+  hosts compared in one canonical form (one trailing dot dropped, IDN as ASCII, lower case, URIs
+  read by `System.Uri`), directory strings decoded in every string type and prepared as RFC 4518
+  says, and anything that cannot be read or judged failing closed, including constraints that
+  cannot be read, which fail every certificate below them; and the
   QCStatements of ETSI EN 319 412-5 (`PdfCertificateCheck.QcStatements`, `PdfQcStatements`),
   with the qualification they claim (`PdfCertificateValidation.Qualification`: QESig, QESeal,
   AdESig-QC and the rest). No trusted list is downloaded. Critical policy, name constraint and

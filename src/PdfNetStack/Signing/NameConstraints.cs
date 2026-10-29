@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
@@ -8,7 +9,9 @@ namespace PdfNetStack.Signing;
 /// each CA intersect, the excluded subtrees add up, and every later certificate's subject and
 /// alternative names must fall inside the first and outside the second. DNS names, email
 /// addresses, URIs (by host), directory names and IP addresses are compared; a constraint on any
-/// other name form fails a certificate that carries a name of that form.
+/// other name form fails a certificate that carries a name of that form. Hosts are compared in
+/// one canonical form in every name form, directory strings after RFC 4518 preparation, and a
+/// name that cannot be read or judged fails closed: it counts as excluded and as not permitted.
 /// </summary>
 internal sealed class NameConstraints
 {
@@ -104,114 +107,253 @@ internal sealed class NameConstraints
     private static byte[] Value(DerNode general) =>
         (general.Tag & 0x1F) == Directory ? general.At(0).Encoded.ToArray() : general.Content.ToArray();
 
-    /// <summary>True or false for a name the constraint covers or not; null when the name cannot be judged, which an exclusion treats as a match.</summary>
+    /// <summary>
+    /// True or false for a name the constraint covers or not; null when the name or the
+    /// constraint cannot be judged. Undecidable fails closed: an exclusion treats it as a match,
+    /// a permitted subtree as no match.
+    /// </summary>
     private static bool? Matches(int form, byte[] name, byte[] constraint) => form switch
     {
         Dns => DnsMatches(Ascii(name), Ascii(constraint)),
         Rfc822 => MailMatches(Ascii(name), Ascii(constraint)),
-        Uri => Host(Ascii(name)) is string host ? HostMatches(host, Ascii(constraint)) : null,
+        Uri => Ascii(name) is string uri && UriHost(uri) is string host ? HostMatches(host, Ascii(constraint)) : null,
         Directory => DirectoryMatches(name, constraint),
         Ip => IpMatches(name, constraint),
         _ => null,
     };
 
-    /// <summary>A DNS constraint covers the name itself and every name below it; a leading period means below only.</summary>
-    private static bool DnsMatches(string name, string constraint)
+    /// <summary>A DNS constraint covers the name itself and every name below it; a leading period means below only, and an empty one covers everything.</summary>
+    private static bool? DnsMatches(string? name, string? constraint)
     {
-        name = name.TrimEnd('.').ToLowerInvariant();
-        constraint = constraint.TrimEnd('.').ToLowerInvariant();
+        if (constraint is null || CanonicalHost(name) is not string host) return null;
         if (constraint.Length == 0) return true;
-        if (constraint[0] == '.') return name.EndsWith(constraint, StringComparison.Ordinal);
-        return name == constraint || name.EndsWith("." + constraint, StringComparison.Ordinal);
+        bool below = constraint[0] == '.';
+        if (CanonicalHost(below ? constraint.Substring(1) : constraint) is not string domain) return null;
+        return (!below && host == domain) || host.EndsWith("." + domain, StringComparison.Ordinal);
     }
 
     /// <summary>A mailbox, every mailbox at a host, or with a leading period every mailbox in a domain below it.</summary>
-    private static bool MailMatches(string name, string constraint)
+    private static bool? MailMatches(string? name, string? constraint)
     {
+        if (name is null || constraint is null) return null;
         int at = name.LastIndexOf('@');
-        if (at <= 0) return false;
-        string host = name.Substring(at + 1);
+        if (at <= 0 || CanonicalHost(name.Substring(at + 1)) is not string host) return null;
         int c = constraint.LastIndexOf('@');
         if (c > 0)
         {
             // The local part is case sensitive, the host is not.
-            return string.Equals(name.Substring(0, at), constraint.Substring(0, c), StringComparison.Ordinal)
-                && string.Equals(host, constraint.Substring(c + 1), StringComparison.OrdinalIgnoreCase);
+            if (CanonicalHost(constraint.Substring(c + 1)) is not string mailHost) return null;
+            return string.Equals(name.Substring(0, at), constraint.Substring(0, c), StringComparison.Ordinal) && host == mailHost;
         }
 
         return HostMatches(host, constraint);
     }
 
-    /// <summary>A host, or with a leading period the hosts below a domain.</summary>
-    private static bool HostMatches(string host, string constraint) =>
-        constraint.Length > 0 && constraint[0] == '.'
-            ? host.EndsWith(constraint, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(host, constraint, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>The host of a URI with an authority; null for a URI without one or with an IP literal.</summary>
-    private static string? Host(string uri)
+    /// <summary>A canonical host against a host, or with a leading period the hosts below a domain.</summary>
+    private static bool? HostMatches(string host, string? constraint)
     {
-        int scheme = uri.IndexOf("://", StringComparison.Ordinal);
-        if (scheme <= 0) return null;
-        string rest = uri.Substring(scheme + 3);
-        int end = rest.IndexOfAny(['/', '?', '#']);
-        if (end >= 0) rest = rest.Substring(0, end);
-        int user = rest.LastIndexOf('@');
-        if (user >= 0) rest = rest.Substring(user + 1);
-        if (rest.Length > 0 && rest[0] == '[') return null;
-        int port = rest.IndexOf(':');
-        if (port >= 0) rest = rest.Substring(0, port);
-        return rest.Length == 0 ? null : rest;
+        if (constraint is null || constraint.Length == 0) return null;
+        bool below = constraint[0] == '.';
+        if (CanonicalHost(below ? constraint.Substring(1) : constraint) is not string domain) return null;
+        return below ? host.EndsWith("." + domain, StringComparison.Ordinal) : host == domain;
     }
 
-    /// <summary>The constraint's relative distinguished names begin the name's, compared attribute by attribute.</summary>
-    private static bool DirectoryMatches(byte[] name, byte[] constraint)
+    /// <summary>
+    /// The canonical host of a URI with an authority, read by <see cref="System.Uri"/>; null for a
+    /// URI without an authority, with an IP literal, or with anything a reader could take two ways:
+    /// white space, control characters, backslashes (which browsers read as slashes) or percent
+    /// escapes in the authority.
+    /// </summary>
+    private static string? UriHost(string uri)
+    {
+        foreach (char ch in uri)
+        {
+            if (ch <= ' ' || ch == 0x7F || ch == '\\') return null;
+        }
+
+        int scheme = uri.IndexOf("://", StringComparison.Ordinal);
+        if (scheme <= 0) return null;
+        string authority = uri.Substring(scheme + 3);
+        int end = authority.IndexOfAny(['/', '?', '#']);
+        if (end >= 0) authority = authority.Substring(0, end);
+        if (authority.IndexOfAny(['%']) >= 0) return null;
+        if (!System.Uri.TryCreate(uri, UriKind.Absolute, out System.Uri? parsed) || parsed.HostNameType != UriHostNameType.Dns) return null;
+        return CanonicalHost(parsed.IdnHost);
+    }
+
+    /// <summary>
+    /// A host name in the one form every name form is compared in: one trailing dot removed,
+    /// internationalized labels in their ASCII (punycode) form, lower case. Null when it is not a
+    /// plain host name: empty labels, characters outside letters, digits, hyphens, underscores and
+    /// a wildcard, or labels too long.
+    /// </summary>
+    private static string? CanonicalHost(string? host)
+    {
+        if (host is null || host.Length is 0 or > 1024) return null;
+        if (host[host.Length - 1] == '.') host = host.Substring(0, host.Length - 1);
+        if (host.Length == 0) return null;
+        string ascii = host;
+        if (host.Any(ch => ch > 0x7F))
+        {
+            try
+            {
+                ascii = new IdnMapping().GetAscii(host);
+            }
+            catch (ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        ascii = ascii.ToLowerInvariant();
+        foreach (string label in ascii.Split('.'))
+        {
+            if (label.Length is 0 or > 63) return null;
+            foreach (char ch in label)
+            {
+                if (ch is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '*')) return null;
+            }
+        }
+
+        return ascii;
+    }
+
+    /// <summary>
+    /// The constraint's relative distinguished names begin the name's, compared attribute by
+    /// attribute. True, false, or null when an attribute cannot be compared.
+    /// </summary>
+    private static bool? DirectoryMatches(byte[] name, byte[] constraint)
     {
         List<DerNode> n = DerNode.Parse(name).Children(), c = DerNode.Parse(constraint).Children();
         if (c.Count > n.Count) return false;
+        bool undecided = false;
         for (int i = 0; i < c.Count; i++)
         {
             List<DerNode> a = n[i].Children(), b = c[i].Children();
-            if (a.Count != b.Count || !b.All(x => a.Any(y => SameAttribute(y, x)))) return false;
+            if (a.Count != b.Count) return false;
+            foreach (DerNode wanted in b)
+            {
+                // Each attribute of the constraint needs an equal one in the name's RDN.
+                bool? found = false;
+                foreach (DerNode candidate in a)
+                {
+                    bool? same = SameAttribute(candidate, wanted);
+                    if (same == true)
+                    {
+                        found = true;
+                        break;
+                    }
+
+                    if (same is null) found = null;
+                }
+
+                if (found == false) return false;
+                if (found is null) undecided = true;
+            }
         }
 
-        return true;
+        return undecided ? null : true;
     }
 
-    /// <summary>Same type and value; string values compare case insensitively with white space collapsed (RFC 5280, 7.1).</summary>
-    private static bool SameAttribute(DerNode a, DerNode b)
+    /// <summary>
+    /// Same type and value. Strings of any directory string type compare after RFC 4518
+    /// preparation; other values compare byte for byte. Null when a value cannot be decoded or
+    /// prepared, or a string is compared with a value of another kind.
+    /// </summary>
+    private static bool? SameAttribute(DerNode a, DerNode b)
     {
         if (a.At(0).OidValue() != b.At(0).OidValue()) return false;
         DerNode x = a.At(1), y = b.At(1);
-        string? s = Text(x), t = Text(y);
-        if (s is null || t is null) return x.Encoded.SequenceEqual(y.Encoded);
-        return string.Equals(Normalize(s), Normalize(t), StringComparison.Ordinal);
+        bool xs = IsString(x.Tag), ys = IsString(y.Tag);
+        if (!xs && !ys) return x.Encoded.SequenceEqual(y.Encoded);
+        if (!xs || !ys || Prepare(Text(x)) is not string s || Prepare(Text(y)) is not string t) return null;
+        return string.Equals(s, t, StringComparison.Ordinal);
     }
 
-    private static string? Text(DerNode value) => value.Tag switch
-    {
-        0x0C => Encoding.UTF8.GetString(value.Content.ToArray()),
-        0x13 or 0x16 or 0x1A or 0x14 => Compat.Latin1.GetString(value.Content.ToArray()),
-        0x1E => Encoding.BigEndianUnicode.GetString(value.Content.ToArray()),
-        _ => null,
-    };
+    private static bool IsString(byte tag) => tag is 0x0C or 0x13 or 0x14 or 0x16 or 0x1A or 0x1C or 0x1E;
 
-    private static string Normalize(string s)
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+    private static readonly Encoding StrictUtf16 = new UnicodeEncoding(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: true);
+    private static readonly Encoding StrictUtf32 = new UTF32Encoding(bigEndian: true, byteOrderMark: false, throwOnInvalidCharacters: true);
+
+    /// <summary>
+    /// The text of a directory string: UTF8String, BMPString (UTF-16BE) and UniversalString
+    /// (UTF-32BE) decoded strictly; PrintableString, IA5String, VisibleString and TeletexString
+    /// as ASCII only, since TeletexString's other characters have no single reading. Null when
+    /// the bytes do not decode.
+    /// </summary>
+    private static string? Text(DerNode value)
     {
-        var b = new StringBuilder(s.Length);
-        foreach (string word in s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        byte[] bytes = value.Content.ToArray();
+        try
+        {
+            return value.Tag switch
+            {
+                0x0C => StrictUtf8.GetString(bytes),
+                0x1E => bytes.Length % 2 == 0 ? StrictUtf16.GetString(bytes) : null,
+                0x1C => bytes.Length % 4 == 0 ? StrictUtf32.GetString(bytes) : null,
+                _ => Ascii(bytes),
+            };
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// String preparation after RFC 4518 for matching (RFC 5280, 7.1): characters mapped to
+    /// nothing are dropped, other controls and separators become spaces, NFKC normalization,
+    /// case folding, then insignificant space removal. Null when the string holds a character
+    /// the preparation prohibits (unassigned, private use, surrogates, the replacement character).
+    /// </summary>
+    private static string? Prepare(string? text)
+    {
+        if (text is null) return null;
+        var mapped = new StringBuilder(text.Length);
+        foreach (char ch in text)
+        {
+            if (ch is '­' or '᠆' or '͏' or (>= '᠋' and <= '᠍') or (>= '︀' and <= '️') or '￼' or '​') continue;
+            if (ch is '\t' or '\n' or '\u000B' or '\f' or '\r' or '\u0085') { mapped.Append(' '); continue; }
+            UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category is UnicodeCategory.Control or UnicodeCategory.Format) continue;
+            if (category is UnicodeCategory.SpaceSeparator or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator) { mapped.Append(' '); continue; }
+            mapped.Append(ch);
+        }
+
+        string normalized;
+        try
+        {
+            normalized = mapped.ToString().Normalize(NormalizationForm.FormKC);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        foreach (char ch in normalized)
+        {
+            UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category is UnicodeCategory.OtherNotAssigned or UnicodeCategory.PrivateUse or UnicodeCategory.Surrogate || ch == '�') return null;
+        }
+
+        // Case folding: upper then lower case maps the case variants of a letter together.
+        string folded = normalized.ToUpperInvariant().ToLowerInvariant();
+        var b = new StringBuilder(folded.Length);
+        foreach (string word in folded.Split([' '], StringSplitOptions.RemoveEmptyEntries))
         {
             if (b.Length > 0) b.Append(' ');
-            b.Append(word.ToUpperInvariant());
+            b.Append(word);
         }
 
         return b.ToString();
     }
 
-    /// <summary>An address against an address and mask of the same family.</summary>
-    private static bool IpMatches(byte[] address, byte[] constraint)
+    /// <summary>An address against an address and mask of the same family; null when the constraint or address is malformed.</summary>
+    private static bool? IpMatches(byte[] address, byte[] constraint)
     {
-        if (constraint.Length != 2 * address.Length || address.Length is not (4 or 16)) return false;
+        if (address.Length is not (4 or 16) || constraint.Length is not (8 or 32)) return null;
+        if (constraint.Length != 2 * address.Length) return false;
         for (int i = 0; i < address.Length; i++)
         {
             byte mask = constraint[address.Length + i];
@@ -221,7 +363,8 @@ internal sealed class NameConstraints
         return true;
     }
 
-    private static string Ascii(byte[] value) => Encoding.ASCII.GetString(value);
+    /// <summary>IA5 and the other ASCII string types: null when a byte lies outside ASCII.</summary>
+    private static string? Ascii(byte[] value) => value.All(b => b < 0x80) ? Encoding.ASCII.GetString(value) : null;
 
     private static string Show(int form, byte[] name)
     {
@@ -231,7 +374,7 @@ internal sealed class NameConstraints
             {
                 Directory => new X500DistinguishedName(name).Name,
                 Ip => name.Length == 4 ? string.Join(".", name) : Compat.ToHex(name),
-                _ => Ascii(name),
+                _ => Ascii(name) ?? Compat.Latin1.GetString(name),
             };
         }
         catch (System.Security.Cryptography.CryptographicException)
