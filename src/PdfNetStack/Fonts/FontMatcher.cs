@@ -200,9 +200,10 @@ internal static class FontMatcher
     /// width and style found, clamped to <paramref name="applied"/>, then
     /// <paramref name="faceSettings"/>, the optical size and last the query's own variations.
     /// Axes the font does not have are skipped. A static font is returned as it is, and so is a
-    /// variable font whose variation data turns out to be damaged.
+    /// variable font whose variation data turns out to be damaged. With a
+    /// <paramref name="budget"/>, the location is snapped and counted against it.
     /// </summary>
-    public static PdfOpenTypeFont Instance(PdfOpenTypeFont font, FontTraits applied, PdfFontQuery query, IReadOnlyList<double>? start = null, IEnumerable<KeyValuePair<string, double>>? faceSettings = null)
+    public static PdfOpenTypeFont Instance(PdfOpenTypeFont font, FontTraits applied, PdfFontQuery query, IReadOnlyList<double>? start = null, IEnumerable<KeyValuePair<string, double>>? faceSettings = null, InstanceBudget? budget = null)
     {
         if (!font.IsVariable) return font;
         IReadOnlyList<PdfFontAxis> axes = font.VariationAxes;
@@ -237,7 +238,7 @@ internal static class FontMatcher
 
         try
         {
-            return font.GetInstance(values);
+            return budget is null ? font.GetInstance(values) : budget.Instance(font, values);
         }
         catch (FontFormatException)
         {

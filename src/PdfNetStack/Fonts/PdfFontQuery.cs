@@ -31,11 +31,27 @@ public enum PdfFontStyle
 /// </example>
 public sealed class PdfFontQuery
 {
+    private readonly double _weight = 400;
+    private readonly double _width = 100;
+    private readonly double _obliqueAngle = 14;
+    private readonly double? _opticalSize;
+    private readonly IReadOnlyDictionary<string, double>? _variations;
+
     /// <summary>CSS weight, 1 to 1000: 400 regular, 700 bold. Default 400.</summary>
-    public double Weight { get; init; } = 400;
+    /// <exception cref="ArgumentOutOfRangeException">The value is not a number from 1 to 1000.</exception>
+    public double Weight
+    {
+        get => _weight;
+        init => _weight = value is >= 1 and <= 1000 ? value : throw new ArgumentOutOfRangeException(nameof(Weight), value, "CSS weights range from 1 to 1000.");
+    }
 
     /// <summary>Width as a percentage of normal, as CSS font-width: 75 condensed, 125 expanded. Default 100.</summary>
-    public double Width { get; init; } = 100;
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative, infinite or not a number.</exception>
+    public double Width
+    {
+        get => _width;
+        init => _width = value >= 0 && !double.IsInfinity(value) ? value : throw new ArgumentOutOfRangeException(nameof(Width), value, "The width is a finite percentage, 0 or more.");
+    }
 
     /// <summary>Upright, italic or oblique. Default upright.</summary>
     public PdfFontStyle Style { get; init; }
@@ -44,34 +60,50 @@ public sealed class PdfFontQuery
     /// The slant in degrees for <see cref="PdfFontStyle.Oblique"/>, -90 to 90, positive leaning
     /// right as in CSS. Default 14, the CSS default for oblique.
     /// </summary>
-    public double ObliqueAngle { get; init; } = 14;
+    /// <exception cref="ArgumentOutOfRangeException">The value is not a number from -90 to 90.</exception>
+    public double ObliqueAngle
+    {
+        get => _obliqueAngle;
+        init => _obliqueAngle = value is >= -90 and <= 90 ? value : throw new ArgumentOutOfRangeException(nameof(ObliqueAngle), value, "Oblique angles range from -90 to 90 degrees.");
+    }
 
     /// <summary>
     /// The size the text is set at, for a variable font's optical size axis (opsz), in the axis's
     /// units. Null leaves the axis at its default; fonts without the axis ignore it.
     /// </summary>
-    public double? OpticalSize { get; init; }
+    /// <exception cref="ArgumentOutOfRangeException">The value is zero, negative, infinite or not a number.</exception>
+    public double? OpticalSize
+    {
+        get => _opticalSize;
+        init => _opticalSize = value is null || (value > 0 && !double.IsInfinity(value.Value)) ? value : throw new ArgumentOutOfRangeException(nameof(OpticalSize), value, "The optical size is a finite number above 0.");
+    }
 
     /// <summary>
     /// Axis values by tag, applied last over the values the match chose, as CSS
     /// font-variation-settings: <c>{ ["wght"] = 625, ["GRAD"] = 50 }</c>. Tags the font does
-    /// not have are ignored and values are clamped to each axis's range.
+    /// not have are ignored and values are clamped to each axis's range. The values are copied
+    /// when set, so changing the dictionary afterwards does not change the query.
     /// </summary>
-    public IReadOnlyDictionary<string, double>? Variations { get; init; }
-
-    /// <summary>Throws when a value is outside its range.</summary>
-    internal void Validate()
+    /// <exception cref="ArgumentException">A value is infinite or not a number.</exception>
+    public IReadOnlyDictionary<string, double>? Variations
     {
-        if (!(Weight is >= 1 and <= 1000)) throw new ArgumentOutOfRangeException(nameof(Weight), "CSS weights range from 1 to 1000.");
-        if (!(Width >= 0) || double.IsInfinity(Width)) throw new ArgumentOutOfRangeException(nameof(Width), "The width is a positive percentage.");
-        if (!(ObliqueAngle is >= -90 and <= 90)) throw new ArgumentOutOfRangeException(nameof(ObliqueAngle), "Oblique angles range from -90 to 90 degrees.");
-        if (OpticalSize is double size && (!(size > 0) || double.IsInfinity(size))) throw new ArgumentOutOfRangeException(nameof(OpticalSize), "The optical size is a positive number.");
-        if (Variations is not null)
+        get => _variations;
+        init
         {
-            foreach (KeyValuePair<string, double> v in Variations)
+            if (value is null)
+            {
+                _variations = null;
+                return;
+            }
+
+            var copy = new Dictionary<string, double>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, double> v in value)
             {
                 if (double.IsNaN(v.Value) || double.IsInfinity(v.Value)) throw new ArgumentException($"The value of axis '{v.Key}' is not a finite number.", nameof(Variations));
+                copy[v.Key] = v.Value;
             }
+
+            _variations = copy;
         }
     }
 }

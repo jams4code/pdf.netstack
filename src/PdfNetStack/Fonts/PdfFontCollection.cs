@@ -133,13 +133,13 @@ public sealed class PdfFontCollection
     /// </summary>
     /// <param name="family">Family name, case insensitive, such as "Inter", or a face's full or PostScript name, such as "Inter SemiBold".</param>
     /// <param name="query">The weight, width, style and variations wanted.</param>
-    /// <exception cref="ArgumentOutOfRangeException">A value of the query is outside its range.</exception>
-    /// <exception cref="ArgumentException">A variation value is not a finite number.</exception>
-    public PdfOpenTypeFont? Find(string family, PdfFontQuery query)
+    public PdfOpenTypeFont? Find(string family, PdfFontQuery query) => Find(family, query, null);
+
+    /// <summary>As <see cref="Find(string, PdfFontQuery)"/>, with the instances made counted against <paramref name="budget"/>.</summary>
+    internal PdfOpenTypeFont? Find(string family, PdfFontQuery query, InstanceBudget? budget)
     {
         Compat.ThrowIfNull(family, nameof(family));
         Compat.ThrowIfNull(query, nameof(query));
-        query.Validate();
         List<Face> candidates;
         lock (_lock)
         {
@@ -156,7 +156,7 @@ public sealed class PdfFontCollection
             foreach (Face face in best)
             {
                 PdfOpenTypeFont? font = Load(face.Source);
-                if (font is not null) return FontMatcher.Instance(font, face.Traits, query, face.Location);
+                if (font is not null) return FontMatcher.Instance(font, face.Traits, query, face.Location, budget: budget);
             }
 
             candidates.RemoveAll(best.Contains);

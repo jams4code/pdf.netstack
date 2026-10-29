@@ -136,6 +136,10 @@ internal static class CssProperties
     private static readonly HashSet<string> WideKeywords = new(StringComparer.OrdinalIgnoreCase) { "inherit", "initial", "unset", "revert", "revert-layer" };
 
     private static readonly string[] Sides = ["top", "right", "bottom", "left"];
+    private static readonly HashSet<string> StretchKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "normal", "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "semi-expanded", "expanded", "extra-expanded", "ultra-expanded",
+    };
     private static readonly string[] Corners = ["top-left", "top-right", "bottom-right", "bottom-left"];
     private const string BorderStyles = "none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset";
 
@@ -571,10 +575,10 @@ internal static class CssProperties
         ];
     }
 
-    /// <summary>An angle in degrees: a dimension in deg, grad, rad or turn. Null for anything else.</summary>
+    /// <summary>An angle in degrees: a finite dimension in deg, grad, rad or turn. Null for anything else.</summary>
     public static double? Angle(CssValue v)
     {
-        if (!v.IsToken || v.Token.Type != CssTokenType.Dimension) return null;
+        if (!v.IsToken || v.Token.Type != CssTokenType.Dimension || !IsFinite(v.Token.Number)) return null;
         double n = v.Token.Number;
         return v.Token.Unit.ToLowerInvariant() switch
         {
@@ -584,6 +588,17 @@ internal static class CssProperties
             "turn" => n * 360,
             _ => null,
         };
+    }
+
+    public static bool IsFinite(double n) => !double.IsNaN(n) && !double.IsInfinity(n);
+
+    /// <summary>font-stretch: a keyword, or a finite percentage that is not negative.</summary>
+    private static bool FontStretch(List<CssValue> value)
+    {
+        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
+        if (items.Count != 1 || !items[0].IsToken) return false;
+        CssToken t = items[0].Token;
+        return t.Type == CssTokenType.Ident ? StretchKeywords.Contains(t.Value) : t.Type == CssTokenType.Percentage && t.Number >= 0 && IsFinite(t.Number);
     }
 
     /// <summary>font-style: normal, italic, or oblique with an optional angle from -90 to 90 degrees.</summary>
@@ -603,7 +618,7 @@ internal static class CssProperties
         {
             List<CssValue> pair = setting.Where(v => !v.IsWhitespace).ToList();
             if (pair.Count != 2 || !pair[0].IsToken || pair[0].Token.Type != CssTokenType.String || !IsTag(pair[0].Token.Value)) return false;
-            if (!CssGrammar.IsMath(pair[1]) && !(pair[1].IsToken && pair[1].Token.Type == CssTokenType.Number)) return false;
+            if (!CssGrammar.IsMath(pair[1]) && !(pair[1].IsToken && pair[1].Token.Type == CssTokenType.Number && IsFinite(pair[1].Token.Number))) return false;
         }
 
         return true;
@@ -923,7 +938,7 @@ internal static class CssProperties
         Add("font-size", I, "medium", "xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|lp");
         all["font-style"] = new CssProperty("font-style", I, "normal", CssGrammar.Custom(FontStyle));
         Add("font-weight", I, "normal", "normal|bold|bolder|lighter|number");
-        Add("font-stretch", I, "normal", "normal|ultra-condensed|extra-condensed|condensed|semi-condensed|semi-expanded|expanded|extra-expanded|ultra-expanded|percentage");
+        all["font-stretch"] = new CssProperty("font-stretch", I, "normal", CssGrammar.Custom(FontStretch));
         Add("font-variant-caps", I, "normal", "normal|small-caps|all-small-caps|petite-caps|all-petite-caps|unicase|titling-caps");
         Add("font-variant-ligatures", I, "normal", "normal|none|common-ligatures|no-common-ligatures|discretionary-ligatures|no-discretionary-ligatures|historical-ligatures|no-historical-ligatures|contextual|no-contextual{1,4}");
         Add("font-variant-numeric", I, "normal", "normal|lining-nums|oldstyle-nums|proportional-nums|tabular-nums|diagonal-fractions|stacked-fractions|ordinal|slashed-zero{1,5}");

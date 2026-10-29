@@ -448,7 +448,7 @@ internal sealed class StyleResolver
     {
         if (value.Count != 1 || !value[0].IsToken) return 400;
         CssToken t = value[0].Token;
-        if (t.Type == CssTokenType.Number) return Math.Min(1000, Math.Max(1, t.Number));
+        if (t.Type == CssTokenType.Number) return double.IsNaN(t.Number) ? 400 : Math.Min(1000, Math.Max(1, t.Number));
         return t.Value.ToLowerInvariant() switch
         {
             "bold" => 700,

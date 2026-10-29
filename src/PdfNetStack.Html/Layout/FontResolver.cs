@@ -39,6 +39,12 @@ internal sealed class FontResolver
         "Noto Sans CJK SC", "PingFang SC", "Segoe UI Emoji", "Noto Color Emoji",
     ];
 
+    // Bounds for values from CSS, wider than any font's axes: widths in percent, optical sizes in
+    // CSS px, and axis values as fvar's 16.16 numbers hold them.
+    private const double MaxWidth = 1000;
+    private const double MaxOpticalSize = 1000;
+    private const double MaxAxisValue = 32767;
+
     private static readonly Dictionary<string, double> WidthKeywords = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ultra-condensed"] = 50, ["extra-condensed"] = 62.5, ["condensed"] = 75, ["semi-condensed"] = 87.5, ["normal"] = 100,
@@ -50,6 +56,10 @@ internal sealed class FontResolver
     private readonly PdfFontCollection? _fonts;
     private readonly bool _useSystemFonts;
     private readonly Dictionary<Request, FontSet> _cache = [];
+
+    // Font sizes and font-variation-settings could otherwise ask for a new instance, and an
+    // embedded font program, per distinct value.
+    private readonly InstanceBudget _budget = new();
     private List<PdfFont>? _systemFallbacks;
 
     /// <summary>
@@ -209,10 +219,11 @@ internal sealed class FontResolver
         return Number(v) is double n && n is >= 1 and <= 1000 ? n : null;
     }
 
+    /// <summary>A width keyword or percentage, clamped to <see cref="MaxWidth"/>; null for anything else.</summary>
     private static double? WidthValue(CssValue v)
     {
         if (v.IsToken && v.Token.Type == CssTokenType.Ident) return WidthKeywords.TryGetValue(v.Token.Value, out double w) ? w : null;
-        return v.IsToken && v.Token.Type == CssTokenType.Percentage && v.Token.Number >= 0 ? v.Token.Number : null;
+        return v.IsToken && v.Token.Type == CssTokenType.Percentage && v.Token.Number >= 0 && CssProperties.IsFinite(v.Token.Number) ? Math.Min(MaxWidth, v.Token.Number) : null;
     }
 
     /// <summary>
@@ -230,7 +241,10 @@ internal sealed class FontResolver
         return a is double x && b is double y && x is >= -90 and <= 90 && y is >= -90 and <= 90 ? (null, FontRange.Of(x, y)) : null;
     }
 
-    /// <summary>The axis values of a font-variation-settings value, in order; null for normal or an invalid value.</summary>
+    /// <summary>
+    /// The axis values of a font-variation-settings value, in order; null for normal or an invalid
+    /// value. Values that are not finite are dropped, the rest clamped to what fvar can hold.
+    /// </summary>
     private static List<KeyValuePair<string, double>>? VariationSettings(List<CssValue> value)
     {
         if (!CssProperties.VariationSettings(value) || value.Any(v => v.IsIdent("normal"))) return null;
@@ -238,7 +252,7 @@ internal sealed class FontResolver
         foreach (List<CssValue> setting in Split(value))
         {
             List<CssValue> pair = setting.Where(v => !v.IsWhitespace).ToList();
-            if (Number(pair[1]) is double n) settings.Add(new(pair[0].Token.Value, n));
+            if (Number(pair[1]) is double n && CssProperties.IsFinite(n)) settings.Add(new(pair[0].Token.Value, Math.Max(-MaxAxisValue, Math.Min(MaxAxisValue, n))));
         }
 
         return settings;
@@ -257,15 +271,22 @@ internal sealed class FontResolver
             .Where(name => name.Length > 0)
             .ToList();
 
-    /// <summary>The fonts for a computed style.</summary>
+    /// <summary>
+    /// The fonts for a computed style. Values come from untrusted CSS, so each is checked before it
+    /// reaches font matching: weight 1 to 1000 (else 400), width 0% to <see cref="MaxWidth"/>
+    /// (else 100%), oblique angle -90 to 90 degrees, optical size above 0 up to
+    /// <see cref="MaxOpticalSize"/>, and only finite axis values.
+    /// </summary>
     public FontSet Resolve(ComputedStyle style)
     {
         double weight = style.Number("font-weight");
-        if (weight is < 1 or > 1000) weight = 400;
+        if (!(weight is >= 1 and <= 1000)) weight = 400;
         List<CssValue> stretch = style["font-stretch"];
         double width = stretch.Count == 1 ? WidthValue(stretch[0]) ?? 100 : 100;
         (PdfFontStyle slant, double angle) = Style(style["font-style"]);
-        double? opticalSize = style.Keyword("font-optical-sizing") == "auto" && style.FontSize > 0 ? style.FontSize : null;
+        double? opticalSize = style.Keyword("font-optical-sizing") == "auto" && style.FontSize > 0 && CssProperties.IsFinite(style.FontSize)
+            ? Math.Min(MaxOpticalSize, style.FontSize)
+            : null;
         List<KeyValuePair<string, double>>? settings = VariationSettings(style["font-variation-settings"]);
         string families = string.Join(",", FamilyNames(style["font-family"]));
         var request = new Request(families, weight, width, slant, angle, opticalSize,
@@ -280,7 +301,16 @@ internal sealed class FontResolver
             foreach (KeyValuePair<string, double> s in settings) variations[s.Key] = s.Value;
         }
 
-        var query = new PdfFontQuery { Weight = weight, Width = width, Style = slant, ObliqueAngle = angle, OpticalSize = opticalSize, Variations = variations };
+        PdfFontQuery query;
+        try
+        {
+            query = new PdfFontQuery { Weight = weight, Width = width, Style = slant, ObliqueAngle = angle, OpticalSize = opticalSize, Variations = variations };
+        }
+        catch (ArgumentException)
+        {
+            query = new PdfFontQuery();
+        }
+
         int standardWeight = (int)Math.Round(weight);
         bool italic = slant != PdfFontStyle.Normal;
         var found = new List<PdfFont>();
@@ -295,7 +325,7 @@ internal sealed class FontResolver
                 continue;
             }
 
-            PdfFont? font = Find(family, query) ?? Alias(family, standardWeight, italic);
+            PdfFont? font = FindSafely(family, query) ?? Alias(family, standardWeight, italic);
             if (font is not null && !found.Contains(font)) found.Add(font);
         }
 
@@ -322,6 +352,27 @@ internal sealed class FontResolver
         return (PdfFontStyle.Oblique, Math.Max(-90, Math.Min(90, angle)));
     }
 
+    /// <summary>
+    /// <see cref="Find"/>, and should a style value still upset font matching, the family's font
+    /// for a plain query instead, else none: a style value never stops the conversion.
+    /// </summary>
+    private PdfFont? FindSafely(string family, PdfFontQuery query)
+    {
+        foreach (PdfFontQuery q in new[] { query, new PdfFontQuery() })
+        {
+            try
+            {
+                return Find(family, q);
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException or ArithmeticException or FontFormatException)
+            {
+                // Try the plain query, then give up on the family.
+            }
+        }
+
+        return null;
+    }
+
     private PdfFont? Find(string family, PdfFontQuery query)
     {
         // @font-face first: the best match by its descriptors, the last rule among equals (CSS Fonts 4, 4.1).
@@ -329,10 +380,10 @@ internal sealed class FontResolver
         if (faces.Count > 0)
         {
             Face face = faces[^1];
-            return FontMatcher.Instance(face.Font, face.Applied, query, face.Font.Location, face.Settings);
+            return FontMatcher.Instance(face.Font, face.Applied, query, face.Font.Location, face.Settings, _budget);
         }
 
-        return _fonts?.Find(family, query) ?? (_useSystemFonts ? PdfFontCollection.System.Find(family, query) : null);
+        return _fonts?.Find(family, query, _budget) ?? (_useSystemFonts ? PdfFontCollection.System.Find(family, query, _budget) : null);
     }
 
     /// <summary>Generic families (CSS Fonts 4, 4.2) as standard 14 fonts.</summary>

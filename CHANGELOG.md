@@ -20,6 +20,14 @@
   itself, so a document embeds one program per location drawn, however many sizes use it.
   `@font-face` rules that share a file share its font. A damaged variation table makes matching
   fall back to the font's default instance.
+- HTML bounds the variable font instances a document can ask for: axis values snap to a grid
+  (whole units for wght, wdth and opsz, half degrees for slnt, tenths for ital, a hundredth of
+  the range for other axes) and each font makes at most 32 instances per conversion, the nearest
+  one standing in beyond that. Font values that are not finite are dropped and the rest clamped,
+  and a style value that font matching still rejects falls back to the family's default instead
+  of failing the conversion. `font-stretch` accepts only finite percentages.
+- `PdfFontQuery` checks each value when it is set and copies `Variations`, so an invalid query
+  throws where it is built.
 - `tools/make_variable_font_fixtures.py` also builds Test-Axes.ttf, a font with wght, wdth,
   opsz, ital and slnt axes for the matching tests.
 - PDF/A-1b output (`PdfConformance.PdfA1B`): PDF 1.4 with a classic cross-reference table and no

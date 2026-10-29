@@ -157,6 +157,14 @@ default) sets the opsz axis to the font size in CSS px; `font-variation-settings
 last. The `@font-face` descriptors `font-variation-settings` and `font-named-instance` apply too.
 Each location is embedded once however many elements use it.
 
+Since sizes and axis values come from the document, two limits keep a page from asking for an
+embedded font per value. Axis values snap to a grid before an instance is made: whole units for
+wght, wdth and opsz, half degrees for slnt, tenths for ital, and a hundredth of the axis's range
+for other axes. And one conversion makes at most 32 instances of each font; past that, text uses
+the nearest instance already made. Values that are not finite numbers are ignored, and weights,
+widths (up to 1000%), oblique angles and optical sizes (up to 1000) are clamped to their ranges,
+so no style value stops a conversion.
+
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.

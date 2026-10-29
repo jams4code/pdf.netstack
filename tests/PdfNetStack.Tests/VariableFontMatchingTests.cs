@@ -2,6 +2,10 @@ using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 using PdfNetStack.Fonts.OpenType;
 using PdfNetStack.Html;
+using PdfNetStack.Html.Css;
+using PdfNetStack.Html.Dom;
+using PdfNetStack.Html.Layout;
+using PdfNetStack.Html.Parsing;
 using PdfNetStack.Objects;
 
 namespace PdfNetStack.Tests;
@@ -388,6 +392,142 @@ public sealed class VariableFontMatchingTests
         }
 
         CollectionAssert.AreEquivalent(new[] { "PdfNetStackTestAxes-Regular", "PdfNetStackTestAxes-Display" }, names.ToArray());
+    }
+
+    [TestMethod]
+    [DataRow("font-variation-settings: 'wght' 1e309")]
+    [DataRow("font-variation-settings: 'wght' -1e309, 'opsz' 1e300")]
+    [DataRow("font-variation-settings: 'wght' calc(1e308 * 10)")]
+    [DataRow("font-variation-settings: 'wght' calc(infinity)")]
+    [DataRow("font-variation-settings: 'wght' calc(NaN)")]
+    [DataRow("font-stretch: 1e309%")]
+    [DataRow("font-stretch: 1e300%")]
+    [DataRow("font-width: 1e309%")]
+    [DataRow("font-size: 1e309px")]
+    [DataRow("font-size: calc(1e308px * 10)")]
+    [DataRow("font-size: 1e300px")]
+    [DataRow("font-weight: calc(infinity)")]
+    [DataRow("font-weight: 1e309")]
+    [DataRow("font-style: oblique 1e309deg")]
+    [DataRow("font-style: oblique calc(infinity * 1deg)")]
+    [DataRow("font: oblique 1e309deg 1e309px A")]
+    public void HostileFontValuesResolve(string declaration)
+    {
+        // Untrusted style values never make font matching throw: each is dropped or clamped, and
+        // the family's variable font still answers.
+        string html = $$"""
+            <style>
+            @font-face { font-family: A; src: url(a.ttf); font-stretch: 1e309% 1e309%; font-variation-settings: "wght" 1e309 }
+            @font-face { font-family: A; src: url(a.ttf); font-weight: 1e309; font-style: oblique 1e309deg }
+            @font-face { font-family: A; src: url(a.ttf); font-variation-settings: "wght" calc(infinity), "wdth" -1e300 }
+            p { font-family: A; font-size: 12px }
+            </style>
+            <p id=x style="{{declaration}}">H</p>
+            """;
+        HtmlDocument doc = HtmlParser.Parse(html);
+        var resolver = new StyleResolver(CssMedia.Default);
+        resolver.AddDocument(doc);
+        var fonts = new FontResolver(null, useSystemFonts: false);
+        byte[] data = File.ReadAllBytes(FixturePath("Test-Axes.ttf"));
+        fonts.AddFontFaces(resolver.FontFaces, url => url == "a.ttf" ? data : null);
+        var styles = new Dictionary<HtmlElement, ComputedStyle>();
+        foreach (HtmlElement e in doc.Descendants())
+        {
+            styles[e] = resolver.Compute(e, e.ParentElement is HtmlElement p ? styles[p] : null);
+        }
+
+        ComputedStyle style = styles.Single(p => p.Key.GetAttribute("id") == "x").Value;
+        Assert.AreEqual(Axes, fonts.Resolve(style).Primary.FamilyName, declaration);
+    }
+
+    [TestMethod]
+    [DataRow("font-variation-settings: 'wght' 1e309")]
+    [DataRow("font-variation-settings: 'wght' calc(1e308 * 10), 'opsz' calc(-infinity)")]
+    [DataRow("font-stretch: 1e309%")]
+    [DataRow("font-weight: calc(infinity)")]
+    [DataRow("font-style: oblique 1e309deg")]
+    public void HostileFontValuesConvert(string declaration)
+    {
+        string html = $$"""
+            <style>
+            @font-face { font-family: A; src: url({{DataUri()}}); font-stretch: 1e309% 1e309%; font-variation-settings: "wght" 1e309 }
+            p { font-family: A; font-size: 12px }
+            </style>
+            <p style="{{declaration}}">H</p>
+            """;
+        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf(html, new HtmlConverterOptions { UseSystemFonts = false }));
+        StringAssert.Contains(doc.Pages[0].GetLetters().Single().FontName, "PdfNetStackTestAxes");
+    }
+
+    [TestMethod]
+    public void QueryValuesAreCheckedWhenSet()
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { Weight = double.NaN });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { Weight = 1001 });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { Width = double.PositiveInfinity });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { Width = -1 });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { ObliqueAngle = double.NaN });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { OpticalSize = double.PositiveInfinity });
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new PdfFontQuery { OpticalSize = -2 });
+        Assert.ThrowsExactly<ArgumentException>(() => new PdfFontQuery { Variations = new Dictionary<string, double> { ["wght"] = double.NegativeInfinity } });
+
+        // The variations are copied: changing the dictionary later cannot slip a bad value in.
+        var variations = new Dictionary<string, double> { ["wght"] = 500 };
+        var query = new PdfFontQuery { Variations = variations, OpticalSize = null };
+        variations["wght"] = double.NaN;
+        Assert.AreEqual(500, query.Variations!["wght"]);
+    }
+
+    [TestMethod]
+    public void BudgetSnapsAndCapsInstances()
+    {
+        PdfOpenTypeFont font = PdfOpenTypeFont.Load(FixturePath("Test-Axes.ttf"));
+        var budget = new InstanceBudget(3);
+
+        // Whole units for wght, wdth and opsz, half degrees for slnt, tenths for ital.
+        PdfOpenTypeFont a = budget.Instance(font, new Dictionary<string, double> { ["wght"] = 650.4, ["opsz"] = 20.5, ["slnt"] = -10.3, ["ital"] = 0.04 });
+        AssertAt(a, "wght=650 wdth=100 opsz=21 ital=0 slnt=-10.5");
+        Assert.AreSame(a, budget.Instance(font, new Dictionary<string, double> { ["wght"] = 649.6, ["opsz"] = 20.7, ["slnt"] = -10.4 }));
+
+        // Past the cap, the nearest location already made.
+        PdfOpenTypeFont light = budget.Instance(font, new Dictionary<string, double> { ["wght"] = 100 });
+        PdfOpenTypeFont wide = budget.Instance(font, new Dictionary<string, double> { ["wdth"] = 125 });
+        Assert.AreSame(light, budget.Instance(font, new Dictionary<string, double> { ["wght"] = 130 }));
+        Assert.AreSame(wide, budget.Instance(font, new Dictionary<string, double> { ["wdth"] = 120, ["wght"] = 420 }));
+        Assert.AreSame(a, budget.Instance(font, new Dictionary<string, double> { ["wght"] = 640, ["opsz"] = 20, ["slnt"] = -9 }));
+
+        // The cap is per font: another font has its own.
+        PdfOpenTypeFont other = PdfOpenTypeFont.Load(FixturePath("Test-Variable.ttf"));
+        AssertAt(budget.Instance(other, new Dictionary<string, double> { ["wght"] = 333.3 }), "wght=333");
+    }
+
+    [TestMethod]
+    public void HtmlBoundsTheInstancesOfAFont()
+    {
+        // Sizes a hundredth of a pixel apart share whole opsz values; past 32 locations a font
+        // reuses the nearest one it has. 300 paragraphs, at most 32 programs.
+        string sizes = string.Concat(Enumerable.Range(0, 100).Select(i => $"<p style=\"font-size: {(10 + i * 0.01).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}px\">H</p>"));
+        string weights = string.Concat(Enumerable.Range(0, 200).Select(i => $"<p style=\"font-variation-settings: 'wght' {100 + i * 4}, 'wdth' {75 + i % 50}\">H</p>"));
+        string html = $$"""
+            <style>
+            @font-face { font-family: A; src: url({{DataUri()}}) }
+            p { font-family: A; margin: 0; font-size: 10px }
+            </style>
+            {{sizes}}{{weights}}
+            """;
+        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf(html, new HtmlConverterOptions { UseSystemFonts = false }));
+        var names = new HashSet<string>();
+        foreach (PdfPage page in doc.Pages)
+        {
+            foreach (PdfLetter letter in page.GetLetters()) names.Add(letter.FontName.Substring(letter.FontName.IndexOf('+') + 1));
+        }
+
+        Assert.IsLessThanOrEqualTo(32, names.Count, string.Join(", ", names));
+        Assert.IsGreaterThanOrEqualTo(30, names.Count, string.Join(", ", names));
+
+        // Whole numbers: 10.00px to 10.49px is opsz 10, 10.50px and up is 11.
+        Assert.IsTrue(names.Contains("PdfNetStackTestAxes_10opsz") && names.Contains("PdfNetStackTestAxes_11opsz"), string.Join(", ", names));
+        Assert.IsFalse(names.Any(n => n.Contains('.')), string.Join(", ", names));
     }
 
     [TestMethod]

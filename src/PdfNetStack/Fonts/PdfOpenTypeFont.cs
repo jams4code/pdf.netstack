@@ -133,6 +133,9 @@ public sealed class PdfOpenTypeFont : PdfFont
     internal FontTraits TraitsAt(IReadOnlyList<double>? location) =>
         FontTraits.Describe(_file.Table("OS/2"), _file.Table("head"), _file.Table("post"), _variations?.Axes ?? [], location);
 
+    /// <summary>The instance cache this font shares with the font it was loaded as and all its instances: one per font program.</summary>
+    internal object InstanceCache => _instances;
+
     /// <summary>For an instance, its axis values in user units, one per axis; null for a font as loaded.</summary>
     internal IReadOnlyList<double>? Location => _location;
 
