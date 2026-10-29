@@ -43,6 +43,15 @@
   edge shows before the break and its bottom edge after, and the margin after the break is kept.
 - HTML pagination: a forced break before the first content or after the last no longer adds an
   empty page, so `break-before: page` on the first element starts the document on page one.
+- Fixed: HTML boxes with a `z-index` now paint in stacking order (CSS 2.1, Appendix E). A
+  negative `z-index` paints over the stacking context's background and borders and under its
+  blocks, floats and text; a positive one paints over all of it, in z-index order. A
+  `position: fixed` box with a negative `z-index` paints under the content of every page, where
+  before it painted over it. Positioned boxes, flex items and grid items with a `z-index`, and
+  boxes with opacity below one or a transform, start a stacking context.
+- Fixed: HTML `text-decoration-style: wavy` draws a wave instead of a straight line, for
+  underline, overline and line-through. Its amplitude and wavelength follow the line's
+  thickness, and it is clipped to the decorated text.
 - PAdES B-T, B-LT and B-LTA. `PdfTimestampClient` builds RFC 3161 requests (hash, random nonce,
   optional policy) and checks the reply (status, hash, nonce, signature, a critical time stamping
   extended key usage); the application supplies the transport. `PdfSignatureOptions.Timestamp`

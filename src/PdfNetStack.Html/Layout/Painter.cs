@@ -5,12 +5,28 @@ using PdfNetStack.Html.Css;
 namespace PdfNetStack.Html.Layout;
 
 /// <summary>
-/// Paints fragments onto a page canvas whose user space is CSS px (CSS 2.1, Appendix E,
-/// simplified to tree order): backgrounds, borders, then content; text with its decorations;
-/// images; links over anchors.
+/// Paints fragments onto a page canvas whose user space is CSS px (CSS 2.1, Appendix E): a
+/// stacking context paints its background and borders, then the descendants with a negative
+/// z-index, then its content in tree order, then the descendants with a positive z-index. Within
+/// the content, boxes paint in tree order: backgrounds, borders, then content; text with its
+/// decorations; images; links over anchors.
 /// </summary>
 internal sealed partial class Painter
 {
+    /// <summary>The parts of a box to paint: all of it, or its own background and borders apart from the rest.</summary>
+    internal enum Phase
+    {
+        All,
+        Background,
+        Foreground,
+    }
+
+    // A box painted in its stacking context's z-index layer, with the overflow clips of the boxes between them.
+    private sealed record Layer(BoxFragment Box, int Z, List<BoxFragment> Clips);
+
+    // Bounds the curves of one wavy decoration: far more than any page is wide.
+    private const int MaxWaves = 4096;
+
     private readonly PdfGraphics _g;
     private readonly double _top;
     private readonly double _bottom;
@@ -52,7 +68,18 @@ internal sealed partial class Painter
         return Math.Max(0, Math.Min(1, o));
     }
 
-    public void Paint(BoxFragment f, double opacity = 1)
+    /// <summary>Paints a box and everything in it, as the root of a stacking context.</summary>
+    public void Paint(BoxFragment f, double opacity = 1) => Paint(f, opacity, Phase.All, context: true);
+
+    /// <summary>
+    /// Paints part of a box as the root of a stacking context: <see cref="Phase.Background"/> paints
+    /// its own background and borders, <see cref="Phase.Foreground"/> everything else, so content
+    /// from outside the box can go between them.
+    /// </summary>
+    public void Paint(BoxFragment f, Phase phase) => Paint(f, 1, phase, context: true);
+
+    /// <param name="context">The box roots a stacking context: its descendants with a z-index paint in its layers.</param>
+    private void Paint(BoxFragment f, double opacity, Phase phase, bool context)
     {
         opacity *= Opacity(f.Style);
         if (opacity <= 0) return;
@@ -62,12 +89,12 @@ internal sealed partial class Painter
 
         // A transform moves the box and everything inside it; overflow clips what is inside.
         bool transformed = HasTransform(f.Style);
-        bool clipped = f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
+        bool clipped = Clips(f);
         using PdfGraphicsState? state = transformed || clipped ? _g.Save() : null;
         if (transformed) Transform(f);
         if (visible && Visible(f))
         {
-            if (decorated && Decorates(f.Style, f.Border))
+            if (phase != Phase.Foreground && decorated && Decorates(f.Style, f.Border))
             {
                 BeginArtifact();
                 Shadows(f.Style, f.X, f.Y, f.Width, f.Height, radii, opacity);
@@ -77,34 +104,121 @@ internal sealed partial class Painter
                 End();
             }
 
-            if (f.Box is ReplacedBox image)
+            if (phase != Phase.Background && f.Box is ReplacedBox image)
             {
                 BeginContent(Owner(f.Box));
                 Image(f, image, radii);
                 End();
             }
 
-            Link(f.Box.Element, f.X, f.Y, f.Width, f.Height);
+            if (phase != Phase.Background) Link(f.Box.Element, f.X, f.Y, f.Width, f.Height);
         }
 
+        if (phase == Phase.Background) return;
+
         // overflow other than visible clips the content to the padding box, rounded with the corners.
-        if (clipped)
-        {
-            _g.IntersectClip(Shape(f.X + f.Border.Left, f.Y + f.Border.Top, f.Width - f.Border.Horizontal, f.Height - f.Border.Vertical, Inset(radii, f.Border)));
-        }
+        if (clipped) _g.IntersectClip(PaddingShape(f));
+
+        // A stacking context paints its negative layers over its own background and under its
+        // content, and its positive layers over everything (CSS 2.1, Appendix E); equal z-index
+        // values keep tree order.
+        IEnumerable<Layer> layers = (context || FormsStackingContext(f) ? Layers(f) : null) ?? [];
+        foreach (Layer layer in layers.Where(l => l.Z < 0).OrderBy(l => l.Z)) PaintLayer(layer, opacity);
 
         if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity, f.Box.Element);
         foreach (Fragment child in f.Children)
         {
-            if (child is BoxFragment b) Paint(b, opacity);
+            if (child is BoxFragment b && !Layered(b)) Paint(b, opacity, Phase.All, context: false);
             else if (child is LineFragment line && Visible(line)) PaintLine(line, opacity);
         }
+
+        foreach (Layer layer in layers.Where(l => l.Z > 0).OrderBy(l => l.Z)) PaintLayer(layer, opacity);
+    }
+
+    private static bool Clips(BoxFragment f) => f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
+
+    /// <summary>The padding box, rounded with the corners: where overflow clips content.</summary>
+    private static PdfPath PaddingShape(BoxFragment f)
+    {
+        PdfCornerRadii radii = f.Box is not TableWrapperBox && !HiddenEmptyCell(f) ? Radii(f.Style, f.Width, f.Height) : default;
+        return Shape(f.X + f.Border.Left, f.Y + f.Border.Top, f.Width - f.Border.Horizontal, f.Height - f.Border.Vertical, Inset(radii, f.Border));
+    }
+
+    /// <summary>
+    /// The z-index of a box it applies to, positioned or a flex or grid item; null for auto or when
+    /// it does not apply (CSS 2.1, 9.9.1; CSS Flexbox 1, 4.3; CSS Grid 1, 6.3).
+    /// </summary>
+    internal static int? ZIndex(BoxFragment f)
+    {
+        if (f.Style.Keyword("z-index") == "auto") return null;
+        bool applies = f.Style.Keyword("position") is "relative" or "absolute" or "fixed" or "sticky" || f.Box.Parent is FlexBox or GridBox;
+        double z = f.Style.Number("z-index");
+        return applies ? (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, z)) : null;
+    }
+
+    /// <summary>A box painted in its stacking context's negative or positive layer rather than in tree order.</summary>
+    private static bool Layered(BoxFragment f) => ZIndex(f) is int z && z != 0;
+
+    /// <summary>Whether a box roots a stacking context: a z-index, opacity below one, a transform, or fixed or sticky positioning.</summary>
+    private static bool FormsStackingContext(BoxFragment f) =>
+        ZIndex(f) is not null || Opacity(f.Style) < 1 || HasTransform(f.Style) || f.Style.Keyword("position") is "fixed" or "sticky";
+
+    /// <summary>
+    /// The layered boxes of the stacking context <paramref name="root"/>, in tree order: its
+    /// descendants with a z-index other than zero, outside any stacking context nested in it.
+    /// Null when there are none.
+    /// </summary>
+    private static List<Layer>? Layers(Fragment root)
+    {
+        List<Layer>? layers = null;
+        void Walk(Fragment f, List<BoxFragment> clips)
+        {
+            IEnumerable<Fragment> children = f switch
+            {
+                BoxFragment b => b.Children,
+                LineFragment l => l.Items,
+                _ => [],
+            };
+            foreach (Fragment child in children)
+            {
+                if (child is BoxFragment b)
+                {
+                    if (ZIndex(b) is int z && z != 0)
+                    {
+                        (layers ??= []).Add(new Layer(b, z, clips));
+                        continue;
+                    }
+
+                    if (FormsStackingContext(b)) continue;
+                    Walk(b, Clips(b) ? [.. clips, b] : clips);
+                }
+                else if (child is LineFragment)
+                {
+                    Walk(child, clips);
+                }
+            }
+        }
+
+        Walk(root, []);
+        return layers;
+    }
+
+    /// <summary>Paints a layered box under the overflow clips of the boxes between it and its stacking context.</summary>
+    private void PaintLayer(Layer layer, double opacity)
+    {
+        using PdfGraphicsState? state = layer.Clips.Count > 0 ? _g.Save() : null;
+        foreach (BoxFragment clip in layer.Clips) _g.IntersectClip(PaddingShape(clip));
+        Paint(layer.Box, opacity, Phase.All, context: true);
     }
 
     /// <summary>Paints lines outside the box tree, such as margin box content.</summary>
     public void PaintLines(IEnumerable<LineFragment> lines)
     {
-        foreach (LineFragment line in lines) PaintLine(line, 1);
+        List<LineFragment> all = [.. lines];
+        List<Layer> layers = [.. all.SelectMany(l => Layers(l) ?? [])];
+        foreach (Layer layer in layers.Where(l => l.Z < 0).OrderBy(l => l.Z)) PaintLayer(layer, 1);
+        foreach (LineFragment line in all) PaintLine(line, 1);
+        foreach (Layer layer in layers.Where(l => l.Z > 0).OrderBy(l => l.Z)) PaintLayer(layer, 1);
     }
 
     /// <summary>Whether a box draws anything of its own: background, borders, shadow or outline.</summary>
@@ -168,8 +282,9 @@ internal sealed partial class Painter
                 case TextFragment text when text.Style.Keyword("visibility") == "visible":
                     Text(text, opacity, Owner(text.Owner) ?? fallbackOwner);
                     break;
-                case BoxFragment atomic:
-                    Paint(atomic, opacity);
+                // An atomic inline paints whole, but its layered descendants belong to the enclosing stacking context.
+                case BoxFragment atomic when !Layered(atomic):
+                    Paint(atomic, opacity, Phase.All, context: false);
                     break;
             }
         }
@@ -299,15 +414,54 @@ internal sealed partial class Painter
             LineCap = style == "dotted" ? PdfLineCap.Round : PdfLineCap.Butt,
         };
 
+        // A wave swings around its line: under and over lines move away from the text by its amplitude.
+        bool wavy = style == "wavy";
+        double amplitude = wavy ? WaveAmplitude(thickness) : 0;
+
         void Line(double y)
         {
+            if (wavy)
+            {
+                Wave(pen, t.X, t.Width, y, amplitude);
+                return;
+            }
+
             _g.DrawLine(pen, t.X, y, t.X + t.Width, y);
             if (style == "double") _g.DrawLine(pen, t.X, y + (thickness * 2), t.X + t.Width, y + (thickness * 2));
         }
 
-        if (lines.Contains("underline")) Line(t.Baseline + (font.UnderlinePosition * size));
-        if (lines.Contains("overline")) Line(t.Baseline - (font.Ascent * size));
+        if (lines.Contains("underline")) Line(t.Baseline + (font.UnderlinePosition * size) + amplitude);
+        if (lines.Contains("overline")) Line(t.Baseline - (font.Ascent * size) - amplitude);
         if (lines.Contains("line-through")) Line(t.Baseline - (font.StrikeoutPosition * size));
+    }
+
+    /// <summary>How far a wavy line swings from its center, from the line's thickness; a thin line keeps a visible wave.</summary>
+    internal static double WaveAmplitude(double thickness) => 1.5 * Math.Max(1, thickness);
+
+    /// <summary>
+    /// A wavy line from <paramref name="x"/> across <paramref name="width"/>, centered on
+    /// <paramref name="y"/>: arches of quadratic curves, alternately up and down, each two
+    /// amplitudes wide, clipped to the run. The waves start on a whole wavelength of the canvas, so
+    /// the runs of one decorated line join up.
+    /// </summary>
+    private void Wave(PdfPen pen, double x, double width, double y, double amplitude)
+    {
+        if (width <= 0) return;
+        double half = 2 * amplitude;
+        double start = Math.Floor(x / (2 * half)) * 2 * half;
+        int count = (int)Math.Min(MaxWaves, Math.Ceiling((x + width - start) / half));
+        var path = new PdfPath().MoveTo(start, y);
+        for (int i = 0; i < count; i++)
+        {
+            // A quadratic arch reaches half its control point's height.
+            double from = start + (i * half);
+            path.QuadraticCurveTo(from + (half / 2), y + (i % 2 == 0 ? -2 : 2) * amplitude, from + half, y);
+        }
+
+        using PdfGraphicsState state = _g.Save();
+        double reach = amplitude + pen.Width;
+        _g.IntersectClip(x, y - reach, width, 2 * reach);
+        _g.DrawPath(pen, null, path);
     }
 
     private void Link(Dom.HtmlElement? element, double x, double y, double w, double h)

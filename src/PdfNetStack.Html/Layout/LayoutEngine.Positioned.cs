@@ -133,11 +133,8 @@ internal sealed partial class LayoutEngine
     {
         foreach (Pending p in pending)
         {
-            BoxFragment f = LayoutAbsolute(p, x, y, width, height);
-
-            // Negative z-index paints under the container's content, the rest over it.
-            if (p.Box.Style.Number("z-index") < 0) container.Children.Insert(0, f);
-            else container.Children.Add(f);
+            // In tree order: the painter orders boxes with a z-index into their stacking context's layers.
+            container.Children.Add(LayoutAbsolute(p, x, y, width, height));
         }
     }
 

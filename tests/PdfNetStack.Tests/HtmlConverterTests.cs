@@ -97,6 +97,94 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void PaintsFixedBoxesInZIndexOrderOnEveryPage()
+    {
+        // Red sits under the content, over the root's border; cyan (auto) and yellow (2) over it, yellow last.
+        PdfDocument doc = Convert("""
+            <style>html { border-top: 2px solid rgb(0, 255, 0) } p { background: rgb(0, 0, 255) }</style>
+            <div style="position: fixed; z-index: 2; top: 0; right: 0; width: 50px; height: 50px; background: rgb(255, 255, 0)"></div>
+            <div style="position: fixed; z-index: -1; top: 0; left: 0; width: 300px; height: 300px; background: rgb(255, 0, 0)"></div>
+            <div style="position: fixed; bottom: 0; left: 0; width: 50px; height: 50px; background: rgb(0, 255, 255)"></div>
+            <p>one</p><p style="break-before: page">two</p>
+            """);
+        Assert.HasCount(2, doc.Pages);
+        for (int page = 0; page < 2; page++)
+        {
+            string content = Content(doc, page);
+            int red = content.IndexOf("1 0 0 rg", StringComparison.Ordinal);
+            int blue = content.IndexOf("0 0 1 rg", StringComparison.Ordinal);
+            int text = content.IndexOf("BT", StringComparison.Ordinal);
+            int cyan = content.IndexOf("0 1 1 rg", StringComparison.Ordinal);
+            int yellow = content.IndexOf("1 1 0 rg", StringComparison.Ordinal);
+            Assert.IsGreaterThanOrEqualTo(0, red, $"page {page + 1}");
+            Assert.IsLessThan(blue, red, $"page {page + 1}: the negative layer paints under the backgrounds");
+            Assert.IsLessThan(text, red, $"page {page + 1}: and under the text");
+            Assert.IsGreaterThan(text, cyan, $"page {page + 1}: auto paints over the content");
+            Assert.IsGreaterThan(cyan, yellow, $"page {page + 1}: a positive z-index paints over auto");
+        }
+
+        string first = Content(doc, 0);
+        Assert.IsLessThan(first.IndexOf("1 0 0 rg", StringComparison.Ordinal), first.IndexOf("0 1 0 rg", StringComparison.Ordinal), "the root's border paints under the negative layer");
+    }
+
+    [TestMethod]
+    public void PaintsPositionedBoxesInStackingOrder()
+    {
+        // The first container has z-index auto: its negative child joins the root's negative layer,
+        // under the container. The second roots a stacking context: its negative child paints over
+        // its background and under its content. The positive child paints after everything.
+        PdfDocument doc = Convert("""
+            <div style="position: relative; height: 60px; background: rgb(0, 0, 255)">
+              <div style="position: absolute; z-index: 1; top: 0; width: 5px; height: 5px; background: rgb(255, 255, 255)"></div>
+              <div style="position: absolute; z-index: -1; width: 20px; height: 20px; background: rgb(255, 0, 0)"></div>
+              <div style="height: 10px; background: rgb(0, 255, 0)"></div>
+            </div>
+            <div style="position: relative; z-index: 0; height: 60px; background: rgb(0, 255, 255)">
+              <div style="position: absolute; z-index: -1; width: 20px; height: 20px; background: rgb(255, 0, 255)"></div>
+              <div style="height: 10px; background: rgb(255, 255, 0)"></div>
+            </div>
+            """);
+        string content = Content(doc, 0);
+        string[] colors = ["1 0 0 rg", "0 0 1 rg", "0 1 0 rg", "0 1 1 rg", "1 0 1 rg", "1 1 0 rg", "1 1 1 rg"];
+        foreach (string color in colors) Assert.HasCount(1, Regex.Matches(content, color), $"{color} paints once");
+        int[] order = [.. colors.Select(c => content.IndexOf(c, StringComparison.Ordinal))];
+        CollectionAssert.AreEqual(order.OrderBy(i => i).ToArray(), order, "red, blue, green, cyan, magenta, yellow, white");
+
+        // A containing block that clips its overflow still clips a layered descendant painted out
+        // of tree order: the page slice, the box's own content and the layered box each set a clip.
+        content = Content(Convert("""
+            <div style="position: relative; overflow: hidden; height: 30px; background: rgb(0, 0, 255)">
+              <div style="position: absolute; z-index: -1; width: 400px; height: 400px; background: rgb(255, 0, 0)"></div>
+            </div>
+            """), 0);
+        Assert.HasCount(3, Regex.Matches(content, @"W\s+n"));
+        Assert.IsLessThan(content.IndexOf("0 0 1 rg", StringComparison.Ordinal), content.IndexOf("1 0 0 rg", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void DrawsWavyAndOtherDecorationStyles()
+    {
+        string Decorated(string decoration) => Content(Convert($"<p style=\"font: 16px Helvetica; text-decoration: {decoration} rgb(255, 0, 0)\">some decorated text</p>"), 0);
+        int Count(string content, string pattern) => Regex.Matches(content, pattern).Cast<Match>().Count();
+
+        // A wave is a run of curves, clipped to the text; a solid line is one straight segment.
+        string solid = Decorated("underline");
+        Assert.AreEqual(0, Count(solid, @"\sc\n"));
+        Assert.AreEqual(1, Count(solid, @"\sl\n"));
+        string wavy = Decorated("underline wavy");
+        int curves = Count(wavy, @"\sc\n");
+        Assert.IsGreaterThan(20, curves, "a curve every few px across the text");
+        Assert.AreEqual(0, Count(wavy, @"\sl\n"));
+        StringAssert.Matches(wavy, new Regex(@"re\s+W\s+n"), "the wave is clipped to the run");
+        Assert.AreEqual(3 * curves, Count(Decorated("underline overline line-through wavy"), @"\sc\n"), "every line waves");
+
+        // The other styles still draw straight lines.
+        StringAssert.Contains(Decorated("underline dotted"), "[0 2] 0 d");
+        StringAssert.Contains(Decorated("underline dashed"), "[3 2] 0 d");
+        Assert.AreEqual(2, Count(Decorated("line-through double"), @"\sl\n"));
+    }
+
+    [TestMethod]
     public void AppliesPageRulesAndMarginBoxes()
     {
         PdfDocument doc = Convert("""
@@ -303,6 +391,16 @@ public sealed class HtmlConverterTests
         Assert.AreEqual(841.89, doc.Pages[1].Width, 0.01);
         Assert.AreEqual("c", Text(doc, 1));
         Assert.AreEqual("d", Text(doc, 2));
+
+        // A named section that breaks before and after itself, first in the document and in the middle.
+        doc = Convert("""
+            <style>@page wide { size: A4 landscape } .wide { page: wide; break-before: page; break-after: page }</style>
+            <section class=wide><p>a</p></section><p>b</p><section class=wide><p>c</p></section><p>d</p>
+            """);
+        Assert.HasCount(4, doc.Pages);
+        CollectionAssert.AreEqual(new[] { "a", "b", "c", "d" }, Enumerable.Range(0, 4).Select(p => Text(doc, p)).ToArray());
+        Assert.AreEqual(841.89, doc.Pages[0].Width, 0.01);
+        Assert.AreEqual(841.89, doc.Pages[2].Width, 0.01);
     }
 
     [TestMethod]

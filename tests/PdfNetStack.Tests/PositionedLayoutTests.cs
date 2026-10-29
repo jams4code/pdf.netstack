@@ -101,16 +101,21 @@ public sealed class PositionedLayoutTests
     }
 
     [TestMethod]
-    public void OffsetsRelativeBoxesAndOrdersByZIndex()
+    public void OffsetsRelativeBoxesAndKeepsTreeOrder()
     {
         BoxFragment root = Layout("""
             <div id=box style="position: relative; top: 10px; left: 5px; height: 40px">
-              <div id=under style="position: absolute; z-index: -1">u</div>
+              <div id=first style="position: absolute; z-index: -1">u</div>
+              <div id=second style="position: absolute; z-index: -1">v</div>
             </div>
             """, Bare);
         BoxFragment box = ById(root, "box");
         Assert.AreEqual(10, box.Y, Tolerance);
         Assert.AreEqual(5, box.X, Tolerance);
-        Assert.AreSame(ById(root, "under"), box.Children[0], "negative z-index paints first");
+
+        // The painter orders by z-index; equal values paint in tree order.
+        List<Fragment> positioned = [.. box.Children.Where(c => c is BoxFragment { Box.Element: not null })];
+        Assert.AreSame(ById(root, "first"), positioned[0]);
+        Assert.AreSame(ById(root, "second"), positioned[1]);
     }
 }

@@ -105,7 +105,10 @@ public static class HtmlConverter
         List<StringAssignment> strings = Strings(runs);
         Tagging? tags = options.Tagged ? new Tagging(pdf, doc.Html.GetAttribute("lang")) : null;
         running.Place(runs);
-        List<BoxFragment> fixedBoxes = [.. runs.SelectMany(r => r.Engine.Fixed)];
+        // Fixed boxes in z-index order, tree order for equal values; auto counts as zero.
+        List<BoxFragment> fixedBoxes = [.. runs.SelectMany(r => r.Engine.Fixed).OrderBy(f => Painter.ZIndex(f) ?? 0)];
+        List<BoxFragment> fixedBelow = [.. fixedBoxes.Where(f => Painter.ZIndex(f) < 0)];
+        List<BoxFragment> fixedAbove = [.. fixedBoxes.Where(f => !(Painter.ZIndex(f) < 0))];
         (CssColor canvas, Box? propagated) = Painter.CanvasBackground(runs[0].Layout);
         for (int i = 0; i < pages.Count; i++)
         {
@@ -120,12 +123,39 @@ public static class HtmlConverter
             if (canvas.A > 0) graphics.DrawRectangle(null, new PdfSolidBrush(Painter.ToPdf(canvas)), 0, 0, pageWidth, pageHeight);
             if ((pageColor.A > 0 || canvas.A > 0) && tags is not null) graphics.EndMarkedContent();
 
-            using (graphics.Save())
+            // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
+            void PaintFixed(IEnumerable<BoxFragment> boxes)
             {
-                graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
-                graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
+                foreach (BoxFragment fixedBox in boxes)
+                {
+                    using (graphics.Save())
+                    {
+                        graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
+                        graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
+                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage, tags, artifact: true).Paint(fixedBox);
+                    }
+                }
+            }
 
-                // Table headers repeated at the top of a page that continues a table.
+            // The page's content, or with a phase only the root's own background and borders, or the rest.
+            void PaintContent(Painter.Phase phase)
+            {
+                using (graphics.Save())
+                {
+                    graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
+                    graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
+                    if (phase != Painter.Phase.Background) PaintHeaders();
+                    graphics.TranslateTransform(0, slice.Inset - slice.Top);
+
+                    // The page shows its slice; content may overflow sideways into the margins.
+                    graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
+                    new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage, tags).Paint(layout, phase);
+                }
+            }
+
+            // Table headers repeated at the top of a page that continues a table.
+            void PaintHeaders()
+            {
                 double offset = 0;
                 foreach (Paginator.RepeatedHeader header in slice.Headers)
                 {
@@ -138,24 +168,22 @@ public static class HtmlConverter
 
                     offset += header.Advance;
                 }
-
-                graphics.TranslateTransform(0, slice.Inset - slice.Top);
-
-                // The page shows its slice; content may overflow sideways into the margins.
-                graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
-                new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage, tags).Paint(layout);
             }
 
-            // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
-            foreach (BoxFragment fixedBox in fixedBoxes)
+            // Fixed boxes are in the root stacking context: a negative z-index paints over the root's
+            // background and borders and under the page's content, the rest over it (CSS 2.1, Appendix E).
+            if (fixedBelow.Count > 0)
             {
-                using (graphics.Save())
-                {
-                    graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
-                    graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
-                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage, tags, artifact: true).Paint(fixedBox);
-                }
+                PaintContent(Painter.Phase.Background);
+                PaintFixed(fixedBelow);
+                PaintContent(Painter.Phase.Foreground);
             }
+            else
+            {
+                PaintContent(Painter.Phase.All);
+            }
+
+            PaintFixed(fixedAbove);
 
             int page = i;
             // Running headers and footers are pagination artifacts, as readers skip them.
