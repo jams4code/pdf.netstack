@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using PdfNetStack.Text;
 using static PdfNetStack.Fonts.OpenType.FontData;
@@ -17,6 +18,35 @@ internal sealed class ShapingTables(OpenTypeFile font)
 
     /// <summary>The legacy kern table, used when GPOS has no kern feature for the script.</summary>
     public Kerning? Kerning { get; } = Kerning.LoadLegacy(font);
+
+    /// <summary>What the Indic shaper learns about the font, once per script.</summary>
+    internal ConcurrentDictionary<string, IndicPlan> IndicPlans { get; } = new(StringComparer.Ordinal);
+}
+
+/// <summary>What happened to a glyph during shaping, and what kind of character it came from.</summary>
+[Flags]
+internal enum GlyphFlags : ushort
+{
+    None = 0,
+
+    /// <summary>A GSUB lookup replaced the glyph.</summary>
+    Substituted = 1,
+
+    /// <summary>The glyph is the result of a ligature substitution.</summary>
+    Ligated = 2,
+
+    /// <summary>The glyph is one of several a multiple substitution produced.</summary>
+    Multiplied = 4,
+
+    /// <summary>A default ignorable character: joiners, variation selectors, bidi controls.</summary>
+    Ignorable = 8,
+
+    /// <summary>A default ignorable that GSUB does not skip: the grapheme joiner, variation selectors of Mongolian, tags.</summary>
+    Hidden = 16,
+
+    Zwj = 32,
+
+    Zwnj = 64,
 }
 
 /// <summary>A glyph being shaped. Positions are in font units; offsets are relative to the pen.</summary>
@@ -28,6 +58,13 @@ internal sealed class GlyphInfo
     public int CodePoint;
     public uint Mask;
     public GlyphClass Class;
+    public GlyphFlags Flags;
+    public UnicodeCategory Category;
+    public byte CombiningClass;
+    public byte IndicCategory;
+    public byte IndicPosition;
+    public byte SpaceFallback;
+    public int Syllable;
     public int LigatureId;
     public int Component;
     public int XAdvance;
@@ -37,49 +74,99 @@ internal sealed class GlyphInfo
     public int AttachDx;
     public int CursiveParent = -1;
 
+    public bool IsMark => Category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
+
+    /// <summary>A default ignorable that no lookup has replaced.</summary>
+    public bool IsIgnorable => (Flags & (GlyphFlags.Ignorable | GlyphFlags.Substituted)) == GlyphFlags.Ignorable;
+
     public GlyphInfo Copy() => (GlyphInfo)MemberwiseClone();
 }
 
+/// <summary>A feature to apply: its tag and how its lookups match.</summary>
+/// <param name="Tag">The feature tag.</param>
+/// <param name="ManualJoiners">Joiners are not skipped: the font's rules spell them out.</param>
+/// <param name="PerSyllable">Matching stays inside the syllable of the first glyph.</param>
+internal readonly record struct ShapingFeature(string Tag, bool ManualJoiners = false, bool PerSyllable = false);
+
 /// <summary>
 /// OpenType shaping of one run (one font, script and direction): character to glyph mapping,
-/// Arabic joining forms, GSUB substitutions (single, multiple, alternate, ligature, contextual,
-/// chained, reverse chained) and GPOS positioning (single, pair, cursive, mark to base, ligature
-/// and mark, contextual). Feature selection and ordering follow HarfBuzz's default and Arabic
-/// shapers. Written from ISO/IEC 14496-22.
+/// Unicode normalization against the font's coverage, Arabic joining forms, Indic syllables and
+/// reordering, GSUB substitutions (single, multiple, alternate, ligature, contextual, chained,
+/// reverse chained) and GPOS positioning (single, pair, cursive, mark to base, ligature and mark,
+/// contextual). Feature selection, ordering and lookup matching follow HarfBuzz's default,
+/// Arabic, Hebrew and Indic shapers. Written from ISO/IEC 14496-22 and the Microsoft script
+/// development specifications.
 /// </summary>
-internal sealed class Shaper
+internal sealed partial class Shaper
 {
-    private const uint Global = 1, Isol = 2, Fina = 4, Medi = 8, Init = 16;
+    internal const uint Global = 1, Isol = 2, Fina = 4, Medi = 8, Init = 16, Rphf = 32, Pref = 64, Blwf = 128, Abvf = 256, Half = 512, Pstf = 1024;
     private const int MaxNesting = 6;
 
-    private static readonly string[][] ArabicStages =
+    private static readonly ShapingFeature[][] ArabicStages =
     [
-        ["ccmp", "locl"], ["isol"], ["fina"], ["medi"], ["init"], ["rlig"], ["calt", "rclt"], ["mset"],
-        ["liga", "clig", "rvrn"],
+        [new("ccmp"), new("locl")], [new("isol")], [new("fina")], [new("medi")], [new("init")], [new("rlig")],
+        [new("calt"), new("rclt")], [new("mset")], [new("liga"), new("clig"), new("rvrn")],
     ];
 
-    private static readonly string[][] DefaultStages = [["rvrn", "ccmp", "locl", "rlig", "calt", "clig", "liga", "rclt"]];
-    private static readonly string[] PositionFeatures = ["abvm", "blwm", "curs", "dist", "kern", "mark", "mkmk"];
+    private static readonly ShapingFeature[][] DefaultStages =
+    [
+        [new("rvrn"), new("ccmp"), new("locl"), new("rlig"), new("calt"), new("clig"), new("liga"), new("rclt")],
+    ];
 
+    private static readonly ShapingFeature[] PositionFeatures =
+        [new("abvm"), new("blwm"), new("curs"), new("dist"), new("kern"), new("mark"), new("mkmk")];
+
+    /// <summary>OpenType tags of the Indic scripts shaped with the version 2 specifications, by their ISO 15924 tags.</summary>
+    private static readonly Dictionary<string, string> IndicTags = new(StringComparer.Ordinal)
+    {
+        ["deva"] = "dev2", ["beng"] = "bng2", ["guru"] = "gur2", ["gujr"] = "gjr2", ["orya"] = "ory2",
+        ["taml"] = "tml2", ["telu"] = "tel2", ["knda"] = "knd2", ["mlym"] = "mlm2",
+    };
+
+    private readonly ShapingTables _tables;
     private readonly OpenTypeFile _font;
     private readonly LayoutTable? _gsub;
     private readonly LayoutTable? _gpos;
     private readonly GlyphDefinitions? _gdef;
+    private readonly ItemVariationStore? _variations;
+    private readonly float[] _coordinates;
     private readonly Kerning? _legacyKerning;
     private List<GlyphInfo> _buffer = [];
+    private List<(string Tag, int[] Lookups)> _gsubFeatures = [];
+    private List<(string Tag, int[] Lookups)> _gposFeatures = [];
+    private string? _gsubScript;
     private bool _rtl;
     private int _operations;
     private int _nextLigatureId = 1;
     private int _maxLength;
 
+    // The lookup being applied: its feature mask, how it treats joiners, and the syllable it is held to.
+    private uint _lookupMask;
+    private bool _autoZwj;
+    private bool _autoZwnj;
+    private bool _perSyllable;
+    private bool _positioning;
+    private int _syllable;
+
     /// <summary>A shaper for one call; the tables are shared and read only.</summary>
     public Shaper(ShapingTables tables)
     {
+        _tables = tables;
         _font = tables.Font;
         _gsub = tables.Gsub;
         _gpos = tables.Gpos;
         _gdef = tables.Gdef;
+        _coordinates = tables.Font.Coordinates;
+        _variations = _coordinates.Any(c => c != 0) ? _gdef?.Variations : null;
         _legacyKerning = tables.Kerning;
+    }
+
+    private enum ShaperKind
+    {
+        Default,
+        Arabic,
+        Hebrew,
+        Indic,
     }
 
     /// <summary>
@@ -94,63 +181,125 @@ internal sealed class Shaper
         for (int i = start; i < end; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
             int cp = char.IsSurrogate(text[i]) && !char.IsSurrogatePair(text, i) ? 0xFFFD : char.ConvertToUtf32(text, i);
-            int mapped = rightToLeft ? UnicodeData.Mirror(cp) : cp;
-            if (!_font.TryGetGlyph(mapped, out int glyph) && !_font.TryGetGlyph(cp, out glyph)) glyph = 0;
-            _buffer.Add(new GlyphInfo
+
+            // In right to left runs, a mirrored character takes its mirror's glyph when the font has one.
+            if (rightToLeft && UnicodeData.Mirror(cp) is int mirror && mirror != cp && _font.TryGetGlyph(mirror, out _)) cp = mirror;
+            var g = new GlyphInfo
             {
-                Glyph = glyph,
                 Cluster = i,
                 Text = text.Substring(i, char.IsSurrogatePair(text, i) ? 2 : 1),
-                CodePoint = cp,
                 Mask = Global,
-            });
+            };
+            SetCharacter(g, cp);
+            _buffer.Add(g);
         }
 
-        MergeClusters();
+        FormClusters();
+        ShaperKind kind = script switch
+        {
+            "arab" or "syrc" or "nko " or "mong" => ShaperKind.Arabic,
+            "hebr" => ShaperKind.Hebrew,
+            _ when IndicTags.ContainsKey(script) => ShaperKind.Indic,
+            _ => ShaperKind.Default,
+        };
+        string[] tags = IndicTags.TryGetValue(script, out string? newTag) ? [newTag, script] : [script];
+        _gsubFeatures = _gsub?.Features(tags, out _gsubScript) ?? [];
+        _gposFeatures = _gpos?.Features(tags, out _) ?? [];
 
-        // Every lookup costs at most this many steps per glyph; a crafted font cannot run away.
-        _operations = Math.Max(16384, _buffer.Count * 64);
+        // As HarfBuzz: a font that has Indic text under DFLT or latn only gets the default shaper.
+        if (kind == ShaperKind.Indic && _gsubScript is "DFLT" or "latn") kind = ShaperKind.Default;
+
+        Normalize(kind);
+
+        // Lookups visit every glyph, and context matching, ligatures and nesting cost steps on top;
+        // a crafted font cannot run away.
+        int lookups = (_gsub?.LookupCount ?? 0) + (_gpos?.LookupCount ?? 0);
+        _operations = 16384 + _buffer.Count * (64 + 4 * lookups);
 
         // Multiple substitutions may grow the buffer, but never past this (HarfBuzz caps it too).
         _maxLength = Math.Max(64, _buffer.Count * 32);
-        bool arabic = script is "arab" or "syrc" or "nko " or "mong";
-        if (arabic) SetJoiningForms();
+        if (kind == ShaperKind.Arabic) SetJoiningForms();
         Classify();
 
-        if (_gsub is not null)
+        if (kind == ShaperKind.Indic)
         {
-            foreach (string[] stage in arabic ? ArabicStages : DefaultStages) ApplyStage(_gsub, stage, script, substitute: true);
+            SubstituteIndic(script);
+        }
+        else if (_gsub is not null)
+        {
+            foreach (ShapingFeature[] stage in kind == ShaperKind.Arabic ? ArabicStages : DefaultStages) ApplyStage(_gsub, _gsubFeatures, stage);
         }
 
         foreach (GlyphInfo g in _buffer) g.XAdvance = _font.Advance(g.Glyph);
+        PositionFallbackSpaces();
         bool gposKern = false;
         if (_gpos is not null)
         {
-            gposKern = Collect(_gpos, ["kern"], script).Count > 0;
-            foreach ((int index, uint mask) in Collect(_gpos, PositionFeatures, script)) ApplyLookup(_gpos, index, mask, substitute: false);
+            gposKern = _gposFeatures.Any(f => f.Tag == "kern");
+            ApplyStage(_gpos, _gposFeatures, PositionFeatures);
         }
 
         // As HarfBuzz: the kern table applies when GPOS does not kern this script.
         if (!gposKern && _legacyKerning is not null) LegacyKern();
         HideDefaultIgnorables();
-        ZeroMarks();
+        if (kind != ShaperKind.Indic) ZeroMarks();
         ResolveAttachments();
         return _buffer;
+    }
+
+    /// <summary>Sets a glyph's character and the Unicode properties shaping reads from it.</summary>
+    private static void SetCharacter(GlyphInfo g, int cp)
+    {
+        g.CodePoint = cp;
+        g.Category = ShapingData.Category(cp);
+        g.CombiningClass = (byte)ShapingData.CombiningClass(cp);
+        GlyphFlags flags = g.Flags & ~(GlyphFlags.Ignorable | GlyphFlags.Hidden | GlyphFlags.Zwj | GlyphFlags.Zwnj);
+        if (IsDefaultIgnorable(cp))
+        {
+            flags |= GlyphFlags.Ignorable;
+            if (cp == 0x200C) flags |= GlyphFlags.Zwnj;
+            else if (cp == 0x200D) flags |= GlyphFlags.Zwj;
+            else if (cp is 0x034F or (>= 0x180B and <= 0x180D) or 0x180F or (>= 0xE0020 and <= 0xE007F)) flags |= GlyphFlags.Hidden;
+        }
+
+        g.Flags = flags;
     }
 
     /// <summary>
     /// Combining marks and zero width joiners belong to the cluster of the character before them,
     /// so a base and its marks are selected, copied and broken as one (HarfBuzz cluster level 0).
     /// </summary>
-    private void MergeClusters()
+    private void FormClusters()
     {
         for (int i = 1; i < _buffer.Count; i++)
         {
             GlyphInfo g = _buffer[i];
-            bool continuation = g.CodePoint == 0x200D || CharUnicodeInfo.GetUnicodeCategory(g.Text, 0)
-                is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
-            if (continuation) g.Cluster = _buffer[i - 1].Cluster;
+            if (g.IsMark || g.CodePoint == 0x200D) g.Cluster = _buffer[i - 1].Cluster;
         }
+    }
+
+    /// <summary>
+    /// Gives glyphs <paramref name="start"/> to <paramref name="end"/> one cluster, the smallest of
+    /// theirs, along with neighbours that shared a cluster with them.
+    /// </summary>
+    internal void MergeClusters(int start, int end) => MergeClusters(_buffer, start, end);
+
+    private static void MergeClusters(List<GlyphInfo> buffer, int start, int end)
+    {
+        if (end - start < 2) return;
+        int cluster = int.MaxValue;
+        for (int i = start; i < end; i++) cluster = Math.Min(cluster, buffer[i].Cluster);
+        if (cluster != buffer[end - 1].Cluster)
+        {
+            while (end < buffer.Count && buffer[end - 1].Cluster == buffer[end].Cluster) end++;
+        }
+
+        if (cluster != buffer[start].Cluster)
+        {
+            while (start > 0 && buffer[start - 1].Cluster == buffer[start].Cluster) start--;
+        }
+
+        for (int i = start; i < end; i++) buffer[i].Cluster = cluster;
     }
 
     /// <summary>Arabic joining (Unicode chapter 9.2): each letter takes its isolated, final, medial or initial form.</summary>
@@ -178,47 +327,73 @@ internal sealed class Shaper
         }
     }
 
+    /// <summary>
+    /// Glyph classes from GDEF. A font without them gets HarfBuzz's guess: nonspacing marks are
+    /// marks, everything else a base.
+    /// </summary>
     private void Classify()
     {
         foreach (GlyphInfo g in _buffer)
         {
-            g.Class = _gdef?.ClassOf(g.Glyph) ?? GlyphClass.Unclassified;
+            if (_gdef?.HasClasses == true) g.Class = _gdef.ClassOf(g.Glyph);
+            else g.Class = g.Category == UnicodeCategory.NonSpacingMark && !g.IsIgnorable ? GlyphClass.Mark : GlyphClass.Base;
+        }
+    }
 
-            // Without GDEF, combining marks are marks by their Unicode category.
-            if (_gdef is null && CharUnicodeInfo.GetUnicodeCategory(g.Text, 0) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark)
+    /// <summary>True when the font's GSUB has <paramref name="tag"/> for the run's script.</summary>
+    internal bool HasSubstitution(string tag) => _gsubFeatures.Any(f => f.Tag == tag);
+
+    private static uint MaskOf(string tag) => tag switch
+    {
+        "isol" => Isol,
+        "fina" => Fina,
+        "medi" => Medi,
+        "init" => Init,
+        "rphf" => Rphf,
+        "pref" => Pref,
+        "blwf" => Blwf,
+        "abvf" => Abvf,
+        "half" => Half,
+        "pstf" => Pstf,
+        _ => Global,
+    };
+
+    /// <summary>
+    /// Applies the lookups of <paramref name="stage"/>'s features together, in lookup order. A
+    /// lookup in several features takes all their masks.
+    /// </summary>
+    internal void ApplyStage(LayoutTable? table, List<(string Tag, int[] Lookups)> fontFeatures, IReadOnlyList<ShapingFeature> stage)
+    {
+        if (table is null) return;
+        var lookups = new SortedDictionary<int, (uint Mask, bool AutoZwj, bool AutoZwnj, bool PerSyllable)>();
+        foreach ((string tag, int[] indices) in fontFeatures)
+        {
+            int f = 0;
+            while (f < stage.Count && stage[f].Tag != tag) f++;
+            if (f == stage.Count) continue;
+            ShapingFeature feature = stage[f];
+            uint mask = MaskOf(tag);
+            foreach (int l in indices)
             {
-                g.Class = GlyphClass.Mark;
+                lookups[l] = lookups.TryGetValue(l, out var e)
+                    ? (e.Mask | mask, e.AutoZwj && !feature.ManualJoiners, e.AutoZwnj && !feature.ManualJoiners, e.PerSyllable || feature.PerSyllable)
+                    : (mask, !feature.ManualJoiners, !feature.ManualJoiners, feature.PerSyllable);
             }
         }
-    }
 
-    /// <summary>The lookups of the given features, in lookup order, each with the masks it applies to.</summary>
-    private List<(int Index, uint Mask)> Collect(LayoutTable table, string[] features, string script)
-    {
-        var masks = new SortedDictionary<int, uint>();
-        foreach ((string tag, int[] lookups) in table.Features(script))
+        bool substitute = ReferenceEquals(table, _gsub);
+        foreach (KeyValuePair<int, (uint Mask, bool AutoZwj, bool AutoZwnj, bool PerSyllable)> l in lookups)
         {
-            uint mask = tag switch
-            {
-                "isol" => Isol,
-                "fina" => Fina,
-                "medi" => Medi,
-                "init" => Init,
-                _ => Array.IndexOf(features, tag) >= 0 ? Global : 0,
-            };
-            if (mask == 0 || Array.IndexOf(features, tag) < 0) continue;
-            foreach (int l in lookups) masks[l] = masks.TryGetValue(l, out uint m) ? m | mask : mask;
+            _lookupMask = l.Value.Mask;
+            _autoZwj = l.Value.AutoZwj;
+            _autoZwnj = l.Value.AutoZwnj;
+            _perSyllable = l.Value.PerSyllable && substitute;
+            _positioning = !substitute;
+            ApplyLookup(table, l.Key, substitute);
         }
-
-        return [.. masks.Select(e => (e.Key, e.Value))];
     }
 
-    private void ApplyStage(LayoutTable table, string[] features, string script, bool substitute)
-    {
-        foreach ((int index, uint mask) in Collect(table, features, script)) ApplyLookup(table, index, mask, substitute);
-    }
-
-    private void ApplyLookup(LayoutTable table, int index, uint mask, bool substitute)
+    private void ApplyLookup(LayoutTable table, int index, bool substitute)
     {
         Lookup? lookup = table.GetLookup(index);
         if (lookup is null) return;
@@ -226,7 +401,7 @@ internal sealed class Shaper
         {
             for (int i = _buffer.Count - 1; i >= 0; i--)
             {
-                if ((_buffer[i].Mask & mask) != 0 && !Skip(_buffer[i], lookup) && Budget()) ApplyAt(table, lookup, i, substitute, 0);
+                if (Applies(_buffer[i], lookup) && Budget()) ApplyAt(table, lookup, i, substitute, 0);
             }
 
             return;
@@ -234,7 +409,7 @@ internal sealed class Shaper
 
         for (int i = 0; i < _buffer.Count;)
         {
-            if ((_buffer[i].Mask & mask) == 0 || Skip(_buffer[i], lookup) || !Budget())
+            if (!Applies(_buffer[i], lookup) || !Budget())
             {
                 i++;
                 continue;
@@ -245,32 +420,46 @@ internal sealed class Shaper
         }
     }
 
+    /// <summary>A lookup starts at a glyph that carries its feature's mask and that its flags do not skip.</summary>
+    private bool Applies(GlyphInfo g, Lookup lookup) => (g.Mask & _lookupMask) != 0 && !Skip(g, lookup);
+
     private bool Budget() => --_operations > 0;
 
     /// <summary>Applies the first subtable that matches at <paramref name="i"/>. Returns the index to continue at, or -1.</summary>
     private int ApplyAt(LayoutTable table, Lookup lookup, int i, bool substitute, int depth)
     {
-        foreach (int subtable in lookup.Subtables)
+        int saved = _syllable;
+        _syllable = _buffer[i].Syllable;
+        try
         {
-            int next;
-            try
+            foreach (int subtable in lookup.Subtables)
             {
-                next = substitute ? Substitute(table, lookup, subtable, i, depth) : Position(table, lookup, subtable, i, depth);
-            }
-            catch (FontFormatException)
-            {
-                next = -1; // a damaged subtable does not apply
+                int next;
+                try
+                {
+                    next = substitute ? Substitute(table, lookup, subtable, i, depth) : Position(table, lookup, subtable, i, depth);
+                }
+                catch (FontFormatException)
+                {
+                    next = -1; // a damaged subtable does not apply
+                }
+
+                if (next >= 0) return next;
             }
 
-            if (next >= 0) return next;
+            return -1;
         }
-
-        return -1;
+        finally
+        {
+            _syllable = saved;
+        }
     }
 
-    private bool Skip(GlyphInfo g, Lookup lookup)
+    /// <summary>True when the lookup's flags skip the glyph: ignored classes, other mark sets or attachment classes.</summary>
+    private bool Skip(GlyphInfo g, Lookup lookup) => Skip(g, lookup.Flag, lookup.MarkFilteringSet);
+
+    private bool Skip(GlyphInfo g, int flag, int markSet)
     {
-        int flag = lookup.Flag;
         switch (g.Class)
         {
             case GlyphClass.Base when (flag & 2) != 0:
@@ -278,7 +467,7 @@ internal sealed class Shaper
             case GlyphClass.Mark when (flag & 8) != 0:
                 return true;
             case GlyphClass.Mark:
-                if ((flag & 0x10) != 0 && !(_gdef?.InMarkSet(lookup.MarkFilteringSet, g.Glyph) ?? false)) return true;
+                if ((flag & 0x10) != 0 && !(_gdef?.InMarkSet(markSet, g.Glyph) ?? false)) return true;
                 int attach = flag >> 8;
                 return attach != 0 && _gdef?.MarkAttachClass(g.Glyph) != attach;
             default:
@@ -286,25 +475,40 @@ internal sealed class Shaper
         }
     }
 
-    private int NextIndex(int i, Lookup lookup)
+    /// <summary>
+    /// The next (or previous) glyph a lookup matches against, as HarfBuzz walks: glyphs the flags
+    /// skip are passed over; a default ignorable is passed over unless it matches, except that
+    /// substitutions see joiners their features handle by hand, and input matching sees ZWNJ.
+    /// Input glyphs must carry the lookup's mask, and per syllable lookups stay in the syllable.
+    /// Returns -1 when the walk is blocked.
+    /// </summary>
+    private int Walk(int i, int step, int flag, int markSet, bool context, Func<int, bool>? match)
     {
-        for (int j = i + 1; j < _buffer.Count; j++)
+        for (int j = i + step; j >= 0 && j < _buffer.Count; j += step)
         {
-            if (!Skip(_buffer[j], lookup)) return j;
+            if (!Budget()) return -1;
+            GlyphInfo g = _buffer[j];
+            if (Skip(g, flag, markSet)) continue;
+            bool maybeSkip = g.IsIgnorable
+                && (_positioning || (context && _autoZwnj) || (g.Flags & GlyphFlags.Zwnj) == 0)
+                && (context || _autoZwj || (g.Flags & GlyphFlags.Zwj) == 0)
+                && (_positioning || (g.Flags & GlyphFlags.Hidden) == 0);
+
+            bool? matched = (!context && (g.Mask & _lookupMask) == 0) || (_perSyllable && _syllable != 0 && g.Syllable != _syllable)
+                ? false
+                : match?.Invoke(g.Glyph);
+            if (matched == true || (matched is null && !maybeSkip)) return j;
+            if (!maybeSkip) return -1;
         }
 
         return -1;
     }
 
-    private int PreviousIndex(int i, Lookup lookup)
-    {
-        for (int j = i - 1; j >= 0; j--)
-        {
-            if (!Skip(_buffer[j], lookup)) return j;
-        }
+    private int NextInput(int i, Lookup lookup, Func<int, bool>? match = null) => Walk(i, 1, lookup.Flag, lookup.MarkFilteringSet, false, match);
 
-        return -1;
-    }
+    private int NextContext(int i, Lookup lookup, Func<int, bool> match) => Walk(i, 1, lookup.Flag, lookup.MarkFilteringSet, true, match);
+
+    private int PreviousContext(int i, Lookup lookup, Func<int, bool> match) => Walk(i, -1, lookup.Flag, lookup.MarkFilteringSet, true, match);
 
     // ---------------------------------------------------------------- GSUB
 
@@ -319,8 +523,7 @@ internal sealed class Shaper
             {
                 int c = Kerning.CoverageIndex(d, sub + U16(d, sub + 2), g.Glyph);
                 if (c < 0) return -1;
-                g.Glyph = format == 1 ? (g.Glyph + I16(d, sub + 4)) & 0xFFFF : U16(d, sub + 6 + 2 * c);
-                Reclassify(g);
+                Replace(g, format == 1 ? (g.Glyph + I16(d, sub + 4)) & 0xFFFF : U16(d, sub + 6 + 2 * c));
                 return i + 1;
             }
 
@@ -330,11 +533,10 @@ internal sealed class Shaper
                 if (c < 0 || c >= U16(d, sub + 4)) return -1;
                 int seq = sub + U16(d, sub + 6 + 2 * c);
                 int count = U16(d, seq);
-                if (lookup.Type == 3)
+                if (lookup.Type == 3 || count == 1)
                 {
                     if (count == 0) return -1;
-                    g.Glyph = U16(d, seq + 2);
-                    Reclassify(g);
+                    Replace(g, U16(d, seq + 2));
                     return i + 1;
                 }
 
@@ -347,12 +549,17 @@ internal sealed class Shaper
                 if (_buffer.Count + count - 1 > _maxLength) return -1;
                 _operations -= count;
                 var replacement = new List<GlyphInfo>(count);
+                bool ligature = g.Class == GlyphClass.Ligature;
                 for (int k = 0; k < count; k++)
                 {
                     GlyphInfo copy = g.Copy();
                     copy.Glyph = U16(d, seq + 2 + 2 * k);
+                    copy.Flags |= GlyphFlags.Substituted | GlyphFlags.Multiplied;
+                    copy.LigatureId = 0;
+                    copy.Component = k;
                     if (k > 0) copy.Text = "";
-                    Reclassify(copy);
+                    if (_gdef?.HasClasses == true) copy.Class = _gdef.ClassOf(copy.Glyph);
+                    else if (ligature) copy.Class = GlyphClass.Base;
                     replacement.Add(copy);
                 }
 
@@ -366,15 +573,17 @@ internal sealed class Shaper
             case 5 or 6:
                 return Context(table, lookup, sub, i, depth, substitute: true);
             case 8:
-                return ReverseChain(d, lookup, sub, i);
+                return ReverseChain(table.Data, lookup, sub, i);
             default:
                 return -1;
         }
     }
 
-    private void Reclassify(GlyphInfo g)
+    private void Replace(GlyphInfo g, int glyph)
     {
-        if (_gdef is not null) g.Class = _gdef.ClassOf(g.Glyph);
+        g.Glyph = glyph;
+        g.Flags |= GlyphFlags.Substituted;
+        if (_gdef?.HasClasses == true) g.Class = _gdef.ClassOf(glyph);
     }
 
     private int Ligature(ReadOnlySpan<byte> d, Lookup lookup, int sub, int i)
@@ -393,8 +602,9 @@ internal sealed class Shaper
             bool match = true;
             for (int k = 1; k < components && match; k++)
             {
-                int j = NextIndex(positions[k - 1], lookup);
-                match = j >= 0 && _buffer[j].Glyph == U16(d, lig + 4 + 2 * (k - 1));
+                int expected = U16(d, lig + 4 + 2 * (k - 1));
+                int j = NextInput(positions[k - 1], lookup, glyph => glyph == expected);
+                match = j >= 0;
                 if (match) positions[k] = j;
             }
 
@@ -402,14 +612,15 @@ internal sealed class Shaper
 
             // The first glyph becomes the ligature; marks skipped between components remember which component they belong to.
             GlyphInfo first = _buffer[i];
-            var merged = new HashSet<int>(positions.Select(p => _buffer[p].Cluster));
             int id = _nextLigatureId++;
+            MergeClusters(i, positions[^1] + 1);
+            first.Text = string.Concat(positions.Select(p => _buffer[p].Text));
             first.Glyph = U16(d, lig);
             first.LigatureId = id;
             first.Component = 0;
-            first.Text = string.Concat(positions.Select(p => _buffer[p].Text));
-            Reclassify(first);
-            if (first.Class == GlyphClass.Unclassified) first.Class = GlyphClass.Ligature;
+            first.Flags = (first.Flags | GlyphFlags.Substituted | GlyphFlags.Ligated) & ~GlyphFlags.Multiplied;
+            if (_gdef?.HasClasses == true) first.Class = _gdef.ClassOf(first.Glyph);
+            else first.Class = GlyphClass.Ligature;
             for (int k = 1; k < components; k++)
             {
                 for (int m = positions[k - 1] + 1; m < positions[k]; m++)
@@ -419,13 +630,6 @@ internal sealed class Shaper
                 }
             }
 
-            // Clusters merge whole: whatever shared a cluster with a component joins the ligature's.
-            int cluster = merged.Min();
-            foreach (GlyphInfo other in _buffer)
-            {
-                if (merged.Contains(other.Cluster)) other.Cluster = cluster;
-            }
-
             for (int k = components - 1; k >= 1; k--) _buffer.RemoveAt(positions[k]);
             return i + 1;
         }
@@ -433,7 +637,7 @@ internal sealed class Shaper
         return -1;
     }
 
-    private int ReverseChain(ReadOnlySpan<byte> d, Lookup lookup, int sub, int i)
+    private int ReverseChain(byte[] d, Lookup lookup, int sub, int i)
     {
         int c = Kerning.CoverageIndex(d, sub + U16(d, sub + 2), _buffer[i].Glyph);
         if (c < 0) return -1;
@@ -442,8 +646,9 @@ internal sealed class Shaper
         int j = i;
         for (int k = 0; k < backtrack; k++)
         {
-            j = PreviousIndex(j, lookup);
-            if (j < 0 || Kerning.CoverageIndex(d, sub + U16(d, at + 2 + 2 * k), _buffer[j].Glyph) < 0) return -1;
+            int coverage = sub + U16(d, at + 2 + 2 * k);
+            j = PreviousContext(j, lookup, glyph => Kerning.CoverageIndex(d, coverage, glyph) >= 0);
+            if (j < 0) return -1;
         }
 
         at += 2 + 2 * backtrack;
@@ -451,14 +656,14 @@ internal sealed class Shaper
         j = i;
         for (int k = 0; k < lookahead; k++)
         {
-            j = NextIndex(j, lookup);
-            if (j < 0 || Kerning.CoverageIndex(d, sub + U16(d, at + 2 + 2 * k), _buffer[j].Glyph) < 0) return -1;
+            int coverage = sub + U16(d, at + 2 + 2 * k);
+            j = NextContext(j, lookup, glyph => Kerning.CoverageIndex(d, coverage, glyph) >= 0);
+            if (j < 0) return -1;
         }
 
         at += 2 + 2 * lookahead;
         if (c >= U16(d, at)) return -1;
-        _buffer[i].Glyph = U16(d, at + 2 + 2 * c);
-        Reclassify(_buffer[i]);
+        Replace(_buffer[i], U16(d, at + 2 + 2 * c));
         return i + 1;
     }
 
@@ -540,6 +745,7 @@ internal sealed class Shaper
 
             for (int r = 0; r < rules && positions is null; r++)
             {
+                if (!Budget()) return -1;
                 int at = set + U16(d, set + 2 + 2 * r);
                 if (chained)
                 {
@@ -614,8 +820,8 @@ internal sealed class Shaper
         if (first && !test(0)(_buffer[i].Glyph)) return null;
         for (int k = 1; k < count; k++)
         {
-            int j = NextIndex(positions[k - 1], lookup);
-            if (j < 0 || !test(k)(_buffer[j].Glyph)) return null;
+            int j = NextInput(positions[k - 1], lookup, test(k));
+            if (j < 0) return null;
             positions[k] = j;
         }
 
@@ -627,8 +833,8 @@ internal sealed class Shaper
         int j = i;
         for (int k = 0; k < count; k++)
         {
-            j = PreviousIndex(j, lookup);
-            if (j < 0 || !test(k)(_buffer[j].Glyph)) return false;
+            j = PreviousContext(j, lookup, test(k));
+            if (j < 0) return false;
         }
 
         return true;
@@ -639,8 +845,8 @@ internal sealed class Shaper
         int j = last;
         for (int k = 0; k < count; k++)
         {
-            j = NextIndex(j, lookup);
-            if (j < 0 || !test(k)(_buffer[j].Glyph)) return false;
+            j = NextContext(j, lookup, test(k));
+            if (j < 0) return false;
         }
 
         return true;
@@ -661,7 +867,7 @@ internal sealed class Shaper
                 if (c < 0) return -1;
                 int valueFormat = U16(d, sub + 4);
                 int value = format == 1 ? sub + 6 : sub + 8 + c * ValueSize(valueFormat);
-                ApplyValue(d, value, valueFormat, g);
+                ApplyValue(d, sub, value, valueFormat, g);
                 return i + 1;
             }
 
@@ -680,10 +886,10 @@ internal sealed class Shaper
 
     private int Pair(ReadOnlySpan<byte> d, Lookup lookup, int sub, int i)
     {
-        int j = NextIndex(i, lookup);
-        if (j < 0) return -1;
         int c = Kerning.CoverageIndex(d, sub + U16(d, sub + 2), _buffer[i].Glyph);
         if (c < 0) return -1;
+        int j = NextInput(i, lookup);
+        if (j < 0) return -1;
         int format = U16(d, sub), format1 = U16(d, sub + 4), format2 = U16(d, sub + 6);
         int size1 = ValueSize(format1), size2 = ValueSize(format2);
         int right = _buffer[j].Glyph;
@@ -709,9 +915,10 @@ internal sealed class Shaper
                 else hi = mid - 1;
             }
 
+            // Device offsets in a pair set count from the pair set.
             if (record < 0) return -1;
-            ApplyValue(d, record, format1, _buffer[i]);
-            ApplyValue(d, record + size1, format2, _buffer[j]);
+            ApplyValue(d, set, record, format1, _buffer[i]);
+            ApplyValue(d, set, record + size1, format2, _buffer[j]);
         }
         else if (format == 2)
         {
@@ -720,8 +927,8 @@ internal sealed class Shaper
             int class1Count = U16(d, sub + 12), class2Count = U16(d, sub + 14);
             if (class1 >= class1Count || class2 >= class2Count) return -1;
             record = sub + 16 + (class1 * class2Count + class2) * (size1 + size2);
-            ApplyValue(d, record, format1, _buffer[i]);
-            ApplyValue(d, record + size1, format2, _buffer[j]);
+            ApplyValue(d, sub, record, format1, _buffer[i]);
+            ApplyValue(d, sub, record + size1, format2, _buffer[j]);
         }
         else
         {
@@ -737,28 +944,28 @@ internal sealed class Shaper
         if (c < 0 || c >= U16(d, sub + 4)) return -1;
         int exitOffset = U16(d, sub + 6 + 4 * c + 2);
         if (exitOffset == 0) return -1;
-        int j = NextIndex(i, lookup);
+        int j = NextInput(i, lookup);
         if (j < 0) return -1;
         int c2 = Kerning.CoverageIndex(d, sub + U16(d, sub + 2), _buffer[j].Glyph);
         if (c2 < 0 || c2 >= U16(d, sub + 4)) return -1;
         int entryOffset = U16(d, sub + 6 + 4 * c2);
         if (entryOffset == 0) return -1;
-        (int exitX, int exitY) = Anchor(d, sub + exitOffset);
-        (int entryX, int entryY) = Anchor(d, sub + entryOffset);
+        (double exitX, double exitY) = Anchor(d, sub + exitOffset);
+        (double entryX, double entryY) = Anchor(d, sub + entryOffset);
         GlyphInfo a = _buffer[i], b = _buffer[j];
         if (!_rtl)
         {
-            a.XAdvance = exitX + a.XOffset;
-            int delta = entryX + b.XOffset;
+            a.XAdvance = Round(exitX) + a.XOffset;
+            int delta = Round(entryX) + b.XOffset;
             b.XAdvance -= delta;
             b.XOffset -= delta;
         }
         else
         {
-            int delta = exitX + a.XOffset;
+            int delta = Round(exitX) + a.XOffset;
             a.XAdvance -= delta;
             a.XOffset -= delta;
-            b.XAdvance = entryX + b.XOffset;
+            b.XAdvance = Round(entryX) + b.XOffset;
         }
 
         // The child hangs off its parent: with RightToLeft (flag bit 0) the earlier glyph is the
@@ -766,12 +973,12 @@ internal sealed class Shaper
         if ((lookup.Flag & 1) != 0)
         {
             a.CursiveParent = j;
-            a.YOffset = entryY - exitY;
+            a.YOffset = Round(entryY - exitY);
         }
         else
         {
             b.CursiveParent = i;
-            b.YOffset = exitY - entryY;
+            b.YOffset = Round(exitY - entryY);
         }
 
         return j;
@@ -786,15 +993,20 @@ internal sealed class Shaper
         int target;
         if (lookup.Type == 6)
         {
-            target = PreviousIndex(i, lookup);
+            // The previous mark, with the lookup's mark filtering but none of its ignore flags.
+            target = Walk(i, -1, lookup.Flag & ~0x0E, lookup.MarkFilteringSet, false, null);
             if (target < 0 || _buffer[target].Class != GlyphClass.Mark) return -1;
             GlyphInfo prev = _buffer[target];
-            if (prev.LigatureId != mark.LigatureId || prev.Component != mark.Component) return -1;
+            bool sameLigature = mark.LigatureId == prev.LigatureId
+                ? mark.LigatureId == 0 || mark.Component == prev.Component
+                : (mark.LigatureId > 0 && mark.Component == 0) || (prev.LigatureId > 0 && prev.Component == 0);
+            if (!sameLigature) return -1;
         }
         else
         {
+            // The base or ligature: the previous glyph that is not a mark or a default ignorable.
             target = i - 1;
-            while (target >= 0 && _buffer[target].Class == GlyphClass.Mark) target--;
+            while (target >= 0 && (_buffer[target].Class == GlyphClass.Mark || _buffer[target].IsIgnorable)) target--;
             if (target < 0) return -1;
         }
 
@@ -830,15 +1042,15 @@ internal sealed class Shaper
         }
 
         if (anchorOffset == 0) return -1;
-        (int bx, int by) = Anchor(d, anchorBase + anchorOffset);
-        (int mx, int my) = Anchor(d, markAnchor);
+        (double bx, double by) = Anchor(d, anchorBase + anchorOffset);
+        (double mx, double my) = Anchor(d, markAnchor);
         // Attaching replaces earlier placement; lookups after this one add to the offset again. As
         // in HarfBuzz, the vertical offset is fixed now, from the base's offset along its cursive
         // chain at this moment; only the horizontal position follows the base at the end.
         mark.AttachTo = target;
-        mark.AttachDx = bx - mx;
+        mark.AttachDx = Round(bx - mx);
         mark.XOffset = 0;
-        mark.YOffset = by - my + CrossOffset(target);
+        mark.YOffset = Round(by - my) + CrossOffset(target);
         return i + 1;
     }
 
@@ -858,7 +1070,18 @@ internal sealed class Shaper
         return offset;
     }
 
-    private static (int X, int Y) Anchor(ReadOnlySpan<byte> d, int at) => (I16(d, at + 2), I16(d, at + 4));
+    /// <summary>
+    /// An anchor's coordinates; format 3 adds its variation deltas, unrounded: as in HarfBuzz,
+    /// what is rounded is the position computed from the anchors.
+    /// </summary>
+    private (double X, double Y) Anchor(ReadOnlySpan<byte> d, int at)
+    {
+        double x = I16(d, at + 2), y = I16(d, at + 4);
+        if (U16(d, at) != 3 || _variations is null) return (x, y);
+        return (x + DeviceDelta(d, at, U16(d, at + 6)), y + DeviceDelta(d, at, U16(d, at + 8)));
+    }
+
+    private static int Round(double v) => (int)Math.Round(v, MidpointRounding.AwayFromZero);
 
     private static int ValueSize(int format)
     {
@@ -867,23 +1090,63 @@ internal sealed class Shaper
         return 2 * n;
     }
 
-    /// <summary>Applies a value record's placement and advance; device tables are ignored (no hinting at PDF resolution).</summary>
-    private static void ApplyValue(ReadOnlySpan<byte> d, int at, int format, GlyphInfo g)
+    /// <summary>
+    /// Applies a value record's placement and advance. Device tables that are variation indices
+    /// add the variable font's deltas at the instance; hinting device tables are ignored (no
+    /// hinting at PDF resolution). Device offsets count from <paramref name="table"/>.
+    /// </summary>
+    private void ApplyValue(ReadOnlySpan<byte> d, int table, int at, int format, GlyphInfo g)
     {
         int offset = 0;
+        int x = 0, y = 0, advance = 0;
         if ((format & 1) != 0)
         {
-            g.XOffset += I16(d, at);
+            x = I16(d, at);
             offset += 2;
         }
 
         if ((format & 2) != 0)
         {
-            g.YOffset += I16(d, at + offset);
+            y = I16(d, at + offset);
             offset += 2;
         }
 
-        if ((format & 4) != 0) g.XAdvance += I16(d, at + offset);
+        if ((format & 4) != 0)
+        {
+            advance = I16(d, at + offset);
+            offset += 2;
+        }
+
+        if ((format & 8) != 0) offset += 2;
+        if (_variations is not null)
+        {
+            if ((format & 0x10) != 0)
+            {
+                x += Round(DeviceDelta(d, table, U16(d, at + offset)));
+                offset += 2;
+            }
+
+            if ((format & 0x20) != 0)
+            {
+                y += Round(DeviceDelta(d, table, U16(d, at + offset)));
+                offset += 2;
+            }
+
+            if ((format & 0x40) != 0) advance += Round(DeviceDelta(d, table, U16(d, at + offset)));
+        }
+
+        g.XOffset += x;
+        g.YOffset += y;
+        g.XAdvance += advance;
+    }
+
+    /// <summary>The delta of a VariationIndex table (delta format 0x8000) at the instance; 0 for anything else.</summary>
+    private double DeviceDelta(ReadOnlySpan<byte> d, int table, int offset)
+    {
+        if (offset == 0 || _variations is null) return 0;
+        int device = table + offset;
+        if (U16(d, device + 4) != 0x8000) return 0;
+        return _variations.Delta(U16(d, device), U16(d, device + 2), _coordinates);
     }
 
     /// <summary>
@@ -913,7 +1176,7 @@ internal sealed class Shaper
         int space = _font.TryGetGlyph(' ', out int s) ? s : 0;
         foreach (GlyphInfo g in _buffer)
         {
-            if (g.Text.Length == 0 || !IsDefaultIgnorable(g.CodePoint) || g.Text.Length > (g.CodePoint > 0xFFFF ? 2 : 1)) continue;
+            if (!g.IsIgnorable) continue;
             g.Glyph = space;
             g.XAdvance = 0;
             g.XOffset = 0;
@@ -921,11 +1184,15 @@ internal sealed class Shaper
         }
     }
 
+    /// <summary>
+    /// The default ignorable characters HarfBuzz hides. The Hangul fillers and shorthand format
+    /// controls are left alone: fonts draw them as spacing glyphs.
+    /// </summary>
     private static bool IsDefaultIgnorable(int cp) =>
-        cp is 0x00AD or 0x034F or 0x061C or 0x115F or 0x1160 or 0x17B4 or 0x17B5 or 0x3164 or 0xFEFF or 0xFFA0
-        || (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E)
-        || (cp >= 0x2060 && cp <= 0x206F) || (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xFFF0 && cp <= 0xFFF8)
-        || (cp >= 0x1BCA0 && cp <= 0x1BCA3) || (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
+        cp is 0x00AD or 0x034F or 0x061C or 0xFEFF
+        || (cp >= 0x17B4 && cp <= 0x17B5) || (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F)
+        || (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || (cp >= 0xFE00 && cp <= 0xFE0F)
+        || (cp >= 0xFFF0 && cp <= 0xFFF8) || (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
 
     /// <summary>Marks take no space; in left to right text an unattached mark moves back over its base.</summary>
     private void ZeroMarks()
@@ -958,20 +1225,17 @@ internal sealed class Shaper
         for (int k = 0; k < n; k++) ResolveY(k, resolved);
 
         var originX = new int[n];
-        var originY = new int[n];
         for (int k = 0; k < n; k++)
         {
             GlyphInfo g = _buffer[k];
             if (g.AttachTo >= 0 && g.AttachTo < k)
             {
                 originX[k] = originX[g.AttachTo] + g.AttachDx + g.XOffset;
-                originY[k] = g.YOffset;
                 g.XOffset = originX[k] - pen[k];
             }
             else
             {
                 originX[k] = pen[k] + g.XOffset;
-                originY[k] = g.YOffset;
             }
         }
     }

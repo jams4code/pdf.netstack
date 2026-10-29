@@ -77,14 +77,16 @@ public abstract class PdfFont
 
     /// <summary>
     /// True when every character of <paramref name="text"/> can be drawn: the font has a glyph for
-    /// it, or it is an invisible control or format character, which drawing skips.
+    /// it (directly, or for OpenType fonts after Unicode normalization: decomposed, composed with
+    /// the marks before it, or a space drawn with the font's space), or it is an invisible control
+    /// or format character, which drawing skips.
     /// </summary>
     public bool CanRender(string text)
     {
         Compat.ThrowIfNull(text, nameof(text));
         for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
-            if (!IsInvisible(text, i) && !TryGetGlyph(char.ConvertToUtf32(text, i), out _)) return false;
+            if (!IsInvisible(text, i) && !Covers(text, i)) return false;
         }
 
         return true;
@@ -95,6 +97,13 @@ public abstract class PdfFont
 
     /// <summary>Glyph for a code point, in the font's own numbering.</summary>
     internal abstract bool TryGetGlyph(int codePoint, out int glyph);
+
+    /// <summary>
+    /// True when the font can draw the character at <paramref name="index"/> of <paramref name="text"/>:
+    /// it has a glyph for it, or (for fonts that shape) normalization finds one in context.
+    /// </summary>
+    internal virtual bool Covers(string text, int index) =>
+        TryGetGlyph(char.IsSurrogatePair(text, index) ? char.ConvertToUtf32(text, index) : text[index], out _);
 
     /// <summary>Advance width of a glyph in thousandths of the font size.</summary>
     internal abstract double GetAdvance(int glyph);

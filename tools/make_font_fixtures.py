@@ -24,10 +24,15 @@ Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
     Test-Regular.otf     name-keyed CFF, 1000 units per em, legacy 'kern' table
     Test-CID.otf         CID-keyed CFF whose CIDs differ from glyph ids (CID = 100 + 3 * glyph id)
     Test-Arabic.ttf      Arabic joining forms, a lam-alef ligature, a contextual substitution,
-                         marks on bases, ligature components and other marks, kerning, and a
-                         Latin fi ligature
+                         marks on bases, ligature components and other marks, kerning, a
+                         tatweel for kashida justification, and a Latin fi ligature
     Test-Arabic.shaping.jsonl  HarfBuzz's shaping of sample texts in Test-Arabic.ttf, which the
                          tests compare against (needs uharfbuzz to regenerate)
+    Test-Indic.ttf       Devanagari and Bengali (dev2 and bng2): nukta, akhand, reph, below base
+                         ra, half forms, a post base ya, presentation ligatures, marks above and
+                         below, a dotted circle; and Latin letters with combining marks and one
+                         precomposed letter, for Unicode normalization
+    Test-Indic.shaping.jsonl   HarfBuzz's shaping of sample texts in Test-Indic.ttf
 """
 
 import json
@@ -239,6 +244,7 @@ ARABIC_GLYPHS = [
     ("shadda", 0x651, 0, [(-160, 620, -40, 700)]),
     ("zwnj", 0x200C, 0, []),
     ("zwj", 0x200D, 0, []),
+    ("tatweel", 0x640, 200, [(0, 0, 200, 40)]),
 ]
 
 ARABIC_FEA = """
@@ -315,12 +321,129 @@ def build_arabic():
     return font
 
 
-def shaping_reference(font_bytes, name):
+# name, code point, advance, drawing as boxes. Consonants are 500 wide with a head bar; halves,
+# reph and below forms are partial shapes; marks have no advance.
+INDIC_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("zwnj", 0x200C, 0, []),
+    ("zwj", 0x200D, 0, []),
+    ("ka", 0x915, 500, [(0, 600, 500, 650), (200, 0, 260, 600), (80, 250, 420, 300)]),
+    ("kha", 0x916, 500, [(0, 600, 500, 650), (100, 0, 160, 600), (340, 0, 400, 600)]),
+    ("ga", 0x917, 450, [(0, 600, 450, 650), (350, 0, 410, 600)]),
+    ("ta", 0x924, 450, [(0, 600, 450, 650), (330, 0, 390, 600), (60, 300, 330, 350)]),
+    ("na", 0x928, 450, [(0, 600, 450, 650), (330, 0, 390, 600), (60, 200, 200, 250)]),
+    ("ya", 0x92F, 500, [(0, 600, 500, 650), (380, 0, 440, 600), (60, 300, 380, 350)]),
+    ("ra", 0x930, 400, [(0, 600, 400, 650), (100, 200, 300, 600)]),
+    ("ssa", 0x937, 500, [(0, 600, 500, 650), (380, 0, 440, 600), (60, 100, 380, 150)]),
+    ("sa", 0x938, 500, [(0, 600, 500, 650), (380, 0, 440, 600), (60, 400, 380, 450)]),
+    ("candrabindu", 0x901, 0, [(-300, 700, -200, 800)]),
+    ("anusvara", 0x902, 0, [(-270, 720, -230, 760)]),
+    ("nukta", 0x93C, 0, [(-260, -100, -220, -60)]),
+    ("aa", 0x93E, 150, [(40, 0, 100, 650)]),
+    ("i", 0x93F, 150, [(40, 0, 100, 650), (40, 650, 400, 800)]),
+    ("ii", 0x940, 150, [(40, 0, 100, 650), (-200, 650, 100, 800)]),
+    ("u", 0x941, 0, [(-300, -200, -150, -60)]),
+    ("e", 0x947, 0, [(-300, 680, -100, 820)]),
+    ("virama", 0x94D, 0, [(-200, -150, -100, -50)]),
+    ("ka.nukta", None, 500, [(0, 600, 500, 650), (200, 0, 260, 600), (80, 250, 420, 300), (220, -100, 260, -60)]),
+    ("ka.half", None, 300, [(0, 600, 300, 650), (200, 0, 260, 600)]),
+    ("ta.half", None, 300, [(0, 600, 300, 650), (60, 300, 300, 350)]),
+    ("na.half", None, 300, [(0, 600, 300, 650), (60, 200, 200, 250)]),
+    ("sa.half", None, 300, [(0, 600, 300, 650), (60, 400, 300, 450)]),
+    ("ra.reph", None, 0, [(-150, 700, -50, 850)]),
+    ("rakar", None, 0, [(-300, -150, -150, 0)]),
+    ("ka_ssa", None, 600, [(0, 600, 600, 650), (200, 0, 260, 600), (480, 0, 540, 600)]),
+    ("ta_ra", None, 450, [(0, 600, 450, 650), (330, 0, 390, 600), (60, 0, 200, 300)]),
+    ("i.alt", None, 150, [(40, 0, 100, 650), (40, 650, 500, 800)]),
+    ("ka.beng", 0x995, 500, [(0, 600, 500, 650), (200, 0, 260, 600), (100, 200, 400, 260)]),
+    ("ya.beng", 0x9AF, 500, [(0, 600, 500, 650), (380, 0, 440, 600), (60, 200, 380, 260)]),
+    ("ra.beng", 0x9B0, 450, [(0, 600, 450, 650), (330, 0, 390, 600), (100, -100, 140, -60)]),
+    ("aa.beng", 0x9BE, 150, [(40, 0, 100, 650)]),
+    ("e.beng", 0x9C7, 200, [(40, 0, 100, 500), (40, 500, 160, 560)]),
+    ("virama.beng", 0x9CD, 0, [(-200, -150, -100, -50)]),
+    ("ya.post", None, 200, [(0, 0, 60, 500), (60, 0, 180, 60)]),
+    ("ra.beng.reph", None, 0, [(-150, 700, -50, 850)]),
+    ("a", 0x61, 500, [(50, 0, 450, 500)]),
+    ("gravecomb", 0x300, 0, [(-350, 600, -250, 750)]),
+    ("acutecomb", 0x301, 0, [(-250, 600, -150, 750)]),
+    ("dotabovecomb", 0x307, 0, [(-280, 600, -220, 660)]),
+    ("dotbelowcomb", 0x323, 0, [(-280, -150, -220, -90)]),
+    ("aacute", 0xE1, 500, [(50, 0, 450, 500), (250, 600, 350, 750)]),
+    ("adotbelow", 0x1EA1, 500, [(50, 0, 450, 500), (220, -150, 280, -90)]),
+]
+
+INDIC_FEA = """
+languagesystem DFLT dflt;
+languagesystem latn dflt;
+languagesystem dev2 dflt;
+languagesystem bng2 dflt;
+@CONSONANTS = [dottedcircle ka kha ga ta na ya ra ssa sa ka.nukta ka_ssa ta_ra ka.beng ya.beng ra.beng];
+@MARKS = [candrabindu anusvara nukta u e virama rakar ra.reph virama.beng ra.beng.reph gravecomb acutecomb dotabovecomb dotbelowcomb];
+table GDEF {
+    GlyphClassDef [@CONSONANTS aa i ii i.alt ka.half ta.half na.half sa.half aa.beng e.beng ya.post a aacute adotbelow], , @MARKS, ;
+} GDEF;
+feature nukt { script dev2; sub ka nukta by ka.nukta; } nukt;
+feature akhn { script dev2; sub ka virama ssa by ka_ssa; } akhn;
+feature rphf {
+    script dev2; sub ra virama by ra.reph;
+    script bng2; sub ra.beng virama.beng by ra.beng.reph;
+} rphf;
+feature blwf { script dev2; sub virama ra by rakar; } blwf;
+feature half { script dev2; sub ka virama by ka.half; sub ta virama by ta.half; sub na virama by na.half; sub sa virama by sa.half; } half;
+feature pstf { script bng2; sub virama.beng ya.beng by ya.post; } pstf;
+feature pres {
+    script dev2;
+    sub ta rakar by ta_ra;
+    sub ka.half ssa by ka_ssa;
+} pres;
+feature psts { script dev2; sub i' [ka kha] by i.alt; } psts;
+markClass [candrabindu anusvara e ra.reph ra.beng.reph] <anchor 0 650> @TOP;
+markClass [u nukta rakar virama virama.beng] <anchor 0 0> @BOTTOM;
+markClass [gravecomb acutecomb dotabovecomb] <anchor -250 550> @LATIN_TOP;
+markClass [dotbelowcomb] <anchor -250 0> @LATIN_BOTTOM;
+feature abvm { pos base @CONSONANTS <anchor 300 650> mark @TOP; } abvm;
+feature blwm { pos base @CONSONANTS <anchor 250 0> mark @BOTTOM; } blwm;
+feature mark {
+    pos base [a adotbelow] <anchor 250 550> mark @LATIN_TOP <anchor 250 0> mark @LATIN_BOTTOM;
+} mark;
+feature mkmk { pos mark [dotabovecomb gravecomb acutecomb] <anchor -250 700> mark @LATIN_TOP; } mkmk;
+feature kern { script dev2; pos ka aa -20; } kern;
+"""
+
+INDIC_SAMPLES = [
+    ("ltr", "deva", "\u0915\u093f \u0915\u094d\u0937 \u0930\u094d\u0915 \u0924\u094d\u0930 \u0938\u094d\u0924 \u0915\u093c \u0915\u0902 \u0915\u0941\u0902 \u0915\u093e"),
+    ("ltr", "deva", "\u0915\u094d\u200d\u0937 \u0915\u094d\u200c\u0937 \u0930\u094d\u0915\u093f \u0928\u094d\u0924\u094d\u0930\u0947 \u0915\u0947\u0902"),
+    ("ltr", "deva", "\u093f \u094d\u0915 \u0915\u093f\u093f \u0930\u094d \u0958 \u0930\u094d\u200d\u092f \u0915\u0901"),
+    ("ltr", "deva", "\u0938\u094d\u0924\u094d\u0930\u0940 \u0916\u093f \u0917\u093f \u0930\u0941 \u0915\u094d\u0937\u093f"),
+    ("ltr", "beng", "\u0995\u09c7 \u09b0\u09cd\u0995 \u0995\u09cd\u09af \u0995\u09cb \u09b0\u09cd\u0995\u09c7 \u0995\u09be"),
+    ("ltr", "latn", "a\u0301 \u00e1 a\u0323\u0307 a\u0307\u0323 \u1ea1\u0307 \u1ea1 a\u0300 a\u2003a\u2009a"),
+]
+
+
+def build_indic():
+    names = [g[0] for g in INDIC_GLYPHS]
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(names)
+    fb.setupCharacterMap({cp: name for name, cp, _, _ in INDIC_GLYPHS if cp is not None})
+    fb.setupGlyf({name: boxes_ttf(boxes, 1) for name, _, _, boxes in INDIC_GLYPHS})
+    fb.setupHorizontalMetrics({name: (adv, 0) for name, _, adv, _ in INDIC_GLYPHS})
+    fb.setupHorizontalHeader(ascent=900, descent=-300, lineGap=0)
+    fb.setupNameTable({"familyName": "PdfNetStack Test Indic", "styleName": "Regular", "psName": "PdfNetStackTestIndic-Regular"})
+    fb.setupOS2(sTypoAscender=900, sTypoDescender=-300, usWinAscent=950, usWinDescent=350, sxHeight=500, sCapHeight=650, fsType=0)
+    fb.setupPost()
+    font = fb.font
+    addOpenTypeFeaturesFromString(font, INDIC_FEA)
+    return font
+
+
+def shaping_reference(font_bytes, name, samples):
     import uharfbuzz as hb
 
     blob = hb.Blob(font_bytes)
     lines = []
-    for direction, script, text in ARABIC_SAMPLES:
+    for direction, script, text in samples:
         font = hb.Font(hb.Face(blob))
         buf = hb.Buffer()
         buf.add_codepoints([ord(c) for c in text])
@@ -331,7 +454,7 @@ def shaping_reference(font_bytes, name):
         if direction == "rtl":
             glyphs.reverse()
         lines.append(json.dumps({"font": name, "text": text, "direction": direction, "script": script, "glyphs": glyphs}, ensure_ascii=False))
-    (OUT / "Test-Arabic.shaping.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    (OUT / name.replace(".ttf", ".shaping.jsonl")).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 # name, code point, advance; drawn by draw_outline. The last three share an advance, so hmtx ends
@@ -588,7 +711,10 @@ def main():
 
     arabic = build_arabic()
     save(arabic, "Test-Arabic.ttf")
-    shaping_reference((OUT / "Test-Arabic.ttf").read_bytes(), "Test-Arabic.ttf")
+    shaping_reference((OUT / "Test-Arabic.ttf").read_bytes(), "Test-Arabic.ttf", ARABIC_SAMPLES)
+
+    save(build_indic(), "Test-Indic.ttf")
+    shaping_reference((OUT / "Test-Indic.ttf").read_bytes(), "Test-Indic.ttf", INDIC_SAMPLES)
 
 
 if __name__ == "__main__":

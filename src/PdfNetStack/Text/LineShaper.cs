@@ -24,7 +24,7 @@ internal static class LineShaper
         for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
         {
             int cp = char.IsSurrogate(text[i]) && !char.IsSurrogatePair(text, i) ? 0xFFFD : char.ConvertToUtf32(text, i);
-            if (!PdfFont.IsInvisible(text, i) && !font.TryGetGlyph(cp, out _)) throw font.MissingGlyph(cp);
+            if (!PdfFont.IsInvisible(text, i) && !font.Covers(text, i)) throw font.MissingGlyph(cp);
             codePoints.Add(cp);
             starts.Add(i);
             if (simple && UnicodeData.Bidi(cp) is BidiClass.R or BidiClass.AL or BidiClass.AN

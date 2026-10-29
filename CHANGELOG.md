@@ -104,6 +104,32 @@
 - `PdfNetStack.Azure` is discontinued so the project can focus on PDF itself. Reading from and
   writing to storage belongs to the application, around the stream APIs. Version 1.0.0 stays on
   NuGet and keeps working.
+- Variable fonts: `PdfOpenTypeFont.GetInstance` gives a named instance (`NamedInstances`) or any
+  axis values (`VariationAxes`, `IsVariable`), embedded as a static font. TrueType outlines move
+  by their gvar deltas, with untouched points interpolated and composite offsets varied; advances
+  come from HVAR or the phantom points, font metrics from MVAR (with hhea kept in step), control
+  values from cvar, weight and width classes and the italic angle from the axes, through avar.
+  CFF2 fonts load (at their default instance) and convert to CID-keyed CFF: blends resolve in
+  charstrings and Private DICTs, subroutines are inlined, and argument runs longer than CFF's 48
+  operands are split. The shaper applies GDEF variation deltas to GPOS values and anchors, and
+  GSUB and GPOS feature variations. Outlines, advances and metrics match fontTools' instancer and
+  shaping matches HarfBuzz on the synthetic fixtures and on the variable fonts we compare.
+  Damaged variation data is a `FontFormatException`.
+- Unicode normalization in the shaper, as HarfBuzz's normalizer does it: characters the font
+  lacks decompose into ones it has, marks sort into canonical order (with the shaping tailorings
+  for Hebrew, Arabic and others), a base and mark compose when the font has the composite, and
+  spaces and the non-breaking hyphen without glyphs draw with the space and hyphen at their own
+  widths. Font fallback, `CanRender` and HTML text use the same coverage. Data generated from the
+  Unicode Character Database 16.0 by `tools/make_shaping_data.py`.
+- Indic shaping for Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and
+  Malayalam, per Microsoft's script development specifications: syllables, base consonant,
+  reph, pre-base matras and consonants, the basic forms one feature at a time, final reordering,
+  presentation forms, old (deva) and new (dev2) font specifications, and dotted circles for
+  broken clusters. It matches HarfBuzz on a synthetic Devanagari and Bengali fixture and on the
+  three faces of a font covering all nine scripts.
+- Kashida justification (`PdfParagraph.Kashida`, off by default): justified Arabic lines elongate
+  one join per word with tatweel, at the point Arabic typography prefers, up to three tatweel
+  widths, before spaces widen. Tatweels carry no text, so copying gives the original words.
 - Tagged PDF from HTML (`HtmlConverterOptions.Tagged`, on by default): headings, paragraphs,
   lists, tables with header and data cells, figures with their alt text, links tied to their
   annotations, sections and quotes form a structure tree in reading order (ISO 32000-1, 14.8);

@@ -143,7 +143,7 @@ public sealed class PdfTextLayout
                 }
 
                 int cp = char.IsSurrogatePair(_text, i) ? char.ConvertToUtf32(_text, i) : _text[i];
-                if (PdfFont.IsInvisible(_text, i) || cp == '\t' || style.Font.HasGlyph(cp))
+                if (PdfFont.IsInvisible(_text, i) || cp == '\t' || style.Font.Covers(_text, i))
                 {
                     _font[i] = style.Font;
                     continue;
@@ -152,13 +152,13 @@ public sealed class PdfTextLayout
                 // A combining mark stays with its base's font when that font has it.
                 UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(_text, i);
                 if (i > 0 && category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark
-                    && ReferenceEquals(_style[i - 1], style) && _font[i - 1].HasGlyph(cp))
+                    && ReferenceEquals(_style[i - 1], style) && _font[i - 1].Covers(_text, i))
                 {
                     _font[i] = _font[i - 1];
                     continue;
                 }
 
-                PdfFont? fallback = style.Fallbacks.FirstOrDefault(f => f.HasGlyph(cp));
+                PdfFont? fallback = style.Fallbacks.FirstOrDefault(f => f.Covers(_text, i));
                 _font[i] = fallback ?? throw style.Font.MissingGlyph(cp);
             }
         }
@@ -447,24 +447,159 @@ public sealed class PdfTextLayout
             return [.. font.ShapeRun(char.ConvertFromUtf32(hyphen), 0, hyphen > 0xFFFF ? 2 : 1, false, "DFLT").Select(g => g with { Cluster = item.End - 1, Text = "\u00AD" })];
         }
 
-        /// <summary>Spreads the slack over the spaces between words; returns the new line width.</summary>
+        /// <summary>
+        /// Spreads the slack over the spaces between words, after kashidas when the paragraph asks
+        /// for them; returns the new line width.
+        /// </summary>
         private double Justify(List<LineRun> runs, double available, double width)
         {
+            if (available <= width) return width;
+            double slack = available - width;
             int spaces = runs.Sum(r => r.Glyphs.Count(g => _text[g.Cluster] is ' ' or '\u00A0'));
-            if (spaces == 0 || available <= width) return width;
-            double extra = (available - width) / spaces;
+            var kashidas = new Dictionary<int, List<(int Index, double Width)>>();
+            if (_p.Kashida) slack -= PlanKashidas(runs, slack, spaces > 0, kashidas);
+            if (spaces == 0 && kashidas.Count == 0) return width;
+            double extra = spaces == 0 ? 0 : slack / spaces;
             double x = 0;
             for (int r = 0; r < runs.Count; r++)
             {
                 LineRun run = runs[r];
                 double toUnits = 1000 / run.Style.Size;
                 var glyphs = run.Glyphs.Select(g => _text[g.Cluster] is ' ' or '\u00A0' ? g with { Advance = g.Advance + extra * toUnits } : g).ToList();
+                if (kashidas.TryGetValue(r, out List<(int Index, double Width)>? points)) glyphs = Elongate(run, glyphs, points);
                 double w = glyphs.Sum(g => g.Advance) * run.Style.Size / 1000;
                 runs[r] = run with { Glyphs = glyphs, X = x, Width = w };
                 x += w;
             }
 
             return x;
+        }
+
+        /// <summary>
+        /// Chooses one kashida point per Arabic word of the line's right to left runs and how wide
+        /// each elongation is: an equal share of the slack, at most three tatweels while spaces can
+        /// take the rest. Returns the width given to kashidas.
+        /// </summary>
+        private double PlanKashidas(List<LineRun> runs, double slack, bool spaces, Dictionary<int, List<(int Index, double Width)>> plan)
+        {
+            var points = new List<(int Run, int Index, double Cap)>();
+            for (int r = 0; r < runs.Count; r++)
+            {
+                LineRun run = runs[r];
+                if (!run.Font.HasGlyph(0x0640)) continue;
+                double tatweel = run.Font.MeasureString("\u0640", run.Style.Size);
+                if (tatweel <= 0) continue;
+                foreach (int index in KashidaPoints(run)) points.Add((r, index, 3 * tatweel));
+            }
+
+            if (points.Count == 0) return 0;
+            double share = slack / points.Count, used = 0;
+            foreach ((int r, int index, double cap) in points)
+            {
+                double w = spaces ? Math.Min(share, cap) : share;
+                if (!plan.TryGetValue(r, out List<(int Index, double Width)>? list)) plan[r] = list = [];
+                list.Add((index, w));
+                used += w;
+            }
+
+            return used;
+        }
+
+        /// <summary>
+        /// Where a right to left run takes its kashidas: for each word, the glyph index (in the
+        /// run's visual order) before which tatweels go, between two joined letters.
+        /// </summary>
+        private List<int> KashidaPoints(LineRun run)
+        {
+            var result = new List<int>();
+            if (run.Glyphs.Count < 2 || run.Glyphs[0].Cluster <= run.Glyphs[^1].Cluster) return result;
+
+            // Clusters in logical order, with the visual index of each one's first glyph.
+            var first = new SortedDictionary<int, int>();
+            for (int i = 0; i < run.Glyphs.Count; i++)
+            {
+                if (!first.ContainsKey(run.Glyphs[i].Cluster)) first[run.Glyphs[i].Cluster] = i;
+            }
+
+            int[] clusters = [.. first.Keys.Where(c => UnicodeData.Joining(CodePointAt(c)) != JoiningType.T)];
+            int bestIndex = -1, bestPriority = int.MaxValue;
+            for (int k = 0; k < clusters.Length; k++)
+            {
+                bool joined = k + 1 < clusters.Length && Joins(clusters[k], clusters[k + 1]);
+                if (joined)
+                {
+                    bool final = k + 2 == clusters.Length || !Joins(clusters[k + 1], clusters[k + 2]);
+                    int priority = KashidaPriority(CodePointAt(clusters[k]), CodePointAt(clusters[k + 1]), final);
+                    if (priority <= bestPriority)
+                    {
+                        bestPriority = priority;
+                        bestIndex = first[clusters[k]];
+                    }
+
+                    continue;
+                }
+
+                // The word ends here.
+                if (bestIndex >= 0) result.Add(bestIndex);
+                bestIndex = -1;
+                bestPriority = int.MaxValue;
+            }
+
+            return result;
+
+            // Two letters join when the first joins to its left and the second to its right, with only marks between.
+            bool Joins(int a, int b)
+            {
+                for (int i = a + (char.IsSurrogatePair(_text, a) ? 2 : 1); i < b; i++)
+                {
+                    if (UnicodeData.Joining(_text[i]) != JoiningType.T) return false;
+                }
+
+                int ca = CodePointAt(a), cb = CodePointAt(b);
+                JoiningType left = UnicodeData.Joining(ca), right = UnicodeData.Joining(cb);
+                return left is JoiningType.D or JoiningType.L && right is JoiningType.D or JoiningType.R
+                    && !(ca == 0x0644 && cb is 0x0622 or 0x0623 or 0x0625 or 0x0627);
+            }
+        }
+
+        private int CodePointAt(int i) => char.IsSurrogatePair(_text, i) ? char.ConvertToUtf32(_text, i) : _text[i];
+
+        /// <summary>How much Arabic typography prefers elongating between <paramref name="a"/> and <paramref name="b"/>; lower is better.</summary>
+        private static int KashidaPriority(int a, int b, bool final) => (a, b) switch
+        {
+            (0x0633 or 0x0634 or 0x0635 or 0x0636, _) => 1,
+            (_, 0x0629 or 0x0647 or 0x062F or 0x0630) when final => 2,
+            (_, 0x0622 or 0x0623 or 0x0625 or 0x0627 or 0x0637 or 0x0638 or 0x0644 or 0x0643 or 0x06A9 or 0x06AF) when final => 3,
+            (_, 0x0631 or 0x0632 or 0x0698 or 0x0648 or 0x0624 or 0x0639 or 0x063A or 0x0642 or 0x0641) when final => 4,
+            _ when final => 5,
+            _ => 6,
+        };
+
+        /// <summary>
+        /// Inserts tatweels before the given glyphs: as many as cover the width, each advancing an
+        /// equal part of it, so the strokes overlap into one line. They carry no text.
+        /// </summary>
+        private static List<ShapedGlyph> Elongate(LineRun run, List<ShapedGlyph> glyphs, List<(int Index, double Width)> points)
+        {
+            ShapedGlyph tatweel = run.Font.ShapeRun("\u0640", 0, 1, true, "arab").First();
+            if (tatweel.Advance <= 0) return glyphs;
+            double toUnits = 1000 / run.Style.Size;
+            var result = new List<ShapedGlyph>(glyphs.Count + 4 * points.Count);
+            int next = 0;
+            foreach ((int index, double width) in points.OrderBy(p => p.Index))
+            {
+                for (; next < index; next++) result.Add(glyphs[next]);
+                double units = width * toUnits;
+                if (units <= 0) continue;
+                int count = (int)Math.Min(64, Math.Ceiling(units / tatweel.Advance));
+                for (int k = 0; k < count; k++)
+                {
+                    result.Add(tatweel with { Advance = units / count, Cluster = glyphs[index].Cluster, Text = "", XOffset = 0, YOffset = 0 });
+                }
+            }
+
+            for (; next < glyphs.Count; next++) result.Add(glyphs[next]);
+            return result;
         }
 
         /// <summary>CSS line box: each span's ascent and descent, each spread by half the leading.</summary>

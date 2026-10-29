@@ -6,13 +6,16 @@ namespace PdfNetStack.Html.Layout;
 /// <summary>The fonts for a style: the first available family, then fallbacks for characters it lacks.</summary>
 internal sealed record FontSet(PdfFont Primary, IReadOnlyList<PdfFont> Fallbacks)
 {
-    /// <summary>The first font with a glyph for the code point, or the primary font.</summary>
-    public PdfFont For(int codePoint)
+    /// <summary>
+    /// The first font that can draw the character at <paramref name="index"/>, with its own glyph
+    /// or after Unicode normalization, or the primary font.
+    /// </summary>
+    public PdfFont For(string text, int index)
     {
-        if (Primary.HasGlyph(codePoint)) return Primary;
+        if (Primary.Covers(text, index)) return Primary;
         foreach (PdfFont f in Fallbacks)
         {
-            if (f.HasGlyph(codePoint)) return f;
+            if (f.Covers(text, index)) return f;
         }
 
         return Primary;

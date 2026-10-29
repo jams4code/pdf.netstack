@@ -47,11 +47,10 @@ internal sealed class OpenTypeFile
         }
 
         IsCff = _tables.ContainsKey("CFF ");
-        if (!IsCff && (!_tables.ContainsKey("glyf") || !_tables.ContainsKey("loca")))
+        IsCff2 = !IsCff && _tables.ContainsKey("CFF2");
+        if (!IsCff && !IsCff2 && (!_tables.ContainsKey("glyf") || !_tables.ContainsKey("loca")))
         {
-            throw new FontFormatException(_tables.ContainsKey("CFF2")
-                ? "CFF2 (variable OpenType) fonts are not supported."
-                : "Font has neither TrueType nor CFF outlines.");
+            throw new FontFormatException("Font has neither TrueType nor CFF outlines.");
         }
 
         ReadOnlySpan<byte> head = Table("head");
@@ -113,6 +112,18 @@ internal sealed class OpenTypeFile
 
     public bool IsCff { get; }
 
+    /// <summary>CFF2 outlines: the font must be instanced (<see cref="FontInstancer"/>) before its outlines are used.</summary>
+    public bool IsCff2 { get; }
+
+    /// <summary>
+    /// The normalized design space location of an instanced variable font, one per fvar axis.
+    /// Empty for static fonts. The shaper applies GDEF, GSUB and GPOS variations at it.
+    /// </summary>
+    public float[] Coordinates { get; set; } = [];
+
+    /// <summary>The tags of the font's tables.</summary>
+    public IEnumerable<string> TableTags => _tables.Keys;
+
     public int UnitsPerEm { get; }
 
     public int GlyphCount { get; }
@@ -165,9 +176,9 @@ internal sealed class OpenTypeFile
 
     public string FamilyName { get; }
 
-    public string SubfamilyName { get; }
+    public string SubfamilyName { get; set; }
 
-    public string PostScriptName { get; }
+    public string PostScriptName { get; set; }
 
     /// <summary>Number of fonts in a file: the count of a collection, otherwise 1.</summary>
     public static int CountFonts(ReadOnlySpan<byte> data)
@@ -234,7 +245,7 @@ internal sealed class OpenTypeFile
     /// <summary>The yMax of a TrueType glyph's bounding box, or null for CFF fonts and empty glyphs.</summary>
     public int? GlyphTop(int glyph)
     {
-        if (IsCff || glyph < 0 || glyph >= GlyphCount) return null;
+        if (IsCff || IsCff2 || glyph < 0 || glyph >= GlyphCount) return null;
         (int start, int end) = GlyphRange(glyph);
         return end - start >= 10 ? I16(Table("glyf"), start + 8) : null;
     }
@@ -291,7 +302,7 @@ internal sealed class OpenTypeFile
     }
 
     /// <summary>PostScript names are printable ASCII without PDF delimiters or spaces.</summary>
-    private static string SanitizePostScriptName(string name)
+    internal static string SanitizePostScriptName(string name)
     {
         var sb = new StringBuilder(name.Length);
         foreach (char c in name)

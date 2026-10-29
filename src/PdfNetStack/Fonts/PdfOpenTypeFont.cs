@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using PdfNetStack.Fonts.OpenType;
@@ -12,20 +13,28 @@ namespace PdfNetStack.Fonts;
 /// </summary>
 /// <remarks>
 /// The font program is embedded, so the PDF shows the same glyphs everywhere, including in PDF/A.
-/// Variable fonts draw their default instance. CFF2 fonts are not supported yet. Fonts whose
+/// A variable font draws its default instance; <see cref="GetInstance(string)"/> and
+/// <see cref="GetInstance(IReadOnlyDictionary{string, double})"/> give any other, embedded as a
+/// static font with the variations applied (TrueType and CFF2 outlines alike). Fonts whose
 /// license forbids embedding (OS/2 fsType) are refused when first drawn.
 /// </remarks>
 public sealed class PdfOpenTypeFont : PdfFont
 {
     private readonly OpenTypeFile _file;
+    private readonly OpenTypeFile _source;
+    private readonly FontVariations? _variations;
+    private readonly ConcurrentDictionary<string, PdfOpenTypeFont> _instances;
     private readonly Kerning? _kerning;
     private readonly double _scale;
     private CffFont? _cff;
     private ShapingTables? _tables;
 
-    private PdfOpenTypeFont(OpenTypeFile file)
+    private PdfOpenTypeFont(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont>? instances)
     {
         _file = file;
+        _source = source;
+        _variations = variations;
+        _instances = instances ?? new ConcurrentDictionary<string, PdfOpenTypeFont>(StringComparer.Ordinal);
         _kerning = Kerning.Load(file);
         _scale = 1000.0 / file.UnitsPerEm;
 
@@ -90,6 +99,19 @@ public sealed class PdfOpenTypeFont : PdfFont
     /// <summary>True when the font's license (OS/2 fsType) allows embedding it in a document.</summary>
     public bool AllowsEmbedding => (_file.FsType & 0x000F) != 0x0002 && (_file.FsType & 0x0200) == 0;
 
+    /// <summary>True for a variable font: one with design axes that <see cref="GetInstance(IReadOnlyDictionary{string, double})"/> can set.</summary>
+    public bool IsVariable => _variations is not null;
+
+    /// <summary>The design axes of a variable font; empty for a static font.</summary>
+    public IReadOnlyList<PdfFontAxis> VariationAxes =>
+        _variations is null
+            ? []
+            : [.. _variations.Axes.Select(a => new PdfFontAxis(a.Tag, OpenTypeFile.ReadName(_source.Table("name"), a.NameId) ?? a.Tag, a.Minimum, a.Default, a.Maximum, a.Hidden))];
+
+    /// <summary>The style names of a variable font's named instances, such as "Bold" or "Condensed Light"; empty for a static font.</summary>
+    public IReadOnlyList<string> NamedInstances =>
+        _variations is null ? [] : [.. _variations.Instances.Select(InstanceName).Distinct(StringComparer.Ordinal)];
+
     internal OpenTypeFile File => _file;
 
     internal ShapingTables Tables => _tables ??= new ShapingTables(_file);
@@ -121,7 +143,105 @@ public sealed class PdfOpenTypeFont : PdfFont
     public static PdfOpenTypeFont Load(byte[] data, int index = 0)
     {
         Compat.ThrowIfNull(data, nameof(data));
-        var font = new PdfOpenTypeFont(OpenTypeFile.Parse(data, index));
+        OpenTypeFile source = OpenTypeFile.Parse(data, index);
+        FontVariations? variations = FontVariations.Load(source);
+        OpenTypeFile file = source;
+        if (source.IsCff2)
+        {
+            // CFF2 outlines are drawn through a CFF conversion, at the default location.
+            file = Instantiate(source, variations, variations?.Axes.Select(a => a.Default).ToArray() ?? [], null, null);
+        }
+        else if (variations is not null)
+        {
+            source.Coordinates = new float[variations.Axes.Count];
+        }
+
+        return Create(file, source, variations, null);
+    }
+
+    /// <summary>
+    /// The variable font at one of its named instances, as a static font: outlines, advances and
+    /// metrics follow the instance, and shaping applies its kerning and substitutions.
+    /// </summary>
+    /// <param name="name">A style name from <see cref="NamedInstances"/>, compared without regard to case.</param>
+    /// <exception cref="InvalidOperationException">The font is not variable.</exception>
+    /// <exception cref="ArgumentException">The font has no instance of that name.</exception>
+    /// <exception cref="FontFormatException">The font's variation data is damaged.</exception>
+    public PdfOpenTypeFont GetInstance(string name)
+    {
+        Compat.ThrowIfNull(name, nameof(name));
+        FontVariations variations = _variations ?? throw new InvalidOperationException($"{Name} is not a variable font.");
+        NamedInstance instance = variations.Instances.FirstOrDefault(i => string.Equals(InstanceName(i), name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"{FamilyName} has no instance named \"{name}\".", nameof(name));
+        return Instance(instance.Coordinates);
+    }
+
+    /// <summary>
+    /// The variable font at the given axis values, as a static font. Axes not named keep their
+    /// default; values outside an axis's range are clamped to it.
+    /// </summary>
+    /// <param name="axisValues">Values by axis tag, in the axis's own units, such as <c>{ ["wght"] = 650 }</c>.</param>
+    /// <exception cref="InvalidOperationException">The font is not variable.</exception>
+    /// <exception cref="ArgumentException">A tag is not one of the font's axes, or a value is not a number.</exception>
+    /// <exception cref="FontFormatException">The font's variation data is damaged.</exception>
+    public PdfOpenTypeFont GetInstance(IReadOnlyDictionary<string, double> axisValues)
+    {
+        Compat.ThrowIfNull(axisValues, nameof(axisValues));
+        FontVariations variations = _variations ?? throw new InvalidOperationException($"{Name} is not a variable font.");
+        double[] values = [.. variations.Axes.Select(a => a.Default)];
+        foreach (KeyValuePair<string, double> v in axisValues)
+        {
+            int i = 0;
+            while (i < variations.Axes.Count && variations.Axes[i].Tag != v.Key) i++;
+            if (i == variations.Axes.Count) throw new ArgumentException($"{FamilyName} has no axis '{v.Key}'.", nameof(axisValues));
+            if (double.IsNaN(v.Value)) throw new ArgumentException($"The value of axis '{v.Key}' is not a number.", nameof(axisValues));
+            values[i] = v.Value;
+        }
+
+        return Instance(values);
+    }
+
+    /// <summary>The instance at <paramref name="values"/> (user units, one per axis), made once and then reused.</summary>
+    private PdfOpenTypeFont Instance(double[] values)
+    {
+        FontVariations variations = _variations!;
+        float[] coordinates = variations.Normalize(values);
+        string key = string.Join(",", coordinates.Select(c => c.ToString("R", CultureInfo.InvariantCulture)));
+        return _instances.GetOrAdd(key, _ =>
+        {
+            if (coordinates.All(c => c == 0) && !_source.IsCff2) return Create(_source, _source, variations, _instances);
+
+            // A named instance at this location gives the style and PostScript names.
+            NamedInstance? named = variations.Instances.FirstOrDefault(i => variations.Normalize(i.Coordinates).SequenceEqual(coordinates));
+            string prefix = OpenTypeFile.ReadName(_source.Table("name"), 25) ?? _source.FamilyName;
+            string? subfamily = named is null ? null : InstanceName(named);
+            string postScript = named is not null && named.PostScriptNameId is > 0 and < 0xFFFF && OpenTypeFile.ReadName(_source.Table("name"), named.PostScriptNameId) is string ps
+                ? ps
+                : subfamily is not null
+                    ? prefix + "-" + subfamily
+                    : prefix + "_" + string.Concat(variations.Axes.Select((a, i) => values[i] == a.Default ? "" : FormatAxis(values[i]) + a.Tag));
+            OpenTypeFile file = Instantiate(_source, variations, values, subfamily, OpenTypeFile.SanitizePostScriptName(postScript));
+            return Create(file, _source, variations, _instances);
+        });
+
+        static string FormatAxis(double v) => Math.Round(Math.Max(Math.Min(v, 99999), -99999), 2).ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private string InstanceName(NamedInstance instance) => OpenTypeFile.ReadName(_source.Table("name"), instance.SubfamilyNameId) ?? "Instance";
+
+    private static OpenTypeFile Instantiate(OpenTypeFile source, FontVariations? variations, double[] values, string? subfamily, string? postScript)
+    {
+        float[] coordinates = variations?.Normalize(values) ?? [];
+        OpenTypeFile file = OpenTypeFile.Parse(FontInstancer.Instantiate(source, variations, coordinates, values), 0);
+        file.Coordinates = coordinates;
+        if (subfamily is not null) file.SubfamilyName = subfamily;
+        if (postScript is not null) file.PostScriptName = postScript;
+        return file;
+    }
+
+    private static PdfOpenTypeFont Create(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont>? instances)
+    {
+        var font = new PdfOpenTypeFont(file, source, variations, instances);
         if (font._file.IsCff && font.Cff.GlyphCount != font._file.GlyphCount)
         {
             throw new FontFormatException("The CFF table and maxp disagree on the number of glyphs.");
@@ -139,7 +259,10 @@ public sealed class PdfOpenTypeFont : PdfFont
 
     internal override bool TryGetGlyph(int codePoint, out int glyph) => _file.TryGetGlyph(codePoint, out glyph);
 
-    /// <summary>Shapes through GSUB and GPOS when the font has them: ligatures, Arabic forms, marks, kerning.</summary>
+    /// <summary>Also true for characters the font draws after normalization: decomposed, composed with their base, or a space or hyphen fallback.</summary>
+    internal override bool Covers(string text, int index) => base.Covers(text, index) || Shaper.Covers(Tables, text, index);
+
+    /// <summary>Shapes through GSUB and GPOS when the font has them: ligatures, Arabic forms, Indic syllables, marks, kerning.</summary>
     internal override List<ShapedGlyph> ShapeRun(string text, int start, int end, bool rightToLeft, string script)
     {
         ShapingTables tables = Tables;

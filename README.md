@@ -204,7 +204,17 @@ used, so a page in Inter costs a few KB. `PdfFontCollection` matches family, wei
 the way CSS does. Text can be filled with a gradient, outlined with a pen, or both;
 `MeasureString`, `Ascent`, `Descent` and `GetLineHeight` give the metrics for layout. Fonts are
 parsed defensively: a damaged file raises `FontFormatException`, and a font whose license
-forbids embedding (OS/2 fsType) is refused. Not supported yet: CFF2 variable fonts.
+forbids embedding (OS/2 fsType) is refused.
+
+Variable fonts, with TrueType or CFF2 outlines, draw at any named instance or axis value. The
+instance is embedded as a static font, with outlines, advances, metrics and kerning that match
+fontTools and HarfBuzz:
+
+```csharp
+var variable = PdfOpenTypeFont.Load("fonts/Inter[opsz,wght].ttf");
+PdfFont semiBold = variable.GetInstance("SemiBold");                        // a named instance
+PdfFont custom = variable.GetInstance(new Dictionary<string, double> { ["wght"] = 650 });
+```
 
 Paragraphs wrap, align and justify, with rich text and right to left scripts:
 
@@ -219,9 +229,12 @@ PdfTextLayout layout = g.DrawText(p, 50, 120, 300);   // layout.Height is the ro
 
 Text goes through the Unicode line breaking (UAX #14) and bidirectional (UAX #9) algorithms,
 both passing the full Unicode conformance suites, and an OpenType shaper that matches HarfBuzz
-glyph for glyph: ligatures, kerning, Arabic joining and vowel marks. Lines break greedily at
-break opportunities, overlong words break between characters, soft hyphens show a hyphen when
-used, and line height follows CSS. `PdfTextLayout` measures before drawing and can draw a range
+glyph for glyph: ligatures, kerning, Arabic joining and vowel marks, the nine Indic scripts
+(Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), and Unicode
+normalization against the font, so decomposed and precomposed text both find their glyphs.
+Lines break greedily at break opportunities, overlong words break between characters, soft
+hyphens show a hyphen when used, and line height follows CSS. `PdfParagraph.Kashida` justifies
+Arabic lines by elongating letters with tatweel before widening spaces. `PdfTextLayout` measures before drawing and can draw a range
 of lines, for text that continues on the next page.
 
 Images and reusable drawings:
@@ -623,8 +636,8 @@ in the [roadmap](docs/ROADMAP.md).
 | Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | 1.0 |
 | Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | 1.1, unreleased |
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1, unreleased |
-| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections | 1.1, unreleased |
-| Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | 1.1, unreleased |
+| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections, variable font instances (TrueType and CFF2) | 1.1, unreleased |
+| Text layout | Line breaking, alignment, justification (with kashida), rich text, Arabic, Indic and RTL, Unicode normalization | 1.1, unreleased |
 | Images and overlays | JPEG, PNG, GIF, BMP, TIFF, WebP and SVG placement with fit and opacity, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
 | Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1, unreleased |
 | Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1, unreleased |

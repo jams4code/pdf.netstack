@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using PdfNetStack.Fonts;
 using PdfNetStack.Fonts.OpenType;
@@ -6,9 +7,10 @@ namespace PdfNetStack.Tests;
 
 /// <summary>
 /// The shaper against HarfBuzz, glyph by glyph: ids, clusters, advances and offsets in font
-/// units. The synthetic Arabic fixture always runs, with HarfBuzz's output recorded by
-/// tools/make_font_fixtures.py. Local fonts run when PDFNETSTACK_HB_REFERENCE names a file written
-/// by tools/harfbuzz_reference.py; they are not ours to commit.
+/// units. The synthetic fixtures always run, with HarfBuzz's output recorded by
+/// tools/make_font_fixtures.py (Arabic; Devanagari, Bengali and Latin normalization) and
+/// tools/make_variable_font_fixtures.py (instances of a variable font). Local fonts run when PDFNETSTACK_HB_REFERENCE names a file written by
+/// tools/harfbuzz_reference.py; they are not ours to commit.
 /// </summary>
 [TestClass]
 public sealed class HarfBuzzComparisonTests
@@ -18,6 +20,20 @@ public sealed class HarfBuzzComparisonTests
     {
         string dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts");
         Compare(File.ReadLines(Path.Combine(dir, "Test-Arabic.shaping.jsonl")), name => Path.Combine(dir, name));
+    }
+
+    [TestMethod]
+    public void MatchesHarfBuzzOnTheIndicFixture()
+    {
+        string dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts");
+        Compare(File.ReadLines(Path.Combine(dir, "Test-Indic.shaping.jsonl")), name => Path.Combine(dir, name));
+    }
+
+    [TestMethod]
+    public void MatchesHarfBuzzOnVariableFontInstances()
+    {
+        string dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts");
+        Compare(File.ReadLines(Path.Combine(dir, "Test-Variable.shaping.jsonl")), name => Path.Combine(dir, name));
     }
 
     [TestMethod]
@@ -42,7 +58,21 @@ public sealed class HarfBuzzComparisonTests
             string text = root.GetProperty("text").GetString()!;
             bool rtl = root.GetProperty("direction").GetString() == "rtl";
             string script = root.GetProperty("script").GetString()!;
-            if (!fonts.TryGetValue(font, out PdfOpenTypeFont? loaded)) fonts[font] = loaded = PdfOpenTypeFont.Load(font);
+            if (!fonts.TryGetValue(font, out PdfOpenTypeFont? loaded))
+            {
+                // A font in a collection is named with its index after '#', an instance of a
+                // variable font with its axis values after '@' (wght=700,wdth=75).
+                string[] instance = font.Split('@');
+                string[] parts = instance[0].Split('#');
+                loaded = PdfOpenTypeFont.Load(parts[0], parts.Length > 1 ? int.Parse(parts[1], CultureInfo.InvariantCulture) : 0);
+                if (instance.Length > 1)
+                {
+                    loaded = loaded.GetInstance(instance[1].Split(',').Select(a => a.Split('='))
+                        .ToDictionary(a => a[0], a => double.Parse(a[1], CultureInfo.InvariantCulture)));
+                }
+
+                fonts[font] = loaded;
+            }
 
             // HarfBuzz clusters are code point indices; ours are UTF-16 indices.
             var cpIndex = new Dictionary<int, int>();
@@ -58,6 +88,6 @@ public sealed class HarfBuzzComparisonTests
         }
 
         Assert.IsGreaterThan(0, cases);
-        Assert.IsEmpty(failures, $"{failures.Count} of {cases} differ:\n" + string.Join("\n", failures.Take(12)));
+        Assert.IsEmpty(failures, $"{failures.Count} of {cases} differ:\n" + string.Join("\n", failures.Take(40)));
     }
 }

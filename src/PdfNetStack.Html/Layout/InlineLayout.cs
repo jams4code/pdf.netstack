@@ -278,13 +278,13 @@ internal sealed class InlineLayout
             // A combining mark stays with its base's font when that font has it.
             UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(_text, i);
             PdfFont font = i > 0 && category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark
-                && ReferenceEquals(_style[i - 1], style) && _font[i - 1].HasGlyph(cp)
+                && ReferenceEquals(_style[i - 1], style) && _font[i - 1].Covers(_text, i)
                 ? _font[i - 1]
-                : fonts.For(cp);
+                : fonts.For(_text, i);
             _font[i] = font;
 
             // No font has it: a question mark keeps the text visible, as browsers show a box.
-            if (!font.HasGlyph(cp))
+            if (!font.Covers(_text, i))
             {
                 bool pair = char.IsSurrogatePair(_text, i);
                 _shaping[i] = font.HasGlyph('?') ? '?' : (char)0x200B;

@@ -157,6 +157,9 @@ internal sealed class CffFont
         return new string(chars);
     }
 
+    /// <summary>The charstring of a glyph.</summary>
+    public byte[] CharString(int glyph) => _charStrings.Item(_cff, glyph).ToArray();
+
     /// <summary>Writes the subset: outlines for <paramref name="keep"/> only, same glyph ids.</summary>
     public byte[] Subset(ISet<int> keep)
     {

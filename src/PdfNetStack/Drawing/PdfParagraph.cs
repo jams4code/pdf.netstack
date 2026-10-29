@@ -39,6 +39,15 @@ public sealed class PdfParagraph
             : throw new ArgumentOutOfRangeException(nameof(value), "Line height must be positive.");
     }
 
+    /// <summary>
+    /// With <see cref="PdfTextAlignment.Justify"/>, right to left Arabic script lines are justified
+    /// by elongating joined letters with tatweel (kashida) before spaces widen: one elongation per
+    /// word, up to three tatweel widths, at the point Arabic typography prefers (after seen and
+    /// sad, before a final heh, dal, alef, lam, kaf, reh or waw, else the last join of the word).
+    /// Fonts without a tatweel glyph justify with spaces only. Off by default.
+    /// </summary>
+    public bool Kashida { get; set; }
+
     /// <summary>Indent of the first line, in points.</summary>
     public double FirstLineIndent { get; set; }
 
