@@ -83,7 +83,7 @@ internal sealed class TextExtractor(PdfDocument document) : ContentInterpreter(d
     {
         TextState t = Text;
         double size = t.FontSize;
-        PdfMatrix m = PdfMatrix.Multiply(t.Matrix, Ctm);
+        PdfMatrix m = PdfMatrix.Multiply(TextMatrix, Ctm);
 
         // Trm = [Tfs Th, 0, 0, Tfs, 0, Trise] x Tm x CTM (9.4.4).
         PdfMatrix trm = PdfMatrix.Multiply(new PdfMatrix(size * t.HorizontalScaling, 0, 0, size, 0, t.Rise), m);

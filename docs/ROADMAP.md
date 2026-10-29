@@ -28,7 +28,8 @@ Done and in the main branch:
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; the X.509 checks of ETSI EN 319 102-1: certificate policies with mappings and constraints (RFC 5280 on the RFC 9618 policy graph), name constraints, and the qualified status QCStatements claim; PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
 | Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
 | Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
-| Scale | Documents read on demand from a seekable stream, with incremental saving |
+| Scale and performance | Documents read on demand from a seekable stream, with incremental saving; text extraction and HTML conversion profiled and made faster with unchanged output, measured by a benchmark project under `tools/` |
+| Command line | Native AOT executables for linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64 on every GitHub release, with SHA-256 checksums |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
 | HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, variable fonts (`font-weight`, `font-stretch`, `font-style`, `font-optical-sizing` and `font-variation-settings` choosing the instance), tagged PDF |
 
@@ -50,10 +51,8 @@ Done and in the main branch:
 - Lossy image options measured on the public benchmark corpus, once it exists.
 
 **Scale and performance**
-- Faster text extraction and HTML layout.
 - An optimizer that streams its output, for files larger than memory (reading and incremental
   saving already work on demand).
-- Native AOT builds of the command line tool for Linux, Windows and macOS.
 
 **Evidence**
 - A public benchmark corpus with redistributable licenses, with size, time, memory and render

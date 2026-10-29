@@ -9,6 +9,11 @@ Abdelkhalek at [JADEV](https://github.com/jams4code). MIT licensed, no Ghostscri
 dotnet tool install -g PdfNetStack.Tool
 ```
 
+Without .NET installed, download the native executable for your platform (linux-x64, linux-arm64,
+win-x64, osx-x64, osx-arm64) from the
+[GitHub releases](https://github.com/jams4code/pdf.netstack/releases), checked against
+`SHA256SUMS.txt`.
+
 ## Usage
 
 ```bash

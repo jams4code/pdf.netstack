@@ -28,6 +28,41 @@ internal static class TextLayout
     /// <summary>Lines of words in reading order.</summary>
     public static List<List<PdfWord>> Lines(IReadOnlyList<PdfLetter> letters)
     {
+        var lines = new List<List<PdfWord>>();
+        foreach (Item[] line in VisualLines(letters))
+        {
+            var words = new List<PdfWord>();
+            Words(line, words, null);
+            if (words.Count > 0) lines.Add(words);
+        }
+
+        return lines;
+    }
+
+    /// <summary>The text of a page: lines top to bottom, words separated by a space, lines by a line feed.</summary>
+    public static string Text(IReadOnlyList<PdfLetter> letters)
+    {
+        // The words of Lines, written straight into the text without a PdfWord for each.
+        var sb = new StringBuilder();
+        foreach (Item[] line in VisualLines(letters))
+        {
+            int mark = sb.Length;
+            if (mark > 0) sb.Append('\n');
+            int start = sb.Length;
+            Words(line, null, sb);
+            if (sb.Length == start) sb.Length = mark;
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>The lines of every direction and block in reading order, each in visual order.</summary>
+    private static IEnumerable<Item[]> VisualLines(IReadOnlyList<PdfLetter> letters)
+    {
+        // The direction of each letter's text, needed by both the blocks and the words.
+        var kinds = new Kind[letters.Count];
+        for (int i = 0; i < kinds.Length; i++) kinds[i] = Classify(letters[i].Text);
+
         // Directions in the order they first appear, each with its letters in content order.
         var groups = new List<(PdfPoint Direction, List<int> Letters)>();
         for (int i = 0; i < letters.Count; i++)
@@ -50,20 +85,13 @@ internal static class TextLayout
             groups[best].Letters.Add(i);
         }
 
-        var lines = new List<List<PdfWord>>();
         foreach ((PdfPoint direction, List<int> members) in groups)
         {
-            foreach (List<int> block in Blocks(letters, direction, members))
+            foreach (List<int> block in Blocks(letters, kinds, direction, members))
             {
-                foreach (List<Item> line in GroupLines(letters, direction, block))
-                {
-                    List<PdfWord> words = Words(line);
-                    if (words.Count > 0) lines.Add(words);
-                }
+                foreach (Item[] line in GroupLines(letters, kinds, direction, block)) yield return line;
             }
         }
-
-        return lines;
     }
 
     /// <summary>Recursion depth of the block segmentation.</summary>
@@ -82,127 +110,216 @@ internal static class TextLayout
     /// keep reading row by row. Columns read left to right, right to left where the region's
     /// text mostly is.
     /// </summary>
-    private static List<List<int>> Blocks(IReadOnlyList<PdfLetter> letters, PdfPoint d, List<int> members)
+    private static List<List<int>> Blocks(IReadOnlyList<PdfLetter> letters, Kind[] kinds, PdfPoint d, List<int> members)
     {
+        // Letters that follow each other in content order on one baseline, at one size and with
+        // no gap between them (a word, typically) make one box. A gap that small never reads as a
+        // gutter, and the boxes count lines, characters and sizes as their letters would, so the
+        // cut is the same as one over the letters, with far fewer boxes to sort.
         var n = new PdfPoint(-d.Y, d.X);
-        var boxes = new List<Box>(members.Count);
-        foreach (int i in members)
+        var boxes = new List<Box>();
+        for (int k = 0; k < members.Count; k++)
         {
+            int i = members[k];
             PdfLetter l = letters[i];
             double a = Dot(l.BaselineStart, d), b = Dot(l.BaselineEnd, d), v = Dot(l.BaselineStart, n), size = Math.Max(l.FontSize, 0.01);
-            boxes.Add(new Box(i, Math.Min(a, b), Math.Max(a, b), v - (0.25 * size), v + (0.75 * size), size, Classify(l.Text) == Kind.Right, Math.Max(1, l.Text.Length)));
+            double u0 = Math.Min(a, b), u1 = Math.Max(a, b), v0 = v - (0.25 * size), v1 = v + (0.75 * size);
+            bool rightToLeft = kinds[i] == Kind.Right;
+            int chars = Math.Max(1, l.Text.Length);
+            if (boxes.Count > 0)
+            {
+                Box run = boxes[^1];
+                if (run.V0 == v0 && run.V1 == v1 && run.Size == size && run.RightToLeft == rightToLeft && u0 >= run.U0 && u0 <= run.U1 + Touching)
+                {
+                    boxes[^1] = run with { Count = run.Count + 1, U1 = Math.Max(run.U1, u1), Chars = run.Chars + chars };
+                    continue;
+                }
+            }
+
+            boxes.Add(new Box(k, 1, u0, u1, v0, v1, size, rightToLeft, chars));
         }
 
         var result = new List<List<int>>();
-        Cut(boxes, 0, result);
+        new Regions([.. boxes], members).Cut(0, boxes.Count, 0, result);
         return result;
     }
 
-    private static void Cut(List<Box> region, int depth, List<List<int>> result)
+    /// <summary>
+    /// The widest hole a run of letters may have along the baseline: half the smallest em a
+    /// region can have, so never a gutter.
+    /// </summary>
+    private const double Touching = 0.005;
+
+    /// <summary>
+    /// The XY cut over one array of boxes. A region is a range of it: sorting a region puts each
+    /// column or band it splits into in a range of its own, so nothing is copied.
+    /// </summary>
+    /// <remarks>
+    /// The order of boxes within a region never matters: a gap is measured between boxes of
+    /// distinct coordinates, and the lines of a block are sorted again. So sorts need not keep
+    /// the previous order among equal keys.
+    /// </remarks>
+    private sealed class Regions(Box[] boxes, List<int> members)
     {
-        if (depth < MaxCutDepth && region.Sum(b => b.Chars) >= 2 * MinColumnLines * MinLettersPerLine)
+        // Sort scratch: keys and positions are sorted together, then the boxes, which are large
+        // to move, are moved once.
+        private readonly double[] _keys = new double[boxes.Length];
+        private readonly int[] _positions = new int[boxes.Length];
+        private readonly Box[] _moved = new Box[boxes.Length];
+
+        public void Cut(int from, int to, int depth, List<List<int>> result)
         {
-            double em = Median(region.Select(b => b.Size));
-            if (Columns(region, em) is (List<Box> first, List<Box> second))
+            if (depth < MaxCutDepth && Chars(from, to) >= 2 * MinColumnLines * MinLettersPerLine)
             {
-                Cut(first, depth + 1, result);
-                Cut(second, depth + 1, result);
-                return;
+                double em = Median(from, to);
+                if (Columns(from, to, em) is (int split, bool rightToLeft))
+                {
+                    if (rightToLeft)
+                    {
+                        Cut(split, to, depth + 1, result);
+                        Cut(from, split, depth + 1, result);
+                    }
+                    else
+                    {
+                        Cut(from, split, depth + 1, result);
+                        Cut(split, to, depth + 1, result);
+                    }
+
+                    return;
+                }
+
+                List<int> bands = Bands(from, to, em);
+                if (bands.Count > 2)
+                {
+                    for (int i = 0; i + 1 < bands.Count; i++) Cut(bands[i], bands[i + 1], depth + 1, result);
+                    return;
+                }
             }
 
-            List<List<Box>> bands = Bands(region, em);
-            if (bands.Count > 1)
+            // The block's letters in content order, which lines mostly keep along the baseline.
+            var block = new List<int>();
+            for (int i = from; i < to; i++)
             {
-                foreach (List<Box> band in bands) Cut(band, depth + 1, result);
-                return;
+                for (int k = boxes[i].Start; k < boxes[i].Start + boxes[i].Count; k++) block.Add(members[k]);
+            }
+
+            block.Sort();
+            result.Add(block);
+        }
+
+        private int Chars(int from, int to)
+        {
+            int chars = 0;
+            for (int i = from; i < to; i++) chars += boxes[i].Chars;
+            return chars;
+        }
+
+        /// <summary>
+        /// The widest gutter of at least an em between two columns of prose, as the start of the
+        /// right column after the region is sorted left to right, and whether the right column
+        /// reads first; or null.
+        /// </summary>
+        private (int Split, bool RightToLeft)? Columns(int from, int to, double em)
+        {
+            for (int i = from; i < to; i++) _keys[i] = boxes[i].U0;
+            Sort(from, to);
+            double reach = double.MinValue, widest = 0;
+            int split = -1;
+            for (int i = from; i < to; i++)
+            {
+                double gap = boxes[i].U0 - reach;
+                if (i > from && gap >= em && gap > widest && Prose(from, i, em) && Prose(i, to, em)) (widest, split) = (gap, i);
+                reach = Math.Max(reach, boxes[i].U1);
+            }
+
+            if (split < 0) return null;
+            int rightToLeftChars = 0;
+            for (int i = from; i < to; i++)
+            {
+                if (boxes[i].RightToLeft) rightToLeftChars += boxes[i].Chars;
+            }
+
+            return (split, rightToLeftChars * 2 > Chars(from, to));
+        }
+
+        /// <summary>
+        /// Whether letters [from, to) form a column of prose: enough lines, each long enough. Counted
+        /// in characters, since an ActualText span is one letter for a whole run.
+        /// </summary>
+        private bool Prose(int from, int to, double em)
+        {
+            var lines = new HashSet<long>();
+            int chars = 0;
+            for (int i = from; i < to; i++)
+            {
+                lines.Add(Key(boxes[i].V0, em));
+                chars += boxes[i].Chars;
+            }
+
+            return lines.Count >= MinColumnLines && chars / lines.Count >= MinLettersPerLine;
+        }
+
+        /// <summary>
+        /// Bands parted by gaps across the whole region of at least 0.8 em, from the top down, as
+        /// the boundaries of their ranges after the region is sorted top down: from first to to last.
+        /// </summary>
+        private List<int> Bands(int from, int to, double em)
+        {
+            // By V1 negated, which orders exactly as V1 descending.
+            for (int i = from; i < to; i++) _keys[i] = -boxes[i].V1;
+            Sort(from, to);
+            var bounds = new List<int> { from };
+            double floor = double.MaxValue;
+            for (int i = from; i < to; i++)
+            {
+                if (i > bounds[^1] && floor - boxes[i].V1 >= 0.8 * em)
+                {
+                    bounds.Add(i);
+                    floor = double.MaxValue;
+                }
+
+                floor = Math.Min(floor, boxes[i].V0);
+            }
+
+            bounds.Add(to);
+            return bounds;
+        }
+
+        /// <summary>The median size of the region's letters, each box counting once per letter.</summary>
+        private double Median(int from, int to)
+        {
+            if (to == from) return 1;
+            int letters = 0;
+            for (int i = from; i < to; i++)
+            {
+                _keys[i] = boxes[i].Size;
+                _positions[i] = boxes[i].Count;
+                letters += boxes[i].Count;
+            }
+
+            Array.Sort(_keys, _positions, from, to - from);
+            for (int i = from, seen = 0; ; i++)
+            {
+                seen += _positions[i];
+                if (seen > letters / 2) return _keys[i];
             }
         }
 
-        result.Add([.. region.Select(b => b.Index)]);
-    }
-
-    /// <summary>The widest gutter of at least an em between two columns of prose, the reading side first, or null.</summary>
-    private static (List<Box> First, List<Box> Second)? Columns(List<Box> region, double em)
-    {
-        List<Box> sorted = [.. region.OrderBy(b => b.U0)];
-        double reach = double.MinValue, widest = 0;
-        int split = -1;
-        for (int i = 0; i < sorted.Count; i++)
+        /// <summary>Sorts boxes [from, to) by the keys in the same range.</summary>
+        private void Sort(int from, int to)
         {
-            double gap = sorted[i].U0 - reach;
-            if (i > 0 && gap >= em && gap > widest && Prose(sorted, 0, i, em) && Prose(sorted, i, sorted.Count, em)) (widest, split) = (gap, i);
-            reach = Math.Max(reach, sorted[i].U1);
+            for (int i = from; i < to; i++) _positions[i] = i;
+            Array.Sort(_keys, _positions, from, to - from);
+            for (int i = from; i < to; i++) _moved[i] = boxes[_positions[i]];
+            Array.Copy(_moved, from, boxes, from, to - from);
         }
-
-        if (split < 0) return null;
-        List<Box> left = sorted.GetRange(0, split), right = sorted.GetRange(split, sorted.Count - split);
-        bool rightToLeft = region.Where(b => b.RightToLeft).Sum(b => b.Chars) * 2 > region.Sum(b => b.Chars);
-        return rightToLeft ? (right, left) : (left, right);
     }
 
     /// <summary>
-    /// Whether letters [from, to) form a column of prose: enough lines, each long enough. Counted
-    /// in characters, since an ActualText span is one letter for a whole run.
+    /// The extent of a run of letters in their direction's frame: along the baseline, and across
+    /// it from descent to ascent. The letters are members [Start, Start + Count) of a direction.
     /// </summary>
-    private static bool Prose(List<Box> sorted, int from, int to, double em)
-    {
-        var lines = new HashSet<long>();
-        int chars = 0;
-        for (int i = from; i < to; i++)
-        {
-            lines.Add(Key(sorted[i].V0, em));
-            chars += sorted[i].Chars;
-        }
-
-        return lines.Count >= MinColumnLines && chars / lines.Count >= MinLettersPerLine;
-    }
-
-    /// <summary>Bands parted by gaps across the whole region of at least 0.8 em, from the top down.</summary>
-    private static List<List<Box>> Bands(List<Box> region, double em)
-    {
-        List<Box> sorted = [.. region.OrderByDescending(b => b.V1)];
-        var bands = new List<List<Box>> { new() };
-        double floor = double.MaxValue;
-        foreach (Box box in sorted)
-        {
-            if (bands[^1].Count > 0 && floor - box.V1 >= 0.8 * em)
-            {
-                bands.Add([]);
-                floor = double.MaxValue;
-            }
-
-            bands[^1].Add(box);
-            floor = Math.Min(floor, box.V0);
-        }
-
-        return bands;
-    }
-
-    private static double Median(IEnumerable<double> values)
-    {
-        List<double> sorted = [.. values.OrderBy(v => v)];
-        return sorted.Count == 0 ? 1 : sorted[sorted.Count / 2];
-    }
-
-    /// <summary>A letter's extent in its direction's frame: along the baseline, and across it from descent to ascent.</summary>
-    private readonly record struct Box(int Index, double U0, double U1, double V0, double V1, double Size, bool RightToLeft, int Chars);
-
-    /// <summary>The text of a page: lines top to bottom, words separated by a space, lines by a line feed.</summary>
-    public static string Text(IReadOnlyList<PdfLetter> letters)
-    {
-        var sb = new StringBuilder();
-        foreach (List<PdfWord> line in Lines(letters))
-        {
-            if (sb.Length > 0) sb.Append('\n');
-            for (int i = 0; i < line.Count; i++)
-            {
-                if (i > 0) sb.Append(' ');
-                sb.Append(line[i].Text);
-            }
-        }
-
-        return sb.ToString();
-    }
+    private readonly record struct Box(int Start, int Count, double U0, double U1, double V0, double V1, double Size, bool RightToLeft, int Chars);
 
     /// <summary>
     /// Lines across one direction. Each letter has a band across the baseline, from a quarter of
@@ -211,27 +328,34 @@ internal static class TextLayout
     /// superscript joins its line rather than a heading just above it. Lines read from the top
     /// of the frame down, letters along the baseline.
     /// </summary>
-    private static List<List<Item>> GroupLines(IReadOnlyList<PdfLetter> letters, PdfPoint d, List<int> members)
+    private static List<Item[]> GroupLines(IReadOnlyList<PdfLetter> letters, Kind[] kinds, PdfPoint d, List<int> members)
     {
         var n = new PdfPoint(-d.Y, d.X);
-        var items = new List<Item>(members.Count);
-        foreach (int i in members)
+        var items = new Item[members.Count];
+        for (int k = 0; k < items.Length; k++)
         {
+            int i = members[k];
             PdfLetter l = letters[i];
             double a = Dot(l.BaselineStart, d), b = Dot(l.BaselineEnd, d);
-            items.Add(new Item(i, l, Math.Min(a, b), Math.Max(a, b), Dot(l.BaselineStart, n), Math.Max(l.FontSize, 0.01)));
+            items[k] = new Item(i, l, Math.Min(a, b), Math.Max(a, b), Dot(l.BaselineStart, n), Math.Max(l.FontSize, 0.01), kinds[i]);
         }
 
-        items.Sort((x, y) => x.Size != y.Size ? y.Size.CompareTo(x.Size) : x.V != y.V ? y.V.CompareTo(x.V) : x.Index.CompareTo(y.Index));
+        // Letters of one size on one baseline always join the same line, whatever their order, so
+        // lines are found once for each distinct size and position: largest first, then from the
+        // top down.
+        var lineOf = new Dictionary<(double Size, double V), Line?>();
+        foreach (Item item in items) lineOf[(item.Size, item.V)] = null;
+        var keys = new List<(double Size, double V)>(lineOf.Keys);
+        keys.Sort((x, y) => x.Size != y.Size ? y.Size.CompareTo(x.Size) : y.V.CompareTo(x.V));
 
         // Lines are found through buckets as tall as the largest letter, so a letter only looks at
         // lines near it; a bucket is searched from its newest line, at most MaxCandidates of them.
-        double bucket = items.Count > 0 ? items[0].Size : 1;
+        double bucket = keys.Count > 0 ? keys[0].Size : 1;
         var buckets = new Dictionary<long, List<Line>>();
         var lines = new List<Line>();
-        foreach (Item item in items)
+        foreach ((double size, double v) in keys)
         {
-            long key = Key(item.V, bucket);
+            long key = Key(v, bucket);
             Line? best = null;
             double bestScore = 0;
             for (long k = key - 1; k <= key + 1; k++)
@@ -240,8 +364,8 @@ internal static class TextLayout
                 for (int j = near.Count - 1; j >= 0 && j >= near.Count - MaxCandidates; j--)
                 {
                     Line line = near[j];
-                    double score = Overlap(item, line.Reference) / item.Size;
-                    if (score >= 0.5 && (score > bestScore || (score == bestScore && Math.Abs(item.V - line.Reference.V) < Math.Abs(item.V - best!.Reference.V))))
+                    double score = Overlap(v, size, line.V, line.Size) / size;
+                    if (score >= 0.5 && (score > bestScore || (score == bestScore && Math.Abs(v - line.V) < Math.Abs(v - best!.V))))
                     {
                         (best, bestScore) = (line, score);
                     }
@@ -250,70 +374,126 @@ internal static class TextLayout
 
             if (best is null)
             {
-                best = new Line(item, lines.Count);
+                best = new Line(v, size, lines.Count);
                 lines.Add(best);
                 if (!buckets.TryGetValue(key, out List<Line>? list)) buckets[key] = list = [];
                 list.Add(best);
             }
 
-            best.Items.Add(item);
+            lineOf[(size, v)] = best;
         }
 
-        lines.Sort((x, y) => x.Reference.V != y.Reference.V ? y.Reference.V.CompareTo(x.Reference.V) : x.Id.CompareTo(y.Id));
-        var result = new List<List<Item>>(lines.Count);
+        // Each line's letters in arrays of their exact size, in content order.
+        foreach (Item item in items) lineOf[(item.Size, item.V)]!.Count++;
         foreach (Line line in lines)
         {
-            line.Items.Sort((x, y) => x.U0 != y.U0 ? x.U0.CompareTo(y.U0) : x.Index.CompareTo(y.Index));
+            line.Items = new Item[line.Count];
+            line.Count = 0;
+        }
+
+        foreach (Item item in items)
+        {
+            Line line = lineOf[(item.Size, item.V)]!;
+            line.Items[line.Count++] = item;
+        }
+
+        lines.Sort((x, y) => x.V != y.V ? y.V.CompareTo(x.V) : x.Id.CompareTo(y.Id));
+        var result = new List<Item[]>(lines.Count);
+        foreach (Line line in lines)
+        {
+            AlongBaseline(line.Items);
             result.Add(line.Items);
         }
 
         return result;
     }
 
+    /// <summary>Sorts a line's letters along the baseline, equal positions in content order.</summary>
+    private static void AlongBaseline(Item[] line)
+    {
+        // Letters mostly come in that order already.
+        bool sorted = true;
+        for (int k = 1; k < line.Length && sorted; k++) sorted = Before(line[k - 1], line[k]);
+        if (sorted) return;
+
+        // Positions are sorted rather than the letters, which are large to move.
+        var keys = new double[line.Length];
+        var positions = new int[line.Length];
+        for (int k = 0; k < line.Length; k++) (keys[k], positions[k]) = (line[k].U0, k);
+        Array.Sort(keys, positions);
+
+        // Letters at one position, as for fake bold, are rare and few: put each run in content order.
+        for (int start = 0; start < line.Length;)
+        {
+            int end = start + 1;
+            while (end < line.Length && keys[end] == keys[start]) end++;
+            if (end - start > 1)
+            {
+                int[] run = positions[start..end];
+                var indices = new int[run.Length];
+                for (int k = 0; k < run.Length; k++) indices[k] = line[run[k]].Index;
+                Array.Sort(indices, run);
+                Array.Copy(run, 0, positions, start, run.Length);
+            }
+
+            start = end;
+        }
+
+        Item[] copy = [.. line];
+        for (int k = 0; k < line.Length; k++) line[k] = copy[positions[k]];
+
+        static bool Before(in Item x, in Item y) => x.U0 < y.U0 || (x.U0 == y.U0 && x.Index < y.Index);
+    }
+
     private static long Key(double v, double bucket) => (long)Math.Floor(Math.Max(-1e15, Math.Min(1e15, v / bucket)));
 
-    /// <summary>How far two letters' bands overlap across the baseline.</summary>
-    private static double Overlap(Item a, Item b)
+    /// <summary>How far the bands of two letters, at their baseline position and size, overlap across the baseline.</summary>
+    private static double Overlap(double v, double size, double otherV, double otherSize)
     {
-        double top = Math.Min(a.V + (0.75 * a.Size), b.V + (0.75 * b.Size));
-        double bottom = Math.Max(a.V - (0.25 * a.Size), b.V - (0.25 * b.Size));
+        double top = Math.Min(v + (0.75 * size), otherV + (0.75 * otherSize));
+        double bottom = Math.Max(v - (0.25 * size), otherV - (0.25 * otherSize));
         return top - bottom;
     }
 
-    /// <summary>Splits a line, in visual order, into words in reading order.</summary>
-    private static List<PdfWord> Words(List<Item> visual)
+    /// <summary>
+    /// Splits a line, in visual order, into words in reading order: into <paramref name="words"/>,
+    /// or as text into <paramref name="output"/>, the words separated by a space.
+    /// </summary>
+    private static void Words(Item[] visual, List<PdfWord>? words, StringBuilder? output)
     {
-        // A letter drawn again over itself, as for fake bold, counts once.
-        var kept = new List<Item>(visual.Count);
+        // A letter drawn again over itself, as for fake bold, counts once. The line is the caller's
+        // to change: kept letters move to its front.
+        int count = 0;
         foreach (Item item in visual)
         {
-            if (kept.Count > 0 && kept[^1].Letter.Text == item.Letter.Text && Math.Abs(kept[^1].U0 - item.U0) < 0.1 * item.Size
-                && Math.Abs(kept[^1].V - item.V) < 0.1 * item.Size)
+            if (count > 0)
             {
-                continue;
+                ref readonly Item last = ref visual[count - 1];
+                if (last.Letter.Text == item.Letter.Text && Math.Abs(last.U0 - item.U0) < 0.1 * item.Size && Math.Abs(last.V - item.V) < 0.1 * item.Size) continue;
             }
 
-            kept.Add(item);
+            visual[count++] = item;
         }
 
         // A gap wider than a fraction of the font size separates words, as a space glyph does.
-        var gapBefore = new bool[kept.Count];
-        for (int k = 1; k < kept.Count; k++)
+        var gapBefore = new bool[count];
+        for (int k = 1; k < count; k++)
         {
-            double size = (kept[k - 1].Size + kept[k].Size) / 2;
-            gapBefore[k] = kept[k].U0 - kept[k - 1].U1 > WordGap * size;
+            double size = (visual[k - 1].Size + visual[k].Size) / 2;
+            gapBefore[k] = visual[k].U0 - visual[k - 1].U1 > WordGap * size;
         }
 
-        int[] order = LogicalOrder(kept);
-        var words = new List<PdfWord>();
-        var text = new StringBuilder();
-        var members = new List<PdfLetter>();
-        for (int j = 0; j < order.Length; j++)
+        int[]? order = LogicalOrder(visual, count);
+        StringBuilder text = output ?? new StringBuilder();
+        int lineStart = text.Length, wordStart = -1;
+        List<PdfLetter>? members = words is null ? null : [];
+        for (int j = 0; j < count; j++)
         {
-            Item item = kept[order[j]];
+            ref readonly Item item = ref visual[order is null ? j : order[j]];
             if (j > 0)
             {
-                int a = order[j - 1], b = order[j];
+                // Letters next to each other in the visual order and without a gap stay in one word.
+                int a = order is null ? j - 1 : order[j - 1], b = order is null ? j : order[j];
                 if (Math.Abs(a - b) != 1 || gapBefore[Math.Max(a, b)]) Flush();
             }
 
@@ -325,17 +505,22 @@ internal static class TextLayout
                     continue;
                 }
 
+                if (wordStart < 0)
+                {
+                    if (output is not null && text.Length > lineStart) text.Append(' ');
+                    wordStart = text.Length;
+                }
+
                 text.Append(c);
-                if (members.Count == 0 || members[^1] != item.Letter) members.Add(item.Letter);
+                if (members is not null && (members.Count == 0 || members[^1] != item.Letter)) members.Add(item.Letter);
             }
         }
 
         Flush();
-        return words;
 
         void Flush()
         {
-            if (text.Length > 0)
+            if (wordStart >= 0 && words is not null && members is not null)
             {
                 double left = double.MaxValue, bottom = double.MaxValue, right = double.MinValue, top = double.MinValue;
                 foreach (PdfLetter l in members)
@@ -347,10 +532,11 @@ internal static class TextLayout
                 }
 
                 words.Add(new PdfWord(text.ToString(), new PdfRectangle(left, bottom, right, top), [.. members]));
+                text.Clear();
+                members.Clear();
             }
 
-            text.Clear();
-            members.Clear();
+            wordStart = -1;
         }
     }
 
@@ -359,21 +545,18 @@ internal static class TextLayout
     /// rule L2, run backwards). In a right to left paragraph left to right letters sit at level 2, right to left letters at level 1, numbers take
     /// the left to right level, and neutrals take the level around them or the paragraph's. Since
     /// reversing runs is its own inverse, applying L2 to the visual order gives the logical order.
+    /// Null when that is the visual order: a line without right to left letters.
     /// </summary>
-    private static int[] LogicalOrder(List<Item> visual)
+    private static int[]? LogicalOrder(Item[] visual, int n)
     {
-        int n = visual.Count;
+        bool any = false;
+        for (int i = 0; i < n && !any; i++) any = visual[i].Kind == Kind.Right;
+        if (!any) return null;
+
         int[] order = new int[n];
         for (int i = 0; i < n; i++) order[i] = i;
         var types = new Kind[n];
-        bool any = false;
-        for (int i = 0; i < n; i++)
-        {
-            types[i] = Classify(visual[i].Letter.Text);
-            any |= types[i] == Kind.Right;
-        }
-
-        if (!any) return order;
+        for (int i = 0; i < n; i++) types[i] = visual[i].Kind;
 
         // A left to right paragraph starts with a left to right character (rule P2), at the left
         // end; so a line whose leftmost strong character is right to left is a right to left one.
@@ -472,15 +655,21 @@ internal static class TextLayout
     }
 
     /// <summary>A letter in its direction's frame: U along the baseline, V across it, from the bottom up.</summary>
-    private readonly record struct Item(int Index, PdfLetter Letter, double U0, double U1, double V, double Size);
+    private readonly record struct Item(int Index, PdfLetter Letter, double U0, double U1, double V, double Size, Kind Kind);
 
-    /// <summary>A line and the letter that founded it, its largest.</summary>
-    private sealed class Line(Item reference, int id)
+    /// <summary>A line, at the baseline position and size of the letter that founded it, its largest.</summary>
+    private sealed class Line(double v, double size, int id)
     {
-        public Item Reference { get; } = reference;
+        public double V { get; } = v;
+
+        public double Size { get; } = size;
 
         public int Id { get; } = id;
 
-        public List<Item> Items { get; } = [];
+        /// <summary>Letters that joined the line, then letters placed in <see cref="Items"/>.</summary>
+        public int Count { get; set; }
+
+        /// <summary>The letters, once every letter has found its line.</summary>
+        public Item[] Items { get; set; } = [];
     }
 }

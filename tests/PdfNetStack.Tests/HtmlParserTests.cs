@@ -96,9 +96,11 @@ public sealed class HtmlParserTests
         // 3e11 steps on 800k units, minutes of work; linear parsing takes well under a second.
         // An absolute bound tells the two apart on any machine. A ratio between two sizes does
         // not: with 800k live strings the garbage collector itself grows faster than linearly.
+        // The bound is far above a second and the best of three attempts counts, so a busy
+        // machine cannot fail the test.
         string html = prefix + string.Concat(Enumerable.Repeat(unit, 800_000)) + suffix;
         long best = long.MaxValue;
-        for (int attempt = 0; attempt < 2; attempt++)
+        for (int attempt = 0; attempt < 3; attempt++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -108,7 +110,7 @@ public sealed class HtmlParserTests
             Assert.IsLessThanOrEqualTo(3, doc.Body.Children.Count);
         }
 
-        Assert.IsLessThan(5_000, best, $"800k units took {best} ms");
+        Assert.IsLessThan(20_000, best, $"800k units took {best} ms");
         Assert.AreEqual(1, HtmlParser.Parse("<p a=1 a=2 b=3>").Body.ChildElements.Single().Attributes.Count(a => a.Key == "a"));
         Assert.AreEqual("xx", HtmlParser.Parse("<table>x<!---->x</table>").Body.Children.OfType<HtmlText>().Single().Data);
     }

@@ -67,6 +67,20 @@
   with the qualification they claim (`PdfCertificateValidation.Qualification`: QESig, QESeal,
   AdESig-QC and the rest). No trusted list is downloaded. Critical policy, name constraint and
   QC statement extensions no longer fail a certificate as unknown.
+- Text extraction is about 3.8 times faster with identical output: `ExtractText` on a 60 page,
+  27,000 word report in an embedded TrueType font went from 255 ms to 67 ms and from 300 MB to
+  69 MB allocated. Reading order sorts runs of touching letters instead of single letters and
+  decides each line once per size and baseline; the content interpreter no longer copies the text
+  state for every glyph, shares operator names and reads CID widths without a copy per glyph.
+- HTML conversion does less repeated work per line of text: a tab width is measured only for runs
+  that contain a tab, the paragraph text is copied once for all its runs, and a font's OpenType
+  features are read once per script. Output is unchanged.
+- The command line tool is published as native executables, compiled ahead of time, for
+  linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64, attached to each GitHub release with a
+  `SHA256SUMS.txt`. No .NET install is needed to run them.
+- `tools/PdfNetStack.Benchmarks` measures text extraction and HTML conversion with
+  BenchmarkDotNet; it is not part of the solution or the packages.
+- Timing tests take the fastest of several runs, so a busy machine cannot fail them.
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color

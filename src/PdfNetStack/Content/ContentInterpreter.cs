@@ -26,11 +26,17 @@ internal abstract class ContentInterpreter
     /// </summary>
     public const long MaxBytes = 256L << 20;
 
-    private readonly Stack<(PdfMatrix Ctm, TextState Text)> _saved = new();
+    private readonly Stack<(PdfMatrix Ctm, TextState Text, PdfMatrix TextMatrix, PdfMatrix LineMatrix)> _saved = new();
     private readonly HashSet<PdfStream> _activeForms = [];
 
     // Decoded once per form however often it is drawn; null when it cannot be decoded.
     private readonly Dictionary<PdfStream, byte[]?> _forms = [];
+
+    // The one string of Tj, ' and ", passed on without a list for each.
+    private readonly List<PdfObject> _single = [];
+
+    // The text line matrix Tlm: the text matrix at the start of the current line.
+    private PdfMatrix _lineMatrix = PdfMatrix.Identity;
     private long _operations;
     private long _bytes;
     private int _marked;
@@ -45,6 +51,13 @@ internal abstract class ContentInterpreter
 
     /// <summary>The text state (ISO 32000-1, 9.3), current while text is shown.</summary>
     protected TextState Text { get; private set; } = new();
+
+    /// <summary>
+    /// The text matrix Tm (ISO 32000-1, 9.4.2), saved and restored with the graphics state. Kept
+    /// apart from <see cref="Text"/>, which every glyph would otherwise copy.
+    /// </summary>
+    protected PdfMatrix TextMatrix { get; private set; } = PdfMatrix.Identity;
+
 
     /// <summary>Walks a page's content streams, in order, with the page's resources.</summary>
     public void Run(PdfPage page)
@@ -136,11 +149,11 @@ internal abstract class ContentInterpreter
             switch (op.Operator)
             {
                 case "q":
-                    if (_saved.Count < MaxStateDepth) _saved.Push((Ctm, Text));
+                    if (_saved.Count < MaxStateDepth) _saved.Push((Ctm, Text, TextMatrix, _lineMatrix));
                     break;
                 case "Q":
                     // A stream cannot restore state saved outside it (ISO 32000-1, 7.8.2).
-                    if (_saved.Count > baseDepth) (Ctm, Text) = _saved.Pop();
+                    if (_saved.Count > baseDepth) (Ctm, Text, TextMatrix, _lineMatrix) = _saved.Pop();
                     break;
                 case "cm" when Numbers(o, 6) is { } m:
                     Ctm = PdfMatrix.Multiply(new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]), Ctm);
@@ -174,7 +187,7 @@ internal abstract class ContentInterpreter
         }
 
         // Unbalanced q and marked content inside a form or page are closed at its end.
-        while (_saved.Count > baseDepth) (Ctm, Text) = _saved.Pop();
+        while (_saved.Count > baseDepth) (Ctm, Text, TextMatrix, _lineMatrix) = _saved.Pop();
         while (_marked > markedDepth) EndMarked();
         if (depth == 0) _markedOverflow = 0;
     }
@@ -211,6 +224,7 @@ internal abstract class ContentInterpreter
                 {
                     PdfMatrix saved = Ctm;
                     TextState text = Text;
+                    PdfMatrix textMatrix = TextMatrix, lineMatrix = _lineMatrix;
                     if (Numbers(Document.Resolve(xobject.Dictionary["Matrix"]) as PdfArray, 6) is { } m)
                     {
                         Ctm = PdfMatrix.Multiply(new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]), Ctm);
@@ -222,6 +236,8 @@ internal abstract class ContentInterpreter
                     if (data is not null) Execute(data, own ?? resources, depth + 1);
                     Ctm = saved;
                     Text = text;
+                    TextMatrix = textMatrix;
+                    _lineMatrix = lineMatrix;
                 }
                 finally
                 {
@@ -238,7 +254,7 @@ internal abstract class ContentInterpreter
         switch (op)
         {
             case "BT":
-                Text = Text with { Matrix = PdfMatrix.Identity, LineMatrix = PdfMatrix.Identity };
+                TextMatrix = _lineMatrix = PdfMatrix.Identity;
                 break;
             case "Tc" when Number(o, 1) is double tc:
                 Text = Text with { CharacterSpacing = tc };
@@ -271,38 +287,41 @@ internal abstract class ContentInterpreter
                 break;
             case "Tm" when Numbers(o, 6) is { } m:
                 var matrix = new PdfMatrix(m[0], m[1], m[2], m[3], m[4], m[5]);
-                Text = Text with { Matrix = matrix, LineMatrix = matrix };
+                TextMatrix = _lineMatrix = matrix;
                 break;
             case "T*":
                 NextLine(0, -Text.Leading);
                 break;
             case "Tj" when o.Count > 0 && o[^1] is PdfString:
-                OnShowText([o[^1]], resources);
+                ShowOne(o[^1], resources);
                 break;
             case "'" when o.Count > 0 && o[^1] is PdfString:
                 NextLine(0, -Text.Leading);
-                OnShowText([o[^1]], resources);
+                ShowOne(o[^1], resources);
                 break;
             case "\"" when o.Count >= 3 && o[^1] is PdfString && Number(o, 3) is double aw && Number(o, 2) is double ac:
                 Text = Text with { WordSpacing = aw, CharacterSpacing = ac };
                 NextLine(0, -Text.Leading);
-                OnShowText([o[^1]], resources);
+                ShowOne(o[^1], resources);
                 break;
             case "TJ" when o.Count > 0 && o[^1] is PdfArray items:
-                OnShowText([.. items], resources);
+                // The array's own list: handlers only read it.
+                OnShowText(items.Items, resources);
                 break;
         }
     }
 
-    private void NextLine(double tx, double ty)
+    private void ShowOne(PdfObject text, PdfDictionary? resources)
     {
-        PdfMatrix line = PdfMatrix.Multiply(PdfMatrix.CreateTranslation(tx, ty), Text.LineMatrix);
-        Text = Text with { Matrix = line, LineMatrix = line };
+        _single.Clear();
+        _single.Add(text);
+        OnShowText(_single, resources);
     }
 
+    private void NextLine(double tx, double ty) => TextMatrix = _lineMatrix = PdfMatrix.Multiply(PdfMatrix.CreateTranslation(tx, ty), _lineMatrix);
+
     /// <summary>Moves the text matrix after a glyph or adjustment, in unscaled text space units.</summary>
-    protected void AdvanceText(double tx, double ty) =>
-        Text = Text with { Matrix = PdfMatrix.Multiply(PdfMatrix.CreateTranslation(tx, ty), Text.Matrix) };
+    protected void AdvanceText(double tx, double ty) => TextMatrix = PdfMatrix.Multiply(PdfMatrix.CreateTranslation(tx, ty), TextMatrix);
 
     /// <summary>
     /// The operand <paramref name="fromEnd"/> places from the end (1 is the last) as a finite
@@ -332,7 +351,7 @@ internal abstract class ContentInterpreter
     }
 }
 
-/// <summary>The text state parameters (ISO 32000-1, 9.3) with the text and line matrices.</summary>
+/// <summary>The text state parameters (ISO 32000-1, 9.3).</summary>
 internal sealed record TextState
 {
     public double CharacterSpacing { get; init; }
@@ -351,8 +370,4 @@ internal sealed record TextState
     public string? FontName { get; init; }
 
     public double FontSize { get; init; }
-
-    public PdfMatrix Matrix { get; init; } = PdfMatrix.Identity;
-
-    public PdfMatrix LineMatrix { get; init; } = PdfMatrix.Identity;
 }

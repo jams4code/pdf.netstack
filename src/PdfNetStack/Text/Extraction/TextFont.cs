@@ -147,7 +147,7 @@ internal sealed class TextFont
     public double Width(uint code)
     {
         if (!IsComposite) return _widths![code & 0xFF];
-        return Cid(code) is int cid && _w?.Find(cid) is double[] w ? w[0] : _dw;
+        return Cid(code) is int cid && _w?.First(cid) is double w ? w : _dw;
     }
 
     /// <summary>Vertical metrics (ISO 32000-1, 9.7.4.3): the advance w1 (negative, down) and the position vector.</summary>
@@ -646,6 +646,18 @@ internal sealed class TextFont
         /// <summary>The numbers for a CID, or null.</summary>
         public double[]? Find(int cid)
         {
+            if (Locate(cid) is not (double[] values, int offset)) return null;
+            var result = new double[_stride];
+            Array.Copy(values, offset, result, 0, _stride);
+            return result;
+        }
+
+        /// <summary>The first number for a CID, or null: <see cref="Find"/> without a copy, for every glyph's width.</summary>
+        public double? First(int cid) => Locate(cid) is (double[] values, int offset) ? values[offset] : null;
+
+        /// <summary>The run holding a CID's numbers and where they start in it, or null.</summary>
+        private (double[] Values, int Offset)? Locate(int cid)
+        {
             int lo = 0, hi = _runs.Count - 1, at = -1;
             while (lo <= hi)
             {
@@ -665,10 +677,7 @@ internal sealed class TextFont
             {
                 (int first, int last, double[] values, bool repeat) = _runs[i];
                 if (cid > last) continue;
-                if (repeat) return values;
-                var result = new double[_stride];
-                Array.Copy(values, (cid - first) * _stride, result, 0, _stride);
-                return result;
+                return (values, repeat ? 0 : (cid - first) * _stride);
             }
 
             return null;

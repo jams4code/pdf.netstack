@@ -330,6 +330,9 @@ internal sealed class InlineLayout
         int n = _text.Length;
         int[] script = ResolveScripts();
         _itemAt = new int[n];
+
+        // Every item shapes a range of the same text: one copy of it serves them all.
+        string shaping = new(_shaping);
         int start = 0;
         for (int i = 1; i <= n; i++)
         {
@@ -340,7 +343,7 @@ internal sealed class InlineLayout
                 || _startEdge[i] != 0 || _endEdge[i - 1] != 0 || _span[i] != _span[start];
             if (!split) continue;
             var item = new Item(start, i, _style[start], _font[start], _level[start]);
-            if (!IsAtomic(start) && _text[start] != '\n') item.Glyphs = Shape(item, script[start]);
+            if (!IsAtomic(start) && _text[start] != '\n') item.Glyphs = Shape(item, script[start], shaping);
             for (int k = start; k < i; k++) _itemAt[k] = _items.Count;
             _items.Add(item);
             start = i;
@@ -363,21 +366,24 @@ internal sealed class InlineLayout
         return script;
     }
 
-    private List<ShapedGlyph> Shape(Item item, int script)
+    private List<ShapedGlyph> Shape(Item item, int script, string shaping)
     {
         double size = item.Style.FontSize;
-        List<ShapedGlyph> glyphs = item.Font.ShapeRun(new string(_shaping), item.Start, item.End, item.Level % 2 == 1, UnicodeData.ScriptTags[script]);
+        List<ShapedGlyph> glyphs = item.Font.ShapeRun(shaping, item.Start, item.End, item.Level % 2 == 1, UnicodeData.ScriptTags[script]);
         double toUnits = size > 0 ? 1000 / size : 0;
         double letter = Spacing(item.Style, "letter-spacing") * toUnits;
         double word = Spacing(item.Style, "word-spacing") * toUnits;
-        double tabSize = item.Style.Length("tab-size") is double tabLength && item.Style["tab-size"][0].Token.Type == CssTokenType.Dimension
+
+        // Measured only for a run with a tab, since it shapes a space.
+        double TabSize() => item.Style.Length("tab-size") is double tabLength && item.Style["tab-size"][0].Token.Type == CssTokenType.Dimension
             ? tabLength * toUnits
             : item.Style.Number("tab-size") * (item.Font.HasGlyph(' ') ? item.Font.MeasureString(" ", 1000) : 250);
+        double? tabSize = null;
         for (int g = 0; g < glyphs.Count; g++)
         {
             ShapedGlyph glyph = glyphs[g];
             char c = _text[glyph.Cluster];
-            double advance = c == '\t' ? tabSize : glyph.Advance;
+            double advance = c == '\t' ? tabSize ??= TabSize() : glyph.Advance;
             if (c is ' ' or (char)0x00A0) advance += word;
             bool lastOfCluster = g + 1 == glyphs.Count || glyphs[g + 1].Cluster != glyph.Cluster;
             if (lastOfCluster && letter != 0) advance += letter;

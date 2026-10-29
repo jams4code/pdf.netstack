@@ -218,10 +218,18 @@ internal static class CssProperties
 
     public static bool IsWideKeyword(List<CssValue> value, out string keyword)
     {
+        // Asked for every property of every element: the one value besides white space, found without a list.
         keyword = "";
-        List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
-        if (items.Count != 1 || !items[0].IsToken || items[0].Token.Type != CssTokenType.Ident || !WideKeywords.Contains(items[0].Token.Value)) return false;
-        keyword = items[0].Token.Value.ToLowerInvariant();
+        CssValue? single = null;
+        foreach (CssValue v in value)
+        {
+            if (v.IsWhitespace) continue;
+            if (single is not null) return false;
+            single = v;
+        }
+
+        if (single is null || !single.IsToken || single.Token.Type != CssTokenType.Ident || !WideKeywords.Contains(single.Token.Value)) return false;
+        keyword = single.Token.Value.ToLowerInvariant();
         return true;
     }
 

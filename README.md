@@ -80,6 +80,11 @@ dotnet tool install -g PdfNetStack.Tool   # command line: pdfnetstack
 dotnet add package PdfNetStack.Html       # HTML and CSS to PDF
 ```
 
+The command line tool also comes as a single native executable, with no .NET install needed:
+each [GitHub release](https://github.com/jams4code/pdf.netstack/releases) carries
+`pdfnetstack-<version>-<platform>` for linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64,
+compiled ahead of time, with their SHA-256 checksums in `SHA256SUMS.txt`.
+
 ## Usage
 
 ### Library

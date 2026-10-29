@@ -105,22 +105,31 @@ public sealed class HostileInputTests
     [DoNotParallelize] // timing: other tests' allocations would land in the measurement
     public void ManyUnterminatedObjectsReconstructInLinearTime()
     {
-        // Compare scaling, not wall time, so a busy machine cannot fail the test: four times the
-        // input should take about four times as long, where quadratic work would take sixteen.
-        static long Run(int size)
+        // Compare scaling, not wall time: eight times the input should take about eight times as
+        // long, where quadratic work would take sixty four. Each size keeps its fastest of three
+        // interleaved runs, so a pause or a burst of other work on a busy machine lands in a run
+        // that does not count. Both sizes take long enough for the clock to resolve them.
+        static double Run(int size)
         {
             var sb = new StringBuilder("%PDF-1.4\n");
             for (int k = 1; sb.Length < size; k++) sb.Append(k).Append(" 0 obj (\n");
             byte[] input = Compat.Latin1.GetBytes(sb.ToString());
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             var clock = Stopwatch.StartNew();
             AssertSafe(input, PdfOptimizer.Optimize(input, Permissive));
-            return Math.Max(1, clock.ElapsedMilliseconds);
+            return Math.Max(1, clock.Elapsed.TotalMilliseconds);
         }
 
-        Run(150_000);
-        long small = Run(150_000);
-        long large = Run(600_000);
-        Assert.IsLessThan(10.0, (double)large / small, $"150 KB took {small} ms, 600 KB took {large} ms");
+        Run(100_000);
+        double small = double.MaxValue, large = double.MaxValue;
+        for (int round = 0; round < 3; round++)
+        {
+            small = Math.Min(small, Run(100_000));
+            large = Math.Min(large, Run(800_000));
+        }
+
+        Assert.IsLessThan(32.0, large / small, $"100 KB took {small:F0} ms, 800 KB took {large:F0} ms");
         Assert.IsLessThan(60_000, large);
     }
 

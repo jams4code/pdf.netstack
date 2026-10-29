@@ -53,19 +53,34 @@ internal sealed partial class Painter
     /// <summary>The corner radii of a border box, scaled down where adjacent radii would overlap (CSS Backgrounds 3, 5.5).</summary>
     internal static PdfCornerRadii Radii(ComputedStyle s, double w, double h)
     {
-        (double X, double Y) Corner(string corner)
+        // Every painted box asks: the first two values besides white space, found without a list.
+        (double X, double Y) Corner(string property)
         {
-            List<CssValue> v = s["border-" + corner + "-radius"].Where(x => !x.IsWhitespace).ToList();
-            if (v.Count == 0) return (0, 0);
-            double rx = Math.Max(0, Px(v[0], w) ?? 0);
-            double ry = Math.Max(0, Px(v.Count > 1 ? v[1] : v[0], h) ?? 0);
+            CssValue? first = null, second = null;
+            foreach (CssValue x in s[property])
+            {
+                if (x.IsWhitespace) continue;
+                if (first is null)
+                {
+                    first = x;
+                }
+                else
+                {
+                    second = x;
+                    break;
+                }
+            }
+
+            if (first is null) return (0, 0);
+            double rx = Math.Max(0, Px(first, w) ?? 0);
+            double ry = Math.Max(0, Px(second ?? first, h) ?? 0);
             return rx > 0 && ry > 0 ? (rx, ry) : (0, 0);
         }
 
-        (double tlx, double tly) = Corner("top-left");
-        (double trx, double try_) = Corner("top-right");
-        (double brx, double bry) = Corner("bottom-right");
-        (double blx, double bly) = Corner("bottom-left");
+        (double tlx, double tly) = Corner("border-top-left-radius");
+        (double trx, double try_) = Corner("border-top-right-radius");
+        (double brx, double bry) = Corner("border-bottom-right-radius");
+        (double blx, double bly) = Corner("border-bottom-left-radius");
         double f = 1;
         if (tlx + trx > w) f = Math.Min(f, w / (tlx + trx));
         if (blx + brx > w) f = Math.Min(f, w / (blx + brx));

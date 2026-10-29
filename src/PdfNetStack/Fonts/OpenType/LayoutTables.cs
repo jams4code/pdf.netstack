@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using static PdfNetStack.Fonts.OpenType.FontData;
 
 namespace PdfNetStack.Fonts.OpenType;
@@ -26,6 +27,10 @@ internal sealed class LayoutTable
     private readonly Lookup?[] _cache;
     private readonly int _extensionType;
     private readonly Dictionary<int, int> _substitutions = [];
+
+    // Features per list of script tags: every run a font shapes asks again. Fonts are shared
+    // between threads.
+    private readonly ConcurrentDictionary<string, (List<(string Tag, int[] Lookups)> Features, string? Chosen)> _featureCache = new(StringComparer.Ordinal);
 
     private LayoutTable(OpenTypeFile font, string tag)
     {
@@ -121,9 +126,23 @@ internal sealed class LayoutTable
     /// <summary>
     /// The features of the default language system of the first of <paramref name="scripts"/> the
     /// table has, else of DFLT, dflt or latn. <paramref name="chosen"/> is the script tag used, or
-    /// null when there is none.
+    /// null when there is none. The list is shared by every caller asking for the same scripts:
+    /// read it, never change it.
     /// </summary>
     public List<(string Tag, int[] Lookups)> Features(IReadOnlyList<string> scripts, out string? chosen)
+    {
+        string key = string.Join(" ", scripts);
+        if (!_featureCache.TryGetValue(key, out var cached))
+        {
+            List<(string Tag, int[] Lookups)> read = ReadFeatures(scripts, out string? found);
+            cached = _featureCache.GetOrAdd(key, (read, found));
+        }
+
+        chosen = cached.Chosen;
+        return cached.Features;
+    }
+
+    private List<(string Tag, int[] Lookups)> ReadFeatures(IReadOnlyList<string> scripts, out string? chosen)
     {
         var result = new List<(string, int[])>();
         ReadOnlySpan<byte> d = _data;

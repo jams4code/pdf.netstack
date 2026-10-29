@@ -38,6 +38,13 @@ internal sealed class ContentReader
         ["RL"] = "RunLengthDecode", ["CCF"] = "CCITTFaxDecode", ["DCT"] = "DCTDecode",
     };
 
+    // The operators of ISO 32000-1, Table A.1, keyed by their bytes: each read shares one string.
+    private static readonly Dictionary<int, string> Operators = OperatorTable(
+        "b", "B", "b*", "B*", "BDC", "BI", "BMC", "BT", "BX", "c", "cm", "CS", "cs", "d", "d0", "d1", "Do", "DP", "EI", "EMC",
+        "ET", "EX", "f", "F", "f*", "G", "g", "gs", "h", "i", "ID", "j", "J", "K", "k", "l", "m", "M", "MP", "n", "q", "Q", "re",
+        "RG", "rg", "ri", "s", "S", "SC", "sc", "SCN", "scn", "sh", "T*", "Tc", "Td", "TD", "Tf", "Tj", "TJ", "TL", "Tm", "Tr",
+        "Ts", "Tw", "Tz", "v", "w", "W", "W*", "y", "'", "\"");
+
     private readonly PdfParser _parser;
     private readonly ReadOnlyMemory<byte> _data;
 
@@ -80,7 +87,7 @@ internal sealed class ContentReader
                 }
 
                 if (k.Length == 1 && k[0] is (byte)')' or (byte)'{' or (byte)'}') continue;
-                op.Operator = Compat.Latin1.GetString(k);
+                op.Operator = OperatorName(k);
                 if (op.Operator == "BI") ReadInlineImage(op);
                 return true;
             }
@@ -96,6 +103,25 @@ internal sealed class ContentReader
                 _parser.Position = Math.Max(t.End, start + 1);
             }
         }
+    }
+
+    private static string OperatorName(ReadOnlySpan<byte> keyword) =>
+        OperatorKey(keyword) is int key && Operators.TryGetValue(key, out string? name) ? name : Compat.Latin1.GetString(keyword);
+
+    /// <summary>Up to three bytes and the length in one number; null for longer keywords.</summary>
+    private static int? OperatorKey(ReadOnlySpan<byte> keyword)
+    {
+        if (keyword.Length is 0 or > 3) return null;
+        int key = keyword.Length;
+        foreach (byte b in keyword) key = (key << 8) | b;
+        return key;
+    }
+
+    private static Dictionary<int, string> OperatorTable(params string[] names)
+    {
+        var table = new Dictionary<int, string>();
+        foreach (string name in names) table[OperatorKey(Compat.Latin1.GetBytes(name))!.Value] = name;
+        return table;
     }
 
     private static void AddOperand(ContentOperation op, PdfObject value)

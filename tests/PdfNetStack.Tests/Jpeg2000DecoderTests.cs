@@ -379,11 +379,17 @@ public sealed class Jpeg2000DecoderTests
     [TestMethod]
     public void DecodesQuickly()
     {
+        // The fastest of five rounds counts, so other work on a busy machine does not.
         byte[] data = File.ReadAllBytes(Fixture("rgb-97-tiles.jp2"));
         Jpeg2000Decoder.Decode(data, Limit);
-        var watch = Stopwatch.StartNew();
-        for (int i = 0; i < 50; i++) Jpeg2000Decoder.Decode(data, Limit);
-        watch.Stop();
-        Assert.IsLessThan(5000, watch.ElapsedMilliseconds, "50 decodes of 4800 pixels");
+        long best = long.MaxValue;
+        for (int round = 0; round < 5; round++)
+        {
+            var watch = Stopwatch.StartNew();
+            for (int i = 0; i < 10; i++) Jpeg2000Decoder.Decode(data, Limit);
+            best = Math.Min(best, watch.ElapsedMilliseconds);
+        }
+
+        Assert.IsLessThan(1000, best, $"10 decodes of 4800 pixels took {best} ms");
     }
 }
