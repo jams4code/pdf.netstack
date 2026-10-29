@@ -1,6 +1,6 @@
 #:project ../../src/PdfNetStack/PdfNetStack.csproj
 // since: 1.1
-// preview: fonts fonts.pdf 0.35
+// preview: fonts fonts.pdf 0.6
 using PdfNetStack;
 using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
@@ -45,9 +45,9 @@ PdfTextLayout layout = g.DrawText(paragraph, 40, 130, 300);   // top left corner
 #endregion
 
 #region rtl
-var arabicStyle = new PdfTextStyle(arabic, 16) { Fallbacks = [inter] };   // the full stop comes from Inter
+var arabicStyle = new PdfTextStyle(arabic, 16) { Fallbacks = [inter] };   // digits and € come from Inter
 var rtl = new PdfParagraph { Direction = PdfTextDirection.RightToLeft }
-    .Add("مرحبا بالعالم، هذا نص عربي يقرأ من اليمين إلى اليسار.", arabicStyle);
+    .Add("هذا نص عربي يقرأ من اليمين إلى اليسار. المبلغ المستحق: 1,250.00 €", arabicStyle);
 g.DrawText(rtl, 40, 140 + layout.Height + 20, 300);          // start aligned: on the right
 #endregion
 

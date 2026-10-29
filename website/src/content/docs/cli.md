@@ -50,12 +50,14 @@ pdfnetstack optimize <input.pdf> <output.pdf> [options]
 pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
 pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
 pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
+pdfnetstack optimize in.pdf out.pdf --linearize         # fast web view
 pdfnetstack optimize in.pdf out.pdf --json              # the full result as JSON
 ```
 
-The lossy image options (`--max-dpi`, `--to-jpeg`, `--min-ssim`) and `--progressive` and
-`--exhaustive` are in the main branch and ship with 1.1; the 1.0.0 tool on NuGet does not have
-them. The reason line names every lossy change.
+The lossy image options (`--max-dpi`, `--to-jpeg`, `--min-ssim`), `--progressive`,
+`--exhaustive`, `--linearize` and the structural passes with their `--no-prune`, `--no-compact`
+and `--no-font-merge` switches are in the main branch and ship with 1.1; the 1.0.0 tool on NuGet
+does not have them. The reason line names every lossy change.
 
 Prints the disposition, the sizes, the saving and the time, the reason, and for an optimized file
 the object counts and the time per phase. The output file is always written: the verified
@@ -187,6 +189,10 @@ Optimizer options apply to `optimize`, `batch` and, where they make sense, to `v
 | `--exhaustive` | 1.1. Exhaustive Flate search for archival jobs: a few percent smaller, many times slower | `Compression = Exhaustive` |
 | `--no-object-streams` | Classic xref table, no object streams | `UseObjectStreams = false` |
 | `--no-dedup` | Do not merge identical objects | `DeduplicateObjects = false` |
+| `--no-prune` | 1.1. Keep resources no content uses | `PruneUnusedResources = false` |
+| `--no-compact` | 1.1. Do not rewrite content streams compactly | `CompactContentStreams = false` |
+| `--no-font-merge` | 1.1. Do not merge subsets of one TrueType font | `MergeFontSubsets = false` |
+| `--linearize` | 1.1. Write a linearized file (fast web view) | `Linearize` |
 | `--no-recompress` | Do not re-encode streams | `RecompressStreams = false` |
 | `--no-image-predictors` | Do not try PNG prediction on raw images | `UseImagePredictors = false` |
 | `--no-jpeg` | Do not re-encode JPEG images | `OptimizeJpegImages = false` |
@@ -235,12 +241,13 @@ is refused by the [safety model](/concepts/safety-model/), is a success: the out
 - Lossy options handle 8 bit gray, RGB and CMYK images, raw or JPEG; `--to-jpeg` needs
   `--jpeg-quality`. JPEG 2000, JBIG2, CCITT, 16 bit, indexed, Lab, Separation and DeviceN images
   keep their resolution.
-- Each document is held in memory while it is processed. For large image heavy files, lower
+- The optimizer holds each document in memory while it processes it. For large image heavy files, lower
   `--threads` or `--jobs`, see [Memory and performance](/concepts/memory-and-performance/).
 
 ## Related
 
 - [Compress PDF](/guides/compress-pdf/): the optimizer from C#
+- [Linearize a PDF for fast web view](/recipes/linearize-pdf/)
 - [Edit pages](/guides/edit-pages/): merge, split and extract from C#
 - [Benchmarks](/benchmarks/): how `batch` reports were used to measure a corpus
 - API: [PdfOptimizer](/api/pdfnetstack/pdfoptimizer/), [PdfOptimizerOptions](/api/pdfnetstack/pdfoptimizeroptions/), [PdfInspector](/api/pdfnetstack/pdfinspector/), [PdfEquivalence](/api/pdfnetstack/pdfequivalence/)

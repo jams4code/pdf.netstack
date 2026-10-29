@@ -6,14 +6,15 @@ using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 
 PdfFont arabic = PdfOpenTypeFont.Load("fonts/NotoSansArabic-Regular.woff2");   // embedded as a subset
-var style = new PdfTextStyle(arabic, 20);
+PdfFont latin = PdfOpenTypeFont.Load("fonts/Inter-Regular.woff2");
+var style = new PdfTextStyle(arabic, 20) { Fallbacks = [latin] };               // digits and the euro sign
 
 PdfDocument doc = PdfDocument.Create();
 PdfPage page = doc.Pages.Add(PdfRectangle.A4);
 using (PdfGraphics g = page.CreateGraphics())
 {
     var paragraph = new PdfParagraph { Direction = PdfTextDirection.RightToLeft, LineHeight = 1.6 }
-        .Add("يستحق المبلغ خلال ثلاثين يوما من تاريخ الفاتورة", style);
+        .Add("المبلغ المستحق: 1,250.00 € خلال ثلاثين يوما من تاريخ الفاتورة.", style);
     g.DrawText(paragraph, 60, 60, page.Width - 120);   // top left corner and width
 }
 doc.Save("arabic.pdf");

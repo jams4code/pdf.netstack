@@ -65,6 +65,7 @@ export default defineConfig({
           items: [
             'guides/compress-pdf',
             'guides/edit-pages',
+            'guides/large-files',
             'guides/drawing',
             'guides/fonts-and-text',
             'guides/images',

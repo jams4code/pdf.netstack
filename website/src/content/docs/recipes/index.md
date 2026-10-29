@@ -27,6 +27,7 @@ depth.
 |---|---|
 | [Reduce PDF size for email](/recipes/reduce-pdf-size/) | Downsample oversized images and store photographs as JPEG |
 | [Downsample images in a PDF](/recipes/downsample-pdf-images/) | Bring every image down to the resolution it is shown at |
+| [Linearize a PDF for fast web view](/recipes/linearize-pdf/) | Show the first page before the whole file has downloaded |
 | [Batch compress PDFs from the command line](/recipes/batch-compress-pdf-cli/) | A whole folder with `pdfnetstack batch` and a CSV report |
 | [Check two PDFs for equivalence](/recipes/check-pdf-equivalence/) | Prove another tool's output holds the same document |
 

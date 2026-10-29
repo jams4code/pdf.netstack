@@ -70,7 +70,7 @@ Read each license yourself, or ask your counsel, before you decide. This page is
 | Image downsampling | 1.1, opt-in (`MaxImageDpi`) | Yes, with presets | No |
 | JPEG | Lossless re-encoding; opt-in requantization; 1.1: opt-in conversion of raw photographs | Not listed | Not listed |
 | Equivalence check of the output | Yes, on every rewrite | Not listed | Not listed |
-| Linearized output | No | Not listed | Yes |
+| Linearized output | 1.1, opt-in (`Linearize`) | Not listed | Yes |
 | Encryption | AES-256 and AES-128 | Not listed | Yes |
 | Split and merge | Yes | Not listed | Split pages into files |
 | PDF/A output | 1.1: PDF/A-2b, 2u, 3b, 3u | PDF/A-1, 2 and 3, level b | Not listed |
@@ -92,7 +92,8 @@ Sources: [Ghostscript site](https://www.ghostscript.com/),
 
 ## When to pick qpdf
 
-- You need linearized (fast web view) output, which PdfNetStack does not produce.
+- You need linearized (fast web view) output from a released package today, or qpdf's checks of
+  existing linearized files.
 - You want a structural tool from a shell script or a C++ program, outside .NET.
 
 ## When to pick PdfNetStack

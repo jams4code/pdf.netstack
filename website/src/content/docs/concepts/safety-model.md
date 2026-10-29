@@ -67,6 +67,14 @@ coefficient. Encoding keys (`/Length`, `/Filter`, `/DecodeParms`, `/DL`) are the
 differences it accepts. With `JpegQuality` set, a JPEG image may also differ by exactly the
 requantization the optimizer applied, and by nothing else.
 
+The structural passes of 1.1 change more than encoding, and none is taken on trust. The verifier
+runs its own analysis of the source: a resource entry may be missing only where no content can
+name it, a rewritten content stream must read as the same tokens, a merged font program must
+keep every glyph shown with the same outline and metrics, and streams may merge when they decode
+to the same bytes. Anything the analysis cannot read for certain keeps its resources, and when
+its work budget runs out nothing is pruned. The [fidelity](/concepts/fidelity/) page gives every
+rule.
+
 The lossy image options of 1.1 (`MaxImageDpi`, `ConvertImagesToJpeg`) change pixels, so their proof
 is a bound rather than an identity, and only for the images the optimizer changed. A changed image
 must keep its components and aspect, must not grow, and is decoded and compared with the source

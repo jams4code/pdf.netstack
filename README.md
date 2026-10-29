@@ -692,7 +692,8 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
   options were measured on synthetic files (`tools/make_lossy_corpus.py`), not on a real corpus.
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
-- Font subsetting, unused resource pruning and content stream rewriting are not done.
+- The optimizer does not subset fonts; it merges subsets of one font only when they keep the
+  original glyph ids.
 - Image extraction decodes raw samples, JPEGs, JPEG 2000, CCITT fax and JBIG2. Soft masks
   (including JPEG 2000 SMaskInData alpha) are not applied, JPEG 2000 ICC profiles count only for
   their number of components, HTJ2K (JPEG 2000 part 15) is not supported, and Separation and
@@ -710,10 +711,11 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
   before the process starts for the runtime to send nothing at all. On .NET Framework the app must
   run 64 bit and reference `Microsoft.ML.OnnxRuntime` itself, so its native runtime is copied next
   to the app.
-- Linearized (fast web view) output is not produced; linearization is dropped.
-- The whole document is held in memory. Peak memory depends on decoded image sizes and on
-  parallelism: plan for about 10 times the file size, more for image heavy files, or lower
-  `MaxDegreeOfParallelism`.
+- Linearization is opt-in (`Linearize`); without it, the linearization of an input is dropped.
+- The optimizer and full saves hold the whole document in memory. Peak memory depends on decoded
+  image sizes and on parallelism: plan for about 10 times the file size, more for image heavy
+  files, or lower `MaxDegreeOfParallelism`. To read or edit a large file without loading it, use
+  `PdfDocument.OpenOnDemand` and `SaveIncremental`.
 
 ## Documentation
 

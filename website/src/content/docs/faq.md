@@ -17,7 +17,7 @@ faq:
   - q: How much smaller do files get?
     a: On a mixed corpus of 1,296 real world files, the 1,003 files that were optimized went from 568.9 MiB to 469.0 MiB, 17.6% saved, with zero differing pixels at 150 DPI. Image heavy files often gain 20 to 40%. Files from producers that already use object streams gain little.
   - q: What happens with encrypted or signed PDFs?
-    a: The optimizer returns them byte for byte, because rewriting would break the encryption or the signatures. The editing API opens encrypted files with a password and keeps their protection on save. Editing a signed document invalidates its signatures.
+    a: The optimizer returns them byte for byte, because rewriting would break the encryption or the signatures. The editing API opens encrypted files with a password and keeps their protection on save. Saving a signed document in full invalidates its signatures; from version 1.1, SaveIncremental appends the changes after the signed bytes and keeps them valid.
   - q: Can PdfNetStack render PDF pages to images?
     a: No. Rendering pages to images is out of scope for the project. It extracts the images a page contains, and the text, but it does not rasterize pages.
   - q: Is the HTML to PDF converter a headless browser?
@@ -31,7 +31,9 @@ faq:
   - q: Can it make scanned PDFs searchable?
     a: Yes, with the PdfNetStack.Ocr add-on, for Latin and Arabic script. It is in the repository and is not on NuGet yet. The core library also has DrawInvisibleText to lay the words of any OCR engine over a scan.
   - q: How much memory does it use?
-    a: The whole document is held in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism to cap memory.
+    a: The optimizer holds the whole document in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism to cap memory. From version 1.1, PdfDocument.OpenOnDemand reads and edits a file of any size page by page without loading it, and SaveIncremental appends only the changes.
+  - q: Can it write linearized PDFs for fast web view?
+    a: Yes, from version 1.1, with Linearize in PdfOptimizerOptions or pdfnetstack optimize --linearize. The output follows ISO 32000-1 Annex F with hint tables and is verified like any other rewrite.
   - q: Is it safe to run on files from untrusted sources?
     a: That is a design goal. Nesting depth, decoded stream sizes, image sizes and loops in the file structure are bounded, and damaged input raises PdfFormatException instead of crashing or hanging. The HTML converter fetches nothing from the network unless you give it a resource loader.
   - q: Which version should I use today?

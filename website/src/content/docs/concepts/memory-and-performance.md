@@ -5,7 +5,7 @@ sidebar:
   label: Memory and performance
 faq:
   - q: How much memory does PdfNetStack need to optimize a PDF?
-    a: The whole document is held in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism.
+    a: The optimizer holds the whole document in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism. To read or edit a large file without loading it, open it with PdfDocument.OpenOnDemand (1.1).
   - q: Is PdfNetStack compatible with Native AOT and trimming?
     a: Yes, on .NET 8 and later. The core and HTML libraries are marked AOT compatible, and CI publishes the command line tool with Native AOT and fails on any trim or AOT warning.
 ---
@@ -14,8 +14,9 @@ What PdfNetStack costs in memory and time, and the settings that change it.
 
 ## Short answer
 
-A document is read whole into memory and processed there. Plan for about 10 times the file size,
-more for image heavy files. `MaxDegreeOfParallelism` is the main lever on peak memory, and
+The optimizer reads a document whole into memory and processes it there. Plan for about 10 times
+the file size, more for image heavy files. From 1.1, `PdfDocument.OpenOnDemand` reads and edits a
+file of any size page by page, without loading it. `MaxDegreeOfParallelism` is the main lever on peak memory, and
 `Compression` is the main lever on time.
 
 ## Memory
@@ -33,7 +34,10 @@ worked on at once.
 
 `PdfDocument.Open(ReadOnlyMemory<byte>)` references the buffer you pass instead of copying it, so
 the buffer must not change while the document is in use. The stream and file overloads read the
-input into memory first.
+input into memory first. `PdfDocument.OpenOnDemand` (1.1) reads only the cross-reference data and
+the page tree, parses other objects when first used and reads stream data each time it is needed,
+so memory follows what your code touches; `SaveIncremental` then appends only the changes. See
+[Large files](/guides/large-files/).
 
 A measured example from the README: a 631 page catalogue of 72.6 MiB, already Flate compressed,
 took about 5 seconds with all cores and peaked at a working set of about 690 MB.
@@ -79,9 +83,10 @@ world corpus pass on .NET Framework 4.8. On .NET 9 and later, `System.IO.Compres
 
 ## Limits
 
-- Files larger than memory are not supported. A streaming parse is on the
-  [roadmap](/roadmap/).
-- Linearized (fast web view) output is not produced; linearization is dropped.
+- The optimizer, `ToArray` and a full `Save` need the whole document in memory. An optimizer that
+  streams its output, for files larger than memory, is on the [roadmap](/roadmap/).
+- Linearized output (`Linearize`, 1.1) writes every object on its own, without object streams,
+  so it can be larger than the default output.
 - Faster text extraction and HTML layout are roadmap items.
 
 ## Related

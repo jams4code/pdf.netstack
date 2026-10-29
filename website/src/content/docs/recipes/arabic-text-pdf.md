@@ -6,7 +6,7 @@ sidebar:
   label: Arabic text
 ---
 
-Write a right to left paragraph with an embedded Arabic font.
+Write a right to left paragraph with an embedded Arabic font, numbers and currency included.
 
 ## Short answer
 
@@ -23,8 +23,10 @@ contextual forms, and the text carries ActualText, so it copies and searches in 
 
 - The font is embedded as a subset of the glyphs drawn. TrueType, OpenType, WOFF and WOFF2 files
   load the same way.
-- A font that lacks some characters, such as Latin letters or digits, can borrow them from other
-  fonts: set `Fallbacks` on the `PdfTextStyle`.
+- A font that lacks some characters, such as Latin letters, digits or the euro sign, borrows them
+  from the fonts in `Fallbacks` on the `PdfTextStyle`, as the sample does with Inter.
+- Numbers keep their left to right order inside the right to left line, as the Unicode
+  bidirectional algorithm places them.
 - `doc.Viewer.RightToLeft = true` tells viewers the document reads right to left, which sets the
   order of pages shown side by side.
 

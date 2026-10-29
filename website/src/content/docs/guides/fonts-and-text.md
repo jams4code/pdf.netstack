@@ -27,7 +27,7 @@ viewer has, with nothing to embed. `PdfOpenTypeFont.Load` reads a .ttf, .otf, .t
 ```csharp sample="fonts-text.cs" region="standard"
 ```
 
-![Text in Helvetica, Inter and Arabic drawn with PdfNetStack](/previews/fonts.webp)
+![Text in Helvetica and Inter, an Arabic paragraph with an amount in euros, and justified Arabic with kashida](/previews/fonts.webp)
 
 ## One line of text
 

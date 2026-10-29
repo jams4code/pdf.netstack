@@ -188,7 +188,9 @@ To prepare an empty signature field for someone else to sign, see
 
 ## Signed documents elsewhere in PdfNetStack
 
-- Editing a signed document with `PdfDocument` and saving it invalidates its signatures.
+- Editing a signed document with `PdfDocument` and saving it in full invalidates its signatures.
+  `SaveIncremental` appends the changes after the signed bytes instead, so they stay intact, see
+  [Large files](/guides/large-files/).
 - The [optimizer](/guides/compress-pdf/) never rewrites a signed file: it returns the input
   unchanged.
 - Sign last: create, fill, convert or archive the document first, then sign the saved bytes.

@@ -10,7 +10,7 @@ faq:
   - q: What happens to links and bookmarks when pages are removed?
     a: Links and bookmarks that point to a removed page become empty. Links between pages imported in the same call keep working.
   - q: Can PdfNetStack edit a signed PDF?
-    a: It can open and change it, but editing a digitally signed document invalidates its signatures. Saving writes a new single revision file.
+    a: Yes. Saving in full writes a new single revision file and invalidates the signatures. From version 1.1, SaveIncremental appends the changes after the signed bytes instead, so every signature stays intact.
 ---
 
 Open a PDF, change its pages, metadata and bookmarks, and save a new file that is optimized and
@@ -132,11 +132,13 @@ target atomically.
 
 ## Limits
 
-- Editing a digitally signed document invalidates its signatures. To add a signature without
-  breaking earlier ones, see [Signatures](/guides/signatures/).
-- Saving always writes a single revision: incremental updates of the source are not kept.
+- Saving in full with `Save` writes a single revision: incremental updates of the source are not
+  kept, and the signatures of a signed document become invalid. `SaveIncremental` (1.1) appends
+  the changes instead and keeps them valid, see [Large files](/guides/large-files/). To add a
+  signature without breaking earlier ones, see [Signatures](/guides/signatures/).
 - A document opened with only the user password of an encrypted file can be read but not saved.
-- The whole document is held in memory, see
+- `Open` reads the whole file into memory. `OpenOnDemand` (1.1) reads objects as they are used,
+  see [Large files](/guides/large-files/) and
   [Memory and performance](/concepts/memory-and-performance/).
 
 ## Related
