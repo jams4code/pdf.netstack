@@ -92,31 +92,23 @@ public sealed class HtmlParserTests
     public void RepeatedInputParsesInLinearTime(string prefix, string unit, string suffix)
     {
         // Comment-separated text runs merge into one node, foster-parented runs merge before the
-        // table, and duplicate attributes are dropped. Compare scaling, not wall time: four times
-        // the input should take about four times as long, where quadratic work would take sixteen.
-        // Best of three, each from a collected heap so one run does not pay for the garbage of
-        // the last: quadratic work at these sizes takes seconds, linear work tens of milliseconds.
-        static long Run(string prefix, string unit, string suffix, int count)
+        // table, and duplicate attributes are dropped. The quadratic versions of these did about
+        // 3e11 steps on 800k units, minutes of work; linear parsing takes well under a second.
+        // An absolute bound tells the two apart on any machine. A ratio between two sizes does
+        // not: with 800k live strings the garbage collector itself grows faster than linearly.
+        string html = prefix + string.Concat(Enumerable.Repeat(unit, 800_000)) + suffix;
+        long best = long.MaxValue;
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            string html = prefix + string.Concat(Enumerable.Repeat(unit, count)) + suffix;
-            long best = long.MaxValue;
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-                var clock = Stopwatch.StartNew();
-                HtmlDocument doc = HtmlParser.Parse(html);
-                best = Math.Min(best, Math.Max(1, clock.ElapsedMilliseconds));
-                Assert.IsLessThanOrEqualTo(3, doc.Body.Children.Count);
-            }
-
-            return best;
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            var clock = Stopwatch.StartNew();
+            HtmlDocument doc = HtmlParser.Parse(html);
+            best = Math.Min(best, clock.ElapsedMilliseconds);
+            Assert.IsLessThanOrEqualTo(3, doc.Body.Children.Count);
         }
 
-        long small = Run(prefix, unit, suffix, 200_000);
-        long large = Run(prefix, unit, suffix, 800_000);
-        Assert.IsLessThan(10.0, (double)large / small, $"200k took {small} ms, 800k took {large} ms");
+        Assert.IsLessThan(5_000, best, $"800k units took {best} ms");
         Assert.AreEqual(1, HtmlParser.Parse("<p a=1 a=2 b=3>").Body.ChildElements.Single().Attributes.Count(a => a.Key == "a"));
         Assert.AreEqual("xx", HtmlParser.Parse("<table>x<!---->x</table>").Body.Children.OfType<HtmlText>().Single().Data);
     }
