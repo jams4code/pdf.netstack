@@ -21,7 +21,7 @@ Done and in the main branch:
 | Drawing | Paths, pens, gray, RGB and CMYK colors, opacity, blend modes, gradients, transforms, clipping, on new and existing pages |
 | Fonts | Standard 14 fonts; TrueType, OpenType CFF, collections, WOFF and WOFF2; subsetting, Type 0 embedding, ToUnicode, kerning; font collections with CSS weight matching |
 | Text layout | Unicode line breaking (UAX #14) and bidi (UAX #9) passing the Unicode 16 suites; an OpenType shaper matching HarfBuzz on the fonts we compare; paragraphs with wrapping, alignment, justification, rich text and fallback |
-| Images | JPEG, PNG, GIF and SVG placement; Form XObjects; pages of other PDFs as overlays, letterheads and n-up |
+| Images | JPEG, PNG, GIF, BMP, TIFF (every page), WebP and SVG placement with fit, alignment and opacity; Form XObjects; pages of other PDFs as overlays, letterheads and n-up |
 | Annotations | Links, named destinations (read and rename), notes, text markup, free text, stamps, ink, squares, circles, lines with endings, polygons, polylines and file attachments, with appearance streams; flattening of one annotation, a page or a document |
 | Forms | Creating text, check box, radio, choice, signature and button fields; reading, filling and flattening; fields travel with imported and merged pages; the Acrobat number, percent, date, time and special format actions applied in C# |
 | Document features | Viewer preferences, page labels, language, custom properties, file attachments |
@@ -34,7 +34,6 @@ Done and in the main branch:
 ## Next
 
 **Core**
-- Image input in BMP, TIFF and WebP.
 - CFF2 and named instances of variable fonts.
 
 **Text**

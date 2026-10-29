@@ -14,17 +14,84 @@ public enum PdfImageFormat
 
     /// <summary>GIF, its first frame embedded as palette samples, its transparent color as a soft mask.</summary>
     Gif,
+
+    /// <summary>BMP, decoded and embedded as Flate compressed samples; palette images keep their palette.</summary>
+    Bmp,
+
+    /// <summary>
+    /// TIFF, one page of it. A single strip of CCITT fax or JPEG data is embedded as is
+    /// (CCITTFaxDecode, DCTDecode); other pages are decoded and Flate compressed.
+    /// </summary>
+    Tiff,
+
+    /// <summary>WebP, lossy or lossless, its first frame decoded and Flate compressed, its alpha as a soft mask.</summary>
+    WebP,
+}
+
+/// <summary>How an image fills a box of another shape (the CSS object-fit values).</summary>
+public enum PdfImageFit
+{
+    /// <summary>Stretched to the box, its aspect ratio ignored.</summary>
+    Fill,
+
+    /// <summary>Scaled to fit inside the box, keeping its aspect ratio: the whole image shows.</summary>
+    Contain,
+
+    /// <summary>Scaled to cover the box, keeping its aspect ratio: what spills over is clipped.</summary>
+    Cover,
+
+    /// <summary>At its natural size, clipped to the box.</summary>
+    None,
+
+    /// <summary>At its natural size, or as <see cref="Contain"/> when that is smaller.</summary>
+    ScaleDown,
+}
+
+/// <summary>Where an image sits in its box when it does not fill it exactly.</summary>
+public enum PdfImageAlignment
+{
+    /// <summary>Against the top left corner.</summary>
+    TopLeft,
+
+    /// <summary>Centered along the top edge.</summary>
+    Top,
+
+    /// <summary>Against the top right corner.</summary>
+    TopRight,
+
+    /// <summary>Centered along the left edge.</summary>
+    Left,
+
+    /// <summary>Centered.</summary>
+    Center,
+
+    /// <summary>Centered along the right edge.</summary>
+    Right,
+
+    /// <summary>Against the bottom left corner.</summary>
+    BottomLeft,
+
+    /// <summary>Centered along the bottom edge.</summary>
+    Bottom,
+
+    /// <summary>Against the bottom right corner.</summary>
+    BottomRight,
 }
 
 /// <summary>
-/// A JPEG, PNG or GIF image to draw with <see cref="PdfGraphics.DrawImage(PdfImage, double, double, double, double)"/>.
-/// The image is written once per document however often it is drawn, and can be shared between
-/// documents and threads.
+/// A JPEG, PNG, GIF, BMP, TIFF or WebP image to draw with
+/// <see cref="PdfGraphics.DrawImage(PdfImage, double, double, double, double)"/>. The image is
+/// written once per document however often it is drawn, and can be shared between documents and
+/// threads.
 /// </summary>
 /// <remarks>
 /// JPEGs are copied without recompression; EXIF orientation is honored, so photos stand upright.
 /// PNGs keep their compressed data when that is possible (no alpha channel, not interlaced) and
-/// otherwise are decoded once, their alpha becoming a soft mask. Embedded ICC profiles are kept.
+/// otherwise are decoded once, their alpha becoming a soft mask. BMP, TIFF and WebP images are
+/// decoded when loaded, except a TIFF page stored as one strip of fax or JPEG data, which is
+/// copied. Embedded ICC profiles are kept when they describe the image's color space. Multi-page
+/// TIFFs load one page at a time: see <see cref="GetPageCount(byte[])"/>.
+/// Decoding is bounded: images over 2^28 pixels are refused.
 /// </remarks>
 public sealed class PdfImage
 {
@@ -71,16 +138,16 @@ public sealed class PdfImage
     /// <summary>EXIF orientation, 1 (as stored) to 8.</summary>
     internal int Orientation { get; }
 
-    /// <summary>Loads a JPEG, PNG or GIF file.</summary>
-    /// <exception cref="FormatException">The data is not a supported image.</exception>
+    /// <summary>Loads an image file: JPEG, PNG, GIF, BMP, TIFF (its first page) or WebP.</summary>
+    /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
     public static PdfImage Load(string path)
     {
         Compat.ThrowIfNull(path, nameof(path));
         return Load(File.ReadAllBytes(path));
     }
 
-    /// <summary>Loads a JPEG, PNG or GIF image from a stream, read to its end.</summary>
-    /// <exception cref="FormatException">The data is not a supported image.</exception>
+    /// <summary>Loads an image from a stream, read to its end.</summary>
+    /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
     public static PdfImage Load(Stream stream)
     {
         Compat.ThrowIfNull(stream, nameof(stream));
@@ -89,15 +156,58 @@ public sealed class PdfImage
         return Load(copy.ToArray());
     }
 
-    /// <summary>Loads a JPEG, PNG or GIF image from its bytes. The array is used directly; do not change it afterwards.</summary>
-    /// <exception cref="FormatException">The data is not a supported image.</exception>
-    public static PdfImage Load(byte[] data)
+    /// <summary>Loads an image from its bytes. The array is used directly; do not change it afterwards.</summary>
+    /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
+    public static PdfImage Load(byte[] data) => Load(data, 0);
+
+    /// <summary>Loads one page of a multi-page TIFF file. Other formats have only page 0.</summary>
+    /// <param name="path">The file.</param>
+    /// <param name="page">The page, from 0.</param>
+    /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The image has no such page.</exception>
+    public static PdfImage Load(string path, int page)
+    {
+        Compat.ThrowIfNull(path, nameof(path));
+        return Load(File.ReadAllBytes(path), page);
+    }
+
+    /// <summary>Loads one page of a multi-page TIFF from its bytes. Other formats have only page 0.</summary>
+    /// <param name="data">The image file's bytes, used directly; do not change them afterwards.</param>
+    /// <param name="page">The page, from 0.</param>
+    /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The image has no such page.</exception>
+    public static PdfImage Load(byte[] data, int page)
     {
         Compat.ThrowIfNull(data, nameof(data));
-        if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8) return Jpeg(data);
-        if (data.Length >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G') return Png(data);
+        int pages = GetPageCount(data);
+        if (page < 0 || page >= pages) throw new ArgumentOutOfRangeException(nameof(page), page, pages == 1 ? "The image has one page." : $"The image has {pages} pages.");
+        if (IsJpeg(data)) return Jpeg(data, PdfImageFormat.Jpeg);
+        if (IsPng(data)) return Png(data, PdfImageFormat.Png);
         if (GifDecoder.IsGif(data)) return Gif(data);
-        throw new FormatException("Only JPEG, PNG and GIF images are supported.");
+        if (BmpDecoder.IsBmp(data)) return Bmp(data);
+        if (TiffDecoder.IsTiff(data)) return Tiff(data, page);
+        return Decoded(PdfImageFormat.WebP, WebPDecoder.Read(data));
+    }
+
+    /// <summary>The number of pages in a TIFF file; 1 for the other formats.</summary>
+    /// <exception cref="FormatException">The data is not a supported image.</exception>
+    public static int GetPageCount(string path)
+    {
+        Compat.ThrowIfNull(path, nameof(path));
+        return GetPageCount(File.ReadAllBytes(path));
+    }
+
+    /// <summary>
+    /// The number of pages in a TIFF image; 1 for the other formats. Animated GIF and WebP images
+    /// count as one page: their first frame is what loads.
+    /// </summary>
+    /// <exception cref="FormatException">The data is not a supported image.</exception>
+    public static int GetPageCount(byte[] data)
+    {
+        Compat.ThrowIfNull(data, nameof(data));
+        if (TiffDecoder.IsTiff(data)) return TiffDecoder.CountPages(data);
+        if (IsJpeg(data) || IsPng(data) || GifDecoder.IsGif(data) || BmpDecoder.IsBmp(data) || WebPDecoder.IsWebP(data)) return 1;
+        throw new FormatException("Only JPEG, PNG, GIF, BMP, TIFF and WebP images are supported.");
     }
 
     /// <summary>Writes the image XObject, and its soft mask, into a document.</summary>
@@ -127,10 +237,14 @@ public sealed class PdfImage
         return new PdfMatrix(width * a, height * d, -width * b, -height * e, x + width * (b + c), y + height * (e + f));
     }
 
-    private static PdfImage Jpeg(byte[] data)
+    private static bool IsJpeg(byte[] data) => data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8;
+
+    private static bool IsPng(byte[] data) => data.Length >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G';
+
+    private static PdfImage Jpeg(byte[] data, PdfImageFormat format)
     {
         JpegHeader h = JpegHeader.Read(data);
-        return new PdfImage(PdfImageFormat.Jpeg, h.Width, h.Height, h.DpiX, h.DpiY, h.Orientation, false, doc =>
+        return new PdfImage(format, h.Width, h.Height, h.DpiX, h.DpiY, h.Orientation, false, doc =>
         {
             var dict = new PdfDictionary
             {
@@ -142,8 +256,6 @@ public sealed class PdfImage
                 ["ColorSpace"] = ColorSpace(doc, h.Components, h.IccProfile),
                 ["Filter"] = new PdfName("DCTDecode"),
             };
-
-            if (h.Components == 4 && h.IccProfile is null) doc.UsesDeviceCmyk = true;
 
             // Adobe applications write CMYK JPEGs inverted; every reader undoes it this way.
             if (h.Components == 4 && h.Adobe) dict.Set("Decode", PdfArray.Of(1, 0, 1, 0, 1, 0, 1, 0));
@@ -185,7 +297,7 @@ public sealed class PdfImage
         });
     }
 
-    private static PdfImage Png(byte[] data)
+    private static PdfImage Png(byte[] data, PdfImageFormat format)
     {
         PngImage png = PngImage.Read(data);
         byte[]? trns = png.Transparency;
@@ -195,7 +307,7 @@ public sealed class PdfImage
 
         // Decode lazily, once, and only when the samples must be rewritten.
         Lazy<(byte[] Color, byte[]? Alpha)> samples = new(() => Split(png));
-        return new PdfImage(PdfImageFormat.Png, png.Width, png.Height, png.DpiX, png.DpiY, 1, transparent, doc =>
+        return new PdfImage(format, png.Width, png.Height, png.DpiX, png.DpiY, 1, transparent, doc =>
         {
             int depth = png.BitDepth;
             var dict = new PdfDictionary
@@ -245,6 +357,96 @@ public sealed class PdfImage
             PdfArray? colorKey = ColorKeyMask(png);
             if (colorKey is not null) dict.Set("Mask", colorKey);
             return doc.AddObject(stream);
+        });
+    }
+
+    /// <summary>A bitmap; one wrapping a JPEG or PNG (compression 4 or 5) loads as that image.</summary>
+    private static PdfImage Bmp(byte[] data)
+    {
+        if (BmpDecoder.Embedded(data) is byte[] inner)
+        {
+            if (IsJpeg(inner)) return Jpeg(inner, PdfImageFormat.Bmp);
+            if (IsPng(inner)) return Png(inner, PdfImageFormat.Bmp);
+            throw new FormatException("BMP embedded image is not a JPEG or PNG.");
+        }
+
+        return Decoded(PdfImageFormat.Bmp, BmpDecoder.Read(data));
+    }
+
+    /// <summary>A TIFF page: fax and JPEG strips copied when their parameters map to a PDF filter, else decoded.</summary>
+    private static PdfImage Tiff(byte[] data, int page)
+    {
+        TiffPage tiff = TiffDecoder.ReadPage(data, page);
+        if (tiff.PassThrough() is not TiffEncodedImage encoded) return Decoded(PdfImageFormat.Tiff, tiff.Decode());
+
+        return new PdfImage(PdfImageFormat.Tiff, encoded.Width, encoded.Height, tiff.DpiX, tiff.DpiY, tiff.Orientation, false, doc =>
+        {
+            var dict = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(encoded.Width),
+                ["Height"] = PdfNumber.FromInteger(encoded.Height),
+                ["ColorSpace"] = ColorSpace(doc, encoded.Colors, tiff.Icc),
+                ["BitsPerComponent"] = PdfNumber.FromInteger(encoded.Filter == "CCITTFaxDecode" ? 1 : 8),
+                ["Filter"] = new PdfName(encoded.Filter),
+            };
+            if (encoded.InvertedGray) dict.Set("Decode", PdfArray.Of(1, 0));
+            if (encoded.Ccitt is CcittParameters fax)
+            {
+                var parms = new PdfDictionary
+                {
+                    ["K"] = PdfNumber.FromInteger(fax.K),
+                    ["Columns"] = PdfNumber.FromInteger(fax.Columns),
+                    ["Rows"] = PdfNumber.FromInteger(fax.Rows),
+                    ["EndOfBlock"] = PdfBoolean.False,
+                };
+                if (fax.EndOfLine) parms.Set("EndOfLine", PdfBoolean.True);
+                if (fax.EncodedByteAlign) parms.Set("EncodedByteAlign", PdfBoolean.True);
+                dict.Set("DecodeParms", parms);
+            }
+            else if (encoded.ColorTransform is int transform)
+            {
+                dict.Set("DecodeParms", new PdfDictionary { ["ColorTransform"] = PdfNumber.FromInteger(transform) });
+            }
+
+            return doc.AddObject(new PdfStream(dict, encoded.Data));
+        });
+    }
+
+    /// <summary>A decoded image as Flate compressed samples, its palette as an Indexed color space, its alpha as a soft mask.</summary>
+    private static PdfImage Decoded(PdfImageFormat format, DecodedImage image)
+    {
+        return new PdfImage(format, image.Width, image.Height, image.DpiX, image.DpiY, image.Orientation, image.Alpha is not null, doc =>
+        {
+            PdfObject space = image.Palette is byte[] palette
+                ? PdfArray.Of(new PdfName("Indexed"), ColorSpace(doc, 3, image.IccProfile), PdfNumber.FromInteger(palette.Length / 3 - 1), new PdfString(palette.AsSpan()))
+                : ColorSpace(doc, image.Colors, image.IccProfile);
+            var dict = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(image.Width),
+                ["Height"] = PdfNumber.FromInteger(image.Height),
+                ["ColorSpace"] = space,
+                ["BitsPerComponent"] = PdfNumber.FromInteger(image.BitsPerComponent),
+            };
+            if (image.InvertedGray && image.Palette is null) dict.Set("Decode", PdfArray.Of(1, 0));
+            if (image.Alpha is byte[] alpha)
+            {
+                var mask = new PdfDictionary
+                {
+                    ["Type"] = new PdfName("XObject"),
+                    ["Subtype"] = new PdfName("Image"),
+                    ["Width"] = PdfNumber.FromInteger(image.Width),
+                    ["Height"] = PdfNumber.FromInteger(image.Height),
+                    ["ColorSpace"] = new PdfName("DeviceGray"),
+                    ["BitsPerComponent"] = PdfNumber.FromInteger(image.AlphaBits),
+                };
+                dict.Set("SMask", doc.AddObject(PdfStream.FromData(alpha, mask)));
+            }
+
+            return doc.AddObject(PdfStream.FromData(image.Samples, dict));
         });
     }
 
@@ -337,11 +539,21 @@ public sealed class PdfImage
         return PdfArray.Of(new PdfName("Indexed"), ColorSpace(doc, 3, png.IccProfile), PdfNumber.FromInteger(entries - 1), new PdfString(lookup.AsSpan()));
     }
 
-    /// <summary>A device color space for the component count, or ICCBased when the image carries a profile.</summary>
+    /// <summary>
+    /// A device color space for the component count, or ICCBased when the image carries a profile
+    /// for that color space. DeviceCMYK is noted on the document, for the PDF/A check.
+    /// </summary>
     private static PdfObject ColorSpace(PdfDocument doc, int components, byte[]? icc)
     {
         var device = new PdfName(components switch { 1 => "DeviceGray", 4 => "DeviceCMYK", _ => "DeviceRGB" });
-        if (icc is null) return device;
+
+        // A profile for another color space (its header names it at byte 16) would leave the image unreadable.
+        string space = components switch { 1 => "GRAY", 4 => "CMYK", _ => "RGB " };
+        if (icc is null || icc.Length < 128 || icc[16] != space[0] || icc[17] != space[1] || icc[18] != space[2] || icc[19] != space[3])
+        {
+            if (components == 4) doc.UsesDeviceCmyk = true;
+            return device;
+        }
         var profile = PdfStream.FromData(icc);
         profile.Dictionary.Set("N", PdfNumber.FromInteger(components));
         profile.Dictionary.Set("Alternate", device);

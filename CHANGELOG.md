@@ -125,6 +125,19 @@
   a bookmark points at.
 - GIF images: `PdfImage.Load` reads GIF 87a and 89a (the first frame, interlaced or not, with its
   transparent color as a soft mask), so `DrawImage` and `<img>` in HTML take them too.
+- BMP, TIFF and WebP images: `PdfImage.Load` reads BMP (1 to 32 bits, RLE4 and RLE8, bit fields,
+  top down rows, alpha, an embedded JPEG or PNG), TIFF (strips and tiles, chunky and planar,
+  uncompressed, PackBits, LZW and Deflate with the predictor, CCITT modified Huffman, Group 3 and
+  Group 4, JPEG; bilevel, gray, palette, RGB, CMYK and YCbCr samples of 1 to 16 bits, associated
+  and unassociated alpha, BigTIFF) and WebP (lossy and lossless, with alpha, the first frame of an
+  animation). Alpha becomes a soft mask. A TIFF page stored as one strip of fax or JPEG data is
+  embedded as is (CCITTFaxDecode, DCTDecode). `PdfImage.GetPageCount` and `PdfImage.Load(path,
+  page)` give every page of a multi-page TIFF. Lossy WebP decodes to the pixels libwebp gives,
+  bit for bit. Decoding is bounded, and damaged files fail with a `FormatException`. `<img>` in
+  HTML takes all three formats.
+- `PdfGraphics.DrawImage` fits an image into a box (`PdfImageFit`: fill, contain, cover, none,
+  scale down), aligns it there (`PdfImageAlignment`, clipping what spills over) and fades it
+  with an opacity.
 - Form creation: `PdfAcroForm.AddTextField`, `AddCheckBox`, `AddRadioGroup` (buttons may span
   pages), `AddComboBox`, `AddListBox`, `AddSignatureField` and `AddPushButton` (optionally opening a
   web address), styled with `PdfFieldOptions` (standard font, size, colors, border, tooltip, read

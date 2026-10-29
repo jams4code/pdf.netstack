@@ -7,3 +7,7 @@
 *.woff2 binary
 *.br binary
 *.deflate binary
+*.bmp binary
+*.tif binary
+*.webp binary
+*.raw binary

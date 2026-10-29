@@ -628,15 +628,56 @@ public sealed class PdfGraphics : IDisposable
     /// Draws an image stretched to the rectangle, upright as its EXIF orientation says. Painting
     /// follows the current transform and clip; transparency comes from the image's alpha channel.
     /// </summary>
-    public void DrawImage(PdfImage image, double x, double y, double width, double height)
+    public void DrawImage(PdfImage image, double x, double y, double width, double height) =>
+        DrawImage(image, x, y, width, height, PdfImageFit.Fill);
+
+    /// <summary>
+    /// Draws an image into a box, fitted as <paramref name="fit"/> says and placed by
+    /// <paramref name="alignment"/> where it does not fill the box. Whatever falls outside the box
+    /// is clipped. <paramref name="opacity"/> fades the whole image, on top of its own alpha.
+    /// </summary>
+    /// <param name="image">The image.</param>
+    /// <param name="x">Left edge of the box.</param>
+    /// <param name="y">Top edge of the box.</param>
+    /// <param name="width">Width of the box.</param>
+    /// <param name="height">Height of the box.</param>
+    /// <param name="fit">How the image fills the box.</param>
+    /// <param name="alignment">Where the image sits when it is smaller or larger than the box.</param>
+    /// <param name="opacity">0 (invisible) to 1 (opaque).</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="opacity"/> is not between 0 and 1.</exception>
+    public void DrawImage(PdfImage image, double x, double y, double width, double height, PdfImageFit fit, PdfImageAlignment alignment = PdfImageAlignment.Center, double opacity = 1)
     {
         ThrowIfDisposed();
         Compat.ThrowIfNull(image, nameof(image));
+        if (!(opacity >= 0 && opacity <= 1)) throw new ArgumentOutOfRangeException(nameof(opacity), opacity, "Opacity must be between 0 and 1.");
+        (double w, double h) = Fitted(image, width, height, fit);
+        int column = (int)alignment % 3, row = (int)alignment / 3;
+        double left = x + ((width - w) * column / 2), top = y + ((height - h) * row / 2);
         string name = AddResource("XObject", "Im", _doc.GetImageReference(image));
         using (Save())
         {
-            _w.Matrix(image.Placement(x, y, width, height)).Op("cm").Name(name).Op("Do");
+            if (w > width || h > height) IntersectClip(x, y, width, height);
+
+            // Fill alpha left by earlier drawing would otherwise fade the image too.
+            SetAlpha("ca", opacity, ref _state.FillAlpha);
+            _w.Matrix(image.Placement(left, top, w, h)).Op("cm").Name(name).Op("Do");
         }
+    }
+
+    /// <summary>The size an image is drawn at in a box of the given size.</summary>
+    private static (double Width, double Height) Fitted(PdfImage image, double width, double height, PdfImageFit fit)
+    {
+        double natural = image.Width, naturalHeight = image.Height;
+        if (fit == PdfImageFit.Fill || natural <= 0 || naturalHeight <= 0) return (width, height);
+        double contain = Math.Min(width / natural, height / naturalHeight), cover = Math.Max(width / natural, height / naturalHeight);
+        double scale = fit switch
+        {
+            PdfImageFit.Contain => contain,
+            PdfImageFit.Cover => cover,
+            PdfImageFit.ScaleDown => Math.Min(1, contain),
+            _ => 1,
+        };
+        return (natural * scale, naturalHeight * scale);
     }
 
     /// <summary>Draws a form at its own size, its top left corner at (x, y).</summary>

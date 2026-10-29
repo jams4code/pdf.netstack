@@ -230,6 +230,10 @@ Images and reusable drawings:
 PdfImage photo = PdfImage.Load("photo.jpg");      // JPEG copied as is, EXIF orientation honored
 PdfImage logo = PdfImage.Load("logo.png");        // PNG with alpha becomes a soft mask
 g.DrawImage(logo, 40, 30, 120, 40);
+g.DrawImage(photo, 40, 300, 200, 150, PdfImageFit.Cover, PdfImageAlignment.Top, opacity: 0.8);
+
+PdfImage scan = PdfImage.Load("fax.tif", page: 2);  // any page of a multi-page TIFF
+PdfImage web = PdfImage.Load("banner.webp");        // lossy or lossless, with alpha
 
 PdfSvg vector = PdfSvg.Load("logo.svg");          // SVG stays vector: sharp at any zoom
 g.DrawSvg(vector, 40, 80, 120, 40);
@@ -239,7 +243,10 @@ g.DrawForm(page, 0, 0, g.Width / 2, g.Height / 2);      // n-up, stamps, templat
 ```
 
 PNGs of every color type and bit depth are supported, interlaced or not; simple ones keep their
-compressed data, so embedding costs no recompression. ICC profiles and pixel density are kept.
+compressed data, so embedding costs no recompression. GIF, BMP, TIFF and WebP images are decoded
+once and Flate compressed, except TIFF pages stored as one strip of CCITT fax or JPEG data, which
+are copied as is. `PdfImageFit` places an image in a box as CSS object-fit does: fill, contain,
+cover (clipped to the box), none or scale down. ICC profiles and pixel density are kept.
 SVG drawings keep their paths, gradients, clipping and text as PDF vectors; filters, masks and
 patterns are not drawn. Each image, drawing and font is written once per document however often
 it is drawn.
@@ -618,7 +625,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1, unreleased |
 | Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections | 1.1, unreleased |
 | Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | 1.1, unreleased |
-| Images and overlays | JPEG, PNG, GIF and SVG placement, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
+| Images and overlays | JPEG, PNG, GIF, BMP, TIFF, WebP and SVG placement with fit and opacity, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
 | Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1, unreleased |
 | Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1, unreleased |
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA signing and verification with chain and revocation checks, PDF/A-2b, 2u, 3b and 3u output, Factur-X and ZUGFeRD | 1.1, unreleased |
