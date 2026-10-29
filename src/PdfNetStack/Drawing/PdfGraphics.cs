@@ -1,7 +1,60 @@
+
 using PdfNetStack.Fonts;
 using PdfNetStack.Objects;
 
 namespace PdfNetStack.Drawing;
+
+/// <summary>How drawing combines with what is under it (ISO 32000-1, 11.3.5; the CSS mix-blend-mode values).</summary>
+public enum PdfBlendMode
+{
+    /// <summary>Paint covers the backdrop.</summary>
+    Normal,
+
+    /// <summary>Darkens: like ink on paper, or a highlighter.</summary>
+    Multiply,
+
+    /// <summary>Lightens: the inverse of multiply.</summary>
+    Screen,
+
+    /// <summary>Multiply or screen, depending on the backdrop.</summary>
+    Overlay,
+
+    /// <summary>The darker of paint and backdrop.</summary>
+    Darken,
+
+    /// <summary>The lighter of paint and backdrop.</summary>
+    Lighten,
+
+    /// <summary>Brightens the backdrop toward the paint.</summary>
+    ColorDodge,
+
+    /// <summary>Darkens the backdrop toward the paint.</summary>
+    ColorBurn,
+
+    /// <summary>Multiply or screen, depending on the paint.</summary>
+    HardLight,
+
+    /// <summary>A softer hard light.</summary>
+    SoftLight,
+
+    /// <summary>The absolute difference.</summary>
+    Difference,
+
+    /// <summary>A lower contrast difference.</summary>
+    Exclusion,
+
+    /// <summary>The paint's hue with the backdrop's saturation and luminosity.</summary>
+    Hue,
+
+    /// <summary>The paint's saturation.</summary>
+    Saturation,
+
+    /// <summary>The paint's hue and saturation.</summary>
+    Color,
+
+    /// <summary>The paint's luminosity.</summary>
+    Luminosity,
+}
 
 /// <summary>Where new drawing goes relative to a page's existing content.</summary>
 public enum PdfGraphicsLayer
@@ -75,6 +128,55 @@ public sealed class PdfGraphics : IDisposable
 
     /// <summary>Height of the drawing area in points.</summary>
     public double Height { get; }
+
+    /// <summary>How further drawing blends with what is under it. Saved and restored with the graphics state.</summary>
+    public PdfBlendMode BlendMode
+    {
+        get => _state.BlendMode;
+        set
+        {
+            ThrowIfDisposed();
+            if (_state.BlendMode == value) return;
+            if (!_alphaStates.TryGetValue(("BM", (double)value), out string? name))
+            {
+                var gs = new PdfDictionary { ["Type"] = new PdfName("ExtGState"), ["BM"] = new PdfName(value.ToString()) };
+                name = AddResource("ExtGState", "Gs", gs);
+                _alphaStates[("BM", (double)value)] = name;
+            }
+
+            _w.Name(name).Op("gs");
+            _state.BlendMode = value;
+        }
+    }
+
+    /// <summary>
+    /// Adds a link over a rectangle in current canvas coordinates; under a transform, the link
+    /// covers the transformed rectangle's bounds. Only on pages.
+    /// </summary>
+    public PdfAnnotation AddLink(double x, double y, double width, double height, Uri uri)
+    {
+        (double lx, double ly, double w, double h) = Bounds(x, y, width, height);
+        return (_page ?? throw new InvalidOperationException("Links can only be added on a page.")).Annotations.AddLink(lx, ly, w, h, uri);
+    }
+
+    /// <summary>Adds a link to a page of this document over a rectangle in current canvas coordinates.</summary>
+    public PdfAnnotation AddLink(double x, double y, double width, double height, PdfPage target, double? top = null)
+    {
+        (double lx, double ly, double w, double h) = Bounds(x, y, width, height);
+        return (_page ?? throw new InvalidOperationException("Links can only be added on a page.")).Annotations.AddLink(lx, ly, w, h, target, top);
+    }
+
+    private (double X, double Y, double Width, double Height) Bounds(double x, double y, double width, double height)
+    {
+        ThrowIfDisposed();
+        PdfPoint[] corners =
+        [
+            _state.Matrix.Transform(new PdfPoint(x, y)), _state.Matrix.Transform(new PdfPoint(x + width, y)),
+            _state.Matrix.Transform(new PdfPoint(x, y + height)), _state.Matrix.Transform(new PdfPoint(x + width, y + height)),
+        ];
+        double left = corners.Min(c => c.X), top = corners.Min(c => c.Y);
+        return (left, top, corners.Max(c => c.X) - left, corners.Max(c => c.Y) - top);
+    }
 
     /// <summary>The current transform from user coordinates to canvas coordinates.</summary>
     public PdfMatrix Transform => _state.Matrix;
@@ -808,6 +910,7 @@ public sealed class PdfGraphics : IDisposable
         public double FontSize;
         public int TextMode;
         public double TextRise;
+        public PdfBlendMode BlendMode;
 
         public State Clone() => (State)MemberwiseClone();
     }

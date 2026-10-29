@@ -213,6 +213,17 @@ PNGs of every color type and bit depth are supported, interlaced or not; simple 
 compressed data, so embedding costs no recompression. ICC profiles and pixel density are kept.
 Each image and font is written once per document however often it is drawn.
 
+Annotations use the same top left coordinates and carry their own appearance, so every viewer
+shows them alike:
+
+```csharp
+page.Annotations.AddLink(72, 700, 120, 14, new Uri("https://example.com"));
+page.Annotations.AddLink(72, 720, 120, 14, doc.Pages[3], top: 200);
+page.Annotations.AddTextMarkup(PdfTextMarkup.Highlight, 72, 100, 300, 16, comment: "Check");
+page.Annotations.AddNote(520, 40, "Please review", author: "Finance");
+g.AddLink(0, 0, 100, 20, new Uri("https://example.com"));   // follows the canvas transform
+```
+
 ### Encryption
 
 ```csharp
@@ -382,7 +393,8 @@ in the [roadmap](docs/ROADMAP.md).
 | Fonts | Standard 14 fonts, TrueType/OpenType/WOFF embedding with subsetting, kerning, font collections | Done (next release) |
 | Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | Done (next release) |
 | Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Done (next release) |
-| Annotations and forms | Links, notes, stamps; AcroForm reading, filling and flattening | Planned |
+| Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
+| Forms (AcroForm) | Reading, filling and flattening fields | Planned |
 | Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |
 | HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |
 

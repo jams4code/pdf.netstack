@@ -47,6 +47,11 @@
 - Form XObjects: `PdfForm.Create` for reusable drawings, `PdfForm.FromPage` to place any page of
   any document (rotation honored, resources imported once), `PdfGraphics.DrawForm`, and
   `PdfGraphics.Form` for drawing into a form.
+- Annotations: `PdfPage.Annotations` reads every annotation (kind, rectangle, contents, link
+  address, destination page including named destinations) and adds web and page links, notes,
+  text markup (highlight, underline, strikeout, squiggly) and free text, each with an appearance
+  stream. `PdfGraphics.AddLink` maps a canvas rectangle through the current transform.
+- `PdfGraphics.BlendMode`: the 16 PDF blend modes, saved and restored with the graphics state.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

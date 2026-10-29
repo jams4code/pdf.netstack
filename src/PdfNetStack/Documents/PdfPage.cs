@@ -7,6 +7,8 @@ namespace PdfNetStack;
 /// <summary>One page of a <see cref="PdfDocument"/>.</summary>
 public sealed class PdfPage
 {
+    private PdfAnnotationCollection? _annotations;
+
     internal PdfPage(PdfDocument owner, int number, PdfDictionary dictionary)
     {
         Owner = owner;
@@ -82,6 +84,9 @@ public sealed class PdfPage
 
     /// <summary>Rotates the page clockwise by <paramref name="degrees"/>, a multiple of 90.</summary>
     public void Rotate(int degrees) => Rotation = Rotation + degrees;
+
+    /// <summary>The page's annotations: links, notes, markup and form widgets. Add new ones here.</summary>
+    public PdfAnnotationCollection Annotations => _annotations ??= new PdfAnnotationCollection(this);
 
     /// <summary>Number of annotations (links, notes, form widgets) on the page.</summary>
     public int AnnotationCount => Owner.Resolve(Dictionary["Annots"]) is PdfArray a ? a.Count : 0;

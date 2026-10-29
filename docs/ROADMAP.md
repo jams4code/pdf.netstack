@@ -36,8 +36,9 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
    decoding (all color types and depths, interlacing, alpha into a soft mask), Form XObjects,
    and pages of any PDF drawn as forms for overlays, watermarks, letterheads and n-up. Still to
    do: GIF, BMP, TIFF and WebP input, aspect fitting helpers, image opacity.
-6. **Annotations.** Links (to a page, a URL, a file), text notes, stamps and highlights, with
-   appearance streams.
+6. **Annotations.** Done for 1.1: links to URLs and pages, named destinations when reading,
+   notes, highlight, underline, strikeout, squiggly and free text, all with appearance streams;
+   blend modes on the canvas. Still to do: stamps, ink, shapes, file attachments, flattening.
 7. **AcroForm.** Field tree, reading and setting values, appearance generation for text, check
    box, radio and choice fields, flattening, import of fields together with their pages.
 8. **Remaining document features.** Viewer preferences, page layout and mode, page labels,
