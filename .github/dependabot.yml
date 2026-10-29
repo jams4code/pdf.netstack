@@ -9,6 +9,3 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    ignore:
-      # 12.30+ depends on Apache.Arrow (Apache-2.0). See THIRD-PARTY-NOTICES.md.
-      - dependency-name: Azure.Storage.Blobs

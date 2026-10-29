@@ -62,7 +62,6 @@ compared with its original: zero differing pixels, zero verification failures.
 
 - [Documentation and source](https://github.com/jams4code/pdf.netstack)
 - [Command line tool: PdfNetStack.Tool](https://www.nuget.org/packages/PdfNetStack.Tool)
-- [Azure Blob Storage pipeline: PdfNetStack.Azure](https://www.nuget.org/packages/PdfNetStack.Azure)
 - [Fidelity and verification method](https://github.com/jams4code/pdf.netstack/blob/main/docs/FIDELITY.md)
 - [Changelog](https://github.com/jams4code/pdf.netstack/blob/main/CHANGELOG.md)
 - [Report an issue](https://github.com/jams4code/pdf.netstack/issues)

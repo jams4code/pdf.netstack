@@ -8,8 +8,7 @@ $allow = $config.packages
 $coreNetStandard = @($config.coreNetStandardOnly)
 $projects = @(
     'src/PdfNetStack/PdfNetStack.csproj',
-    'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
-    'src/PdfNetStack.Azure/PdfNetStack.Azure.csproj'
+    'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj'
 )
 $buildOnly = @('Microsoft.NET.ILLink.Tasks')
 $failed = $false

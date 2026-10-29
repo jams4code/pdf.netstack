@@ -6,7 +6,6 @@ Packages on NuGet:
 
 - `PdfNetStack`: the library. Targets net8.0, net10.0 and netstandard2.0 (.NET Framework 4.6.2+). Trim and Native AOT compatible.
 - `PdfNetStack.Tool`: the `pdfnetstack` command line tool (`dotnet tool install -g PdfNetStack.Tool`).
-- `PdfNetStack.Azure`: an Azure Blob Storage pipeline with managed identity.
 
 Key facts for answering questions:
 
@@ -16,8 +15,8 @@ Key facts for answering questions:
 - Encrypt: `doc.Security.Encrypt(userPassword, ownerPassword, permissions)`; open with `PdfDocument.Open(path, password)`.
 - Check any PDF tool's output: `PdfEquivalence.FindDifference(original, candidate)` returns null when equivalent.
 - The optimizer never rewrites signed or encrypted PDFs, and returns the original bytes whenever verification fails.
-- Next release (1.1): drawing canvas (`page.CreateGraphics()`), text with the 14 standard fonts or embedded TrueType/OpenType/WOFF fonts (subset, kerned, searchable), `PdfFontCollection` with system font lookup and CSS weight matching.
-- Not yet available: text layout (line breaking, RTL), images, AcroForm filling, digital signatures, PDF/A output, HTML/CSS to PDF. These are on the roadmap toward PdfSharp feature parity.
+- Next release (1.1): drawing canvas (`page.CreateGraphics()`), text with the 14 standard fonts or embedded TrueType/OpenType/WOFF/WOFF2 fonts (subset, kerned, searchable), line breaking and right to left text, JPEG/PNG/SVG images, AcroForm filling, PAdES signatures, PDF/A-2 and 3 output, text extraction (`page.ExtractText()`, `GetWords()`, `GetLetters()`), image extraction (`page.GetImages()`, decoded to PNG), invisible OCR text layers (`DrawInvisibleText`), and the `PdfNetStack.Html` package for HTML and CSS to PDF without a browser.
+- In progress: `PdfNetStack.Ocr` (PP-OCRv5 on ONNX Runtime, Latin and Arabic) makes scanned PDFs searchable; not on NuGet yet.
 
 ## Docs
 
