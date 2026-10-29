@@ -79,14 +79,13 @@ internal static class ImageSamples
 
         if (space is null || bpc is not (1 or 2 or 4 or 8 or 16) || (space.IsIndexed && bpc == 16)) return null;
         double[] decode = DecodeArray(doc, dict, space, bpc, mask);
-        long rowBytes = (((long)width * space.Components * bpc) + 7) / 8;
-        if (data.Length < rowBytes * height)
-        {
-            // Short data is common; viewers draw what is there and leave the rest blank.
-            Array.Resize(ref data, (int)Math.Min(rowBytes * height, int.MaxValue));
-        }
 
-        return Convert(data, width, height, bpc, (int)rowBytes, space, decode, mask);
+        // The pixel cap alone allows 32 components of 16 bits: the bytes are what must fit.
+        long rowBytes = (((long)width * space.Components * bpc) + 7) / 8;
+        long outputBytes = (long)width * height * (space.IsGray ? 1 : 3);
+        long ceiling = Math.Min(doc.DecodeLimit, Compat.MaxArrayLength);
+        if (rowBytes * height > ceiling || outputBytes > ceiling) throw new PdfFormatException("Image exceeds the decode limit.");
+        return Convert(data, width, height, bpc, rowBytes, space, decode, mask);
     }
 
     private static int Int(PdfDocument doc, PdfObject? value) =>
@@ -105,7 +104,11 @@ internal static class ImageSamples
         return mask ? [0, 1] : space.DefaultDecode(bpc);
     }
 
-    private static Raster Convert(byte[] data, int width, int height, int bpc, int rowBytes, ColorSpace space, double[] decode, bool mask)
+    /// <remarks>
+    /// Short data is common, and viewers draw what is there: samples past the end read as zero,
+    /// without padding the data out to its declared size.
+    /// </remarks>
+    private static Raster Convert(byte[] data, int width, int height, int bpc, long rowBytes, ColorSpace space, double[] decode, bool mask)
     {
         int n = space.Components, channels = space.IsGray ? 1 : 3;
         var output = new byte[(long)width * height * channels];
@@ -114,7 +117,14 @@ internal static class ImageSamples
         // The common case, 8 bit gray or RGB read as stored, needs no arithmetic.
         if (!mask && bpc == 8 && (space == ColorSpace.Gray || space == ColorSpace.Rgb) && decode.Select((d, i) => d == i % 2).All(same => same))
         {
-            for (int y = 0; y < height; y++) data.AsSpan(y * rowBytes, width * n).CopyTo(output.AsSpan(y * width * n));
+            long stride = (long)width * n;
+            for (int y = 0; y < height; y++)
+            {
+                long from = y * rowBytes;
+                if (from >= data.Length) break;
+                data.AsSpan((int)from, (int)Math.Min(stride, data.Length - from)).CopyTo(output.AsSpan((int)(y * stride)));
+            }
+
             return new Raster(width, height, channels, output);
         }
 
@@ -134,7 +144,7 @@ internal static class ImageSamples
         Span<byte> rgb = stackalloc byte[3];
         for (int y = 0; y < height; y++)
         {
-            int row = y * rowBytes;
+            long row = y * rowBytes;
             for (int x = 0; x < width; x++)
             {
                 for (int c = 0; c < n; c++)
@@ -170,21 +180,22 @@ internal static class ImageSamples
         return new Raster(width, height, channels, output);
     }
 
-    private static int Sample(byte[] data, int row, long index, int bpc)
+    private static int Sample(byte[] data, long row, long index, int bpc)
     {
         switch (bpc)
         {
             case 8:
-                return data[row + index];
+                return Byte(data, row + index);
             case 16:
-                return (data[row + (2 * index)] << 8) | data[row + (2 * index) + 1];
+                return (Byte(data, row + (2 * index)) << 8) | Byte(data, row + (2 * index) + 1);
             default:
                 long bit = index * bpc;
-                int b = data[row + (bit >> 3)];
                 int shift = 8 - bpc - (int)(bit & 7);
-                return (b >> shift) & ((1 << bpc) - 1);
+                return (Byte(data, row + (bit >> 3)) >> shift) & ((1 << bpc) - 1);
         }
     }
+
+    private static int Byte(byte[] data, long at) => at < data.Length ? data[at] : 0;
 }
 
 /// <summary>A color space as far as reading image samples needs it: component count, default Decode and conversion.</summary>

@@ -19,9 +19,19 @@ internal abstract class ContentInterpreter
     public const int MaxStateDepth = 256;
     public const long MaxOperations = 10_000_000;
 
+    /// <summary>
+    /// Bytes a page may decode and parse, together. A form drawn again is parsed again, so a
+    /// small form holding one huge operand would otherwise cost far more than its operators.
+    /// </summary>
+    public const long MaxBytes = 256L << 20;
+
     private readonly Stack<(PdfMatrix Ctm, TextState Text)> _saved = new();
     private readonly HashSet<PdfStream> _activeForms = [];
+
+    // Decoded once per form however often it is drawn; null when it cannot be decoded.
+    private readonly Dictionary<PdfStream, byte[]?> _forms = [];
     private long _operations;
+    private long _bytes;
 
     protected ContentInterpreter(PdfDocument document) => Document = document;
 
@@ -53,6 +63,7 @@ internal abstract class ContentInterpreter
             if (Document.Resolve(part) is not PdfStream stream) continue;
             byte[]? data = Data(stream);
             if (data is null) continue;
+            if (_bytes > MaxBytes) break;
             joined.Write(data, 0, data.Length);
             joined.WriteByte((byte)'\n');
         }
@@ -80,9 +91,12 @@ internal abstract class ContentInterpreter
 
     private byte[]? Data(PdfStream stream)
     {
+        if (_bytes > MaxBytes) return null;
         try
         {
-            return Document.GetStreamData(stream);
+            byte[] data = Document.GetStreamData(stream);
+            _bytes += data.Length;
+            return data;
         }
         catch (PdfFormatException)
         {
@@ -93,6 +107,8 @@ internal abstract class ContentInterpreter
 
     private void Execute(byte[] content, PdfDictionary? resources, int depth)
     {
+        _bytes += content.Length;
+        if (_bytes > MaxBytes) return;
         var reader = new ContentReader(content);
         var op = new ContentOperation();
         int baseDepth = _saved.Count;
@@ -148,7 +164,8 @@ internal abstract class ContentInterpreter
 
                     // A form without resources uses its parent's (ISO 32000-1, 7.8.3, for old files).
                     PdfDictionary? own = Document.Resolve(xobject.Dictionary["Resources"]) as PdfDictionary;
-                    if (Data(xobject) is byte[] data) Execute(data, own ?? resources, depth + 1);
+                    if (!_forms.TryGetValue(xobject, out byte[]? data)) _forms[xobject] = data = Data(xobject);
+                    if (data is not null) Execute(data, own ?? resources, depth + 1);
                     Ctm = saved;
                     Text = text;
                 }

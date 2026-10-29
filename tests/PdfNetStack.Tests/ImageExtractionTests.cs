@@ -325,4 +325,36 @@ public sealed class ImageExtractionTests
         Assert.ThrowsExactly<PdfFormatException>(() => images[1].Decode());
         Assert.IsEmpty(bad.Pages[0].GetImages());
     }
+
+    [TestMethod]
+    public void BoundsTheBytesAnImageOrPageCosts()
+    {
+        // Under the pixel cap, but 32 components of 16 bits: 64 bytes a pixel, refused before allocating.
+        var names = new PdfArray(Enumerable.Range(0, 32).Select(i => (PdfObject)new PdfName("C" + i)).ToList());
+        var deviceN = PdfArray.Of(new PdfName("DeviceN"), names, new PdfName("DeviceGray"), new PdfDictionary());
+        PdfStream wide = Image(1 << 13, 1 << 13, 16, deviceN, [0]);
+
+        // Short data reads as zeros past its end, without being padded out first.
+        PdfStream shortData = Image(4, 2, 8, new PdfName("DeviceGray"), [10, 20, 30]);
+        PdfDocument doc = PdfDocument.Create();
+        PdfPage page = doc.Pages.Add(PdfRectangle.A4);
+        page.Dictionary.Set("Resources", XObjects(doc, ("W", wide), ("S", shortData)));
+        page.Dictionary.Set("Contents", doc.AddObject(PdfStream.FromData("/W Do /S Do"u8)));
+        IReadOnlyList<PdfPageImage> images = Reopen(doc).Pages[0].GetImages();
+        Assert.ThrowsExactly<PdfFormatException>(() => images[0].Decode());
+        CollectionAssert.AreEqual(new byte[] { 10, 20, 30, 0, 0, 0, 0, 0 }, Pixels(images[1].Decode()!));
+
+        // A form holding one 1 MB operand, drawn 2000 times: 2 GB to parse without the page budget.
+        PdfDocument heavy = PdfDocument.Create();
+        PdfPage heavyPage = heavy.Pages.Add(PdfRectangle.A4);
+        byte[] operand = Encoding.ASCII.GetBytes("(" + new string('x', 1 << 20) + ") Tj");
+        var formDict = new PdfDictionary { ["Type"] = new PdfName("XObject"), ["Subtype"] = new PdfName("Form"), ["BBox"] = PdfArray.Of(0, 0, 1, 1) };
+        PdfReference form = heavy.AddObject(PdfStream.FromData(operand, formDict));
+        heavyPage.Dictionary.Set("Resources", new PdfDictionary { ["XObject"] = new PdfDictionary { ["F"] = form } });
+        heavyPage.Dictionary.Set("Contents", heavy.AddObject(PdfStream.FromData(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("/F Do ", 2000))))));
+        PdfDocument reopened = Reopen(heavy);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.IsEmpty(reopened.Pages[0].GetImages());
+        Assert.IsLessThan(15_000, clock.ElapsedMilliseconds);
+    }
 }
