@@ -9,6 +9,7 @@
     <!-- The library's internal polyfills are visible here through InternalsVisibleTo and shadow
          identical framework types on .NET Framework. Harmless; the framework type wins. -->
     <NoWarn Condition="'$(TargetFramework)' == 'net48'">$(NoWarn);CS1685</NoWarn>
+    <Prefer32Bit Condition="'$(TargetFramework)' == 'net48'">false</Prefer32Bit>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,9 +17,18 @@
     <PackageReference Include="MSTest" Version="4.0.2" />
   </ItemGroup>
 
+  <!-- .NET Framework has no runtimes folder probing, and the ONNX Runtime package's copy rule is
+       evaluated before the platform is known, so the native runtime is copied here, for a 64 bit
+       test process. Without it Windows' own, older onnxruntime.dll would load. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.31.0\runtimes\win-x64\native\onnxruntime.dll" Link="onnxruntime.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime\1.31.0\runtimes\win-x64\native\onnxruntime_providers_shared.dll" Link="onnxruntime_providers_shared.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
   </ItemGroup>
 
   <ItemGroup>

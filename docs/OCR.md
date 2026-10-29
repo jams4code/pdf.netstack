@@ -67,7 +67,7 @@ DCT, JPX, JBIG2 and CCITT encoded (`Documents/PdfDocument.cs:410-429`).
 | DCTDecode to pixels | `JpegReader` decodes Huffman data to quantized coefficients, "without an inverse DCT" (`Imaging/JpegReader.cs:5-10`); baseline, extended, progressive, 8 bit | Medium, 4 to 6 days: dequantize, integer IDCT, chroma upsampling, YCbCr, CMYK and YCCK with the Adobe inversion. Most of the hard part exists |
 | CCITTFaxDecode (G3 1D, G3 2D, G4) | none | Medium, 5 to 7 days, about 700 lines. T.4/T.6 are small, fully specified; parameters K, Columns, Rows, BlackIs1, EncodedByteAlign, EndOfBlock |
 | JBIG2Decode with JBIG2Globals | none | Hard, 10 to 15 days, 3,000+ lines: MQ arithmetic decoder, generic regions (MMR and arithmetic), symbol dictionaries, text regions, refinement, halftone. jbig2enc, a common encoder, writes generic and symbol/text regions |
-| JPXDecode | none | Very hard to write. Use `CoreJ2K` 2.4.1.108 (managed, BSD-3-Clause per nuspec, released 2026-10-09) in the add-on; its JJ2000 notices need review |
+| JPXDecode | done | `Jpeg2000Decoder` in the core: managed, no dependency |
 | Raw samples to gray | none on the read side. Color spaces are only counted (`ColorComponents`, `Optimization/StreamRecompressor.cs:248`) and written for PNG embedding (`Drawing/PdfImage.cs:294-310`) | Small, 3 to 4 days: unpack 1/2/4/8/16 bpc, apply `/Decode`, `/ImageMask`, Indexed lookup, DeviceGray/RGB/CMYK, Cal*, ICCBased by `/N` (profile ignored), Separation and DeviceN as inverted tint, Lab approximated |
 
 OCR needs luminance only, so every path ends in 8 bit gray; soft masks are ignored. Arithmetic,
@@ -212,7 +212,9 @@ users can pin or replace them. Add both to `eng/license-allowlist.json` and the 
 
 ## 4. Plan
 
-Status: in phase 0 the content walker, image placement (public as `PdfPage.GetImages()`), raw
+Status: JBIG2 decoding (phase 2's largest item) is done in the core. Phase 1 is done in `src/PdfNetStack.Ocr` (not packaged yet: the models are fetched by
+`tools/fetch_ocr_models.py` until the models package is settled), with integration tests that run
+when `PDFNETSTACK_OCR_MODELS` names the model folder. Before that, in phase 0, the content walker, image placement (public as `PdfPage.GetImages()`), raw
 samples with color spaces and Decode arrays, JPEG pixel decoding, inline images, the CCITT
 Group 3 and 4 decoder, the glyphless font and invisible text (public as
 `PdfGraphics.DrawInvisibleText`) are done. Phase 0 is complete; `InternalsVisibleTo` comes with the

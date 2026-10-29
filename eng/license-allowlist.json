@@ -1,11 +1,14 @@
 {
   "comment": "Every runtime package that ships with a PdfNetStack package must be listed here with its verified license. Adding an entry is a license review: check the nuspec license expression, not the project page.",
   "packages": {
+    "Microsoft.ML.OnnxRuntime": "MIT (LICENSE in the package; native binaries carry ThirdPartyNotices.txt, all permissive). PdfNetStack.Ocr only.",
+    "Microsoft.ML.OnnxRuntime.Managed": "MIT (LICENSE.txt in the package). PdfNetStack.Ocr only.",
     "Microsoft.NET.ILLink.Tasks": "MIT (build time only)",
     "Microsoft.NETCore.Platforms": "Microsoft .NET Library license; contains only runtime.json platform metadata, no code. Implicit dependency of NETStandard.Library 2.0.3.",
     "NETStandard.Library": "MIT (implicit for .NET Standard 2.0 targets)",
     "System.Buffers": "MIT",
     "System.Memory": "MIT",
+    "System.Numerics.Tensors": "MIT",
     "System.Numerics.Vectors": "MIT",
     "System.Runtime.CompilerServices.Unsafe": "MIT"
   },

@@ -27,27 +27,46 @@ internal static class GlyphlessFont
     /// <summary>The TrueType program, for the tests.</summary>
     internal static byte[] FontProgram => Program.Value;
 
-    /// <summary>A code for each UTF-16 code unit; outside the BMP, where a lone surrogate maps to nothing, U+FFFD.</summary>
+    /// <summary>
+    /// A code for each character, in visual order: right to left text is reordered by the Unicode
+    /// bidirectional algorithm, so extractors that read by position, as most do, get it back in
+    /// logical order. Outside the BMP, where a lone surrogate maps to nothing, the code is U+FFFD.
+    /// </summary>
     public static byte[] Encode(string text, out bool lossy)
     {
-        var codes = new List<byte>(text.Length * 2);
+        var points = new List<int>(text.Length);
         lossy = false;
         for (int i = 0; i < text.Length; i++)
         {
             char c = text[i];
             if (char.IsControl(c)) continue;
-            if (char.IsSurrogate(c))
+            lossy |= char.IsSurrogate(c);
+            if (char.IsSurrogatePair(text, i))
             {
-                lossy = true;
-                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])) i++;
-                c = '�';
+                points.Add(char.ConvertToUtf32(text, i++));
+                continue;
             }
 
-            codes.Add((byte)(c >> 8));
-            codes.Add((byte)c);
+            points.Add(char.IsSurrogate(c) ? 0xFFFD : c);
         }
 
-        return [.. codes];
+        int[] order = [.. Enumerable.Range(0, points.Count)];
+        if (points.Any(p => Text.UnicodeData.Bidi(p) is Text.BidiClass.R or Text.BidiClass.AL))
+        {
+            var bidi = Text.Bidi.Analyze([.. points], 2);
+            order = Text.Bidi.Reorder(bidi.LineLevels(0, points.Count));
+        }
+
+        var codes = new byte[points.Count * 2];
+        for (int k = 0; k < order.Length; k++)
+        {
+            int point = points[order[k]];
+            int code = point > 0xFFFF ? 0xFFFD : point;
+            codes[2 * k] = (byte)(code >> 8);
+            codes[(2 * k) + 1] = (byte)code;
+        }
+
+        return codes;
     }
 
     private static PdfReference Create(PdfDocument doc)

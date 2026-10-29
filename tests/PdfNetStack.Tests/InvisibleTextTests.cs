@@ -94,6 +94,11 @@ public sealed class InvisibleTextTests
         // Arabic is right to left; a character outside the BMP becomes U+FFFD in the codes.
         string arabic = Content(Draw(g => g.DrawInvisibleText("مرحبا", 10, 10, 50, 12)));
         StringAssert.Contains(arabic, "/Span <</ActualText<FEFF06450631062D06280627>>> BDC");
+
+        // The codes go in visual order, so extractors that read by position get the logical order back.
+        StringAssert.Contains(arabic, "<06270628062D06310645>Tj");
+        string mixed = Content(Draw(g => g.DrawInvisibleText("مر 12 ح", 10, 10, 50, 12)));
+        StringAssert.Contains(mixed, "<062D002000310032002006310645>Tj", "digits keep their own order");
         string emoji = Content(Draw(g => g.DrawInvisibleText("a\U0001F600b", 10, 10, 30, 12)));
         StringAssert.Contains(emoji, "<0061FFFD0062>Tj");
         StringAssert.Contains(emoji, "/ActualText<FEFF0061D83DDE000062>");
