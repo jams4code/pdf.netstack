@@ -453,7 +453,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Done (next release) |
 | Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
 | Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
-| Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |
+| Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | Done (next release) |
 | HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |
 
 ### Low level access

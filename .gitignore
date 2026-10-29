@@ -10,5 +10,7 @@ artifacts/
 *.nupkg
 *.snupkg
 
-# Never commit real-world documents. Tests build their fixtures in code.
+# Never commit real-world documents. Tests build their fixtures in code, or from a generator
+# script in tools/ for the one synthetic file below.
 *.pdf
+!tests/PdfNetStack.Tests/Fixtures/Forms/form.pdf
