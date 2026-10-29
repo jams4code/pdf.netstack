@@ -65,7 +65,11 @@ quality output, built on the canvas, fonts and text layout above.
    hints (`align`, `bgcolor`, `cellpadding` and the rest of the legacy table markup), media
    queries for print with range syntax, shorthand expansion, `var()` with cycle detection and
    an output budget, `calc()`, `min()`, `max()`, `clamp()`, inheritance and computed values in
-   CSS px, colors through CSS Color 4 (`oklch()`, `lab()`, `hwb()`). Next: the box tree.
+   CSS px, colors through CSS Color 4 (`oklch()`, `lab()`, `hwb()`). The box tree: display
+   types, `display: contents`, `::before`, `::after` and `::marker` with counters, `counters()`,
+   `attr()` and quotes, HTML list numbering (`start`, `reversed`, `value`), anonymous blocks,
+   inlines split around blocks, table and flex fix-ups, white space collapsing across inline
+   boundaries, images with alt text fallback. Next: block and inline layout.
 2. **Block and inline layout.** The box model, block formatting, inline formatting with the text
    engine (fonts, bidi, Arabic), floats, positioning, margins and collapsing, overflow clipping.
 3. **Paged media.** `@page` sizes and margins, margin boxes for running headers and footers,

@@ -252,6 +252,25 @@ internal sealed class StyleResolver
         return style;
     }
 
+    private readonly Dictionary<(ComputedStyle, string), ComputedStyle> _anonymous = [];
+
+    /// <summary>The style of an anonymous box (CSS 2.1, 9.2.1.1): inherited values from the parent, the rest initial.</summary>
+    public ComputedStyle Anonymous(ComputedStyle parent, string display)
+    {
+        if (_anonymous.TryGetValue((parent, display), out ComputedStyle? cached)) return cached;
+        var style = new ComputedStyle(parent, null);
+        var none = new Dictionary<string, (CssDeclaration Declaration, long Rank)>(StringComparer.Ordinal);
+        Compute(style, parent, none, "font-size");
+        foreach (string property in CssProperties.All.Keys)
+        {
+            if (property != "font-size") Compute(style, parent, none, property);
+        }
+
+        style.Values["display"] = [new CssValue(new CssToken(CssTokenType.Ident, display))];
+        _anonymous[(parent, display)] = style;
+        return style;
+    }
+
     private void Compute(ComputedStyle style, ComputedStyle? parent, Dictionary<string, (CssDeclaration Declaration, long Rank)> winners, string property)
     {
         CssProperty info = CssProperties.All[property];
