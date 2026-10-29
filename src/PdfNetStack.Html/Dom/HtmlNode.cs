@@ -14,15 +14,50 @@ internal abstract class HtmlNode
 /// <summary>A run of text.</summary>
 internal sealed class HtmlText(string data) : HtmlNode
 {
-    public string Data { get; internal set; } = data;
+    private string _data = data;
+
+    // Adjacent runs are merged while parsing; a builder keeps that linear.
+    private StringBuilder? _pending;
+
+    public string Data
+    {
+        get
+        {
+            if (_pending is not null)
+            {
+                _data = _pending.ToString();
+                _pending = null;
+            }
+
+            return _data;
+        }
+
+        internal set
+        {
+            _data = value;
+            _pending = null;
+        }
+    }
 
     public override string TextContent => Data;
+
+    internal void AppendData(string more)
+    {
+        _pending ??= new StringBuilder(_data);
+        _pending.Append(more);
+    }
 }
 
 /// <summary>An element with a lowercase name, attributes in source order, and children.</summary>
 internal class HtmlElement(string name) : HtmlNode
 {
     private readonly List<KeyValuePair<string, string>> _attributes = [];
+    private readonly Dictionary<string, string> _index = new(StringComparer.Ordinal);
+    private string[]? _classes;
+    private List<HtmlElement>? _elementChildren;
+    private Dictionary<string, int>? _typeCounts;
+    private int _elementIndex;
+    private int _typeIndex;
 
     public string Name { get; } = name;
 
@@ -42,45 +77,117 @@ internal class HtmlElement(string name) : HtmlNode
         }
     }
 
-    public string? GetAttribute(string name)
-    {
-        foreach (KeyValuePair<string, string> a in _attributes)
-        {
-            if (a.Key == name) return a.Value;
-        }
-
-        return null;
-    }
+    public string? GetAttribute(string name) => _index.TryGetValue(name, out string? value) ? value : null;
 
     /// <summary>Sets an attribute; the first occurrence wins when parsing, as in browsers.</summary>
     internal void AddAttribute(string name, string value)
     {
-        if (GetAttribute(name) is null) _attributes.Add(new(name, value));
+        if (_index.ContainsKey(name)) return;
+        _index.Add(name, value);
+        _attributes.Add(new(name, value));
+        if (name == "class") _classes = null;
     }
 
     public string Id => GetAttribute("id") ?? "";
 
     /// <summary>The class names, split on whitespace.</summary>
     public IReadOnlyList<string> ClassList =>
-        (GetAttribute("class") ?? "").Split([' ', '\t', '\n', '\r', '\f'], StringSplitOptions.RemoveEmptyEntries);
+        _classes ??= (GetAttribute("class") ?? "").Split([' ', '\t', '\n', '\r', '\f'], StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>The parent element, or null for the root element.</summary>
+    public HtmlElement? ParentElement => Parent is HtmlDocument ? null : Parent;
+
+    /// <summary>Child elements, indexed once for sibling and position queries.</summary>
+    internal List<HtmlElement> ElementChildren
+    {
+        get
+        {
+            if (_elementChildren is null) IndexChildren();
+            return _elementChildren!;
+        }
+    }
+
+    /// <summary>Position among sibling elements, from 0.</summary>
+    internal int ElementIndex
+    {
+        get
+        {
+            if (Parent is null) return 0;
+            if (Parent._elementChildren is null) Parent.IndexChildren();
+            return _elementIndex;
+        }
+    }
+
+    internal int ElementSiblingCount => Parent?.ElementChildren.Count ?? 1;
+
+    /// <summary>Position among sibling elements with the same name, from 0.</summary>
+    internal int TypeIndex
+    {
+        get
+        {
+            if (Parent is null) return 0;
+            if (Parent._elementChildren is null) Parent.IndexChildren();
+            return _typeIndex;
+        }
+    }
+
+    internal int TypeCount
+    {
+        get
+        {
+            if (Parent is null) return 1;
+            if (Parent._elementChildren is null) Parent.IndexChildren();
+            return Parent._typeCounts![Name];
+        }
+    }
+
+    internal HtmlElement? PreviousElementSibling => Parent is null || ElementIndex == 0 ? null : Parent.ElementChildren[_elementIndex - 1];
+
+    private void IndexChildren()
+    {
+        var elements = new List<HtmlElement>();
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (HtmlNode n in Children)
+        {
+            if (n is not HtmlElement e) continue;
+            e._elementIndex = elements.Count;
+            counts.TryGetValue(e.Name, out int count);
+            e._typeIndex = count;
+            counts[e.Name] = count + 1;
+            elements.Add(e);
+        }
+
+        _typeCounts = counts;
+        _elementChildren = elements;
+    }
 
     public void Append(HtmlNode node)
     {
         if (node is HtmlText t && Children.Count > 0 && Children[^1] is HtmlText last)
         {
-            last.Data += t.Data;
+            last.AppendData(t.Data);
             return;
         }
 
         node.Parent = this;
         Children.Add(node);
+        _elementChildren = null;
     }
 
     public void InsertBefore(HtmlNode node, HtmlNode reference)
     {
-        int at = Children.IndexOf(reference);
+        // The reference is an open table, so it is at or near the end: search from there.
+        int at = Children.LastIndexOf(reference);
+        if (at < 0) at = Children.Count;
+        if (node is HtmlText t && at > 0 && Children[at - 1] is HtmlText previous)
+        {
+            previous.AppendData(t.Data);
+            return;
+        }
+
         node.Parent = this;
-        Children.Insert(at < 0 ? Children.Count : at, node);
+        Children.Insert(at, node);
+        _elementChildren = null;
     }
 
     /// <summary>Descendant elements in document order.</summary>
