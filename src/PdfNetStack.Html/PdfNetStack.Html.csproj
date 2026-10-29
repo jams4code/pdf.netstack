@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>PdfNetStack.Html</RootNamespace>
+    <IsAotCompatible Condition="'$(TargetFramework)' != 'netstandard2.0'">true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1573</NoWarn>
+    <!-- Polyfills shared from the core through InternalsVisibleTo shadow identical framework types. Harmless. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'netstandard2.0'">$(NoWarn);CS1685</NoWarn>
+    <!-- Not published until the engine renders documents; remove when the first version is ready. -->
+    <IsPackable>false</IsPackable>
+    <PackageId>PdfNetStack.Html</PackageId>
+    <Title>PdfNetStack.Html: HTML and CSS to PDF in pure C#</Title>
+    <Description>Convert HTML and CSS to PDF in .NET without a browser: an HTML5 parser, CSS cascade, block, inline, table and flex layout, paged media with headers, footers and page numbers, web fonts, right to left and Arabic text. Pure C#, MIT licensed, built on PdfNetStack. By Jamal Abdelkhalek, JADEV.</Description>
+    <PackageTags>pdf;html-to-pdf;css;html;wkhtmltopdf-alternative;weasyprint;pdf-generation;invoice;report;jadev</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfNetStack\PdfNetStack.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfNetStack.Tests" />
+  </ItemGroup>
+
+</Project>
