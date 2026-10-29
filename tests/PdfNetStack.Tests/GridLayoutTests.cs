@@ -370,6 +370,17 @@ public sealed class GridLayoutTests
     }
 
     [TestMethod]
+    public void NestedRepeatsAreIgnoredInLinearTime()
+    {
+        // repeat() is not allowed inside repeat(); deep nesting must not cost time doubling per level.
+        string nested = string.Concat(Enumerable.Repeat("repeat(2, ", 40)) + "10px" + new string(')', 40);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        BoxFragment root = Grid($"width: 300px; grid-template-columns: {nested} 20px", "<div>a</div><div>b</div>");
+        Assert.IsLessThan(5_000, clock.ElapsedMilliseconds);
+        Assert.IsNotNull(ById(root, "g"));
+    }
+
+    [TestMethod]
     public void HostileSpansStayBounded()
     {
         // Large spans on many items, some fixed and some placed automatically, in a narrow grid.

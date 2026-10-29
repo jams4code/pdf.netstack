@@ -487,8 +487,9 @@ public static class PdfSigner
 
         if (info.Certificate is not X509Certificate2 signer) return;
 
-        // The timestamp proves when the signature existed, unless its own authority failed validation.
-        bool timestamped = info.Timestamp is { IsIntact: true } && authority?.Status != PdfCheckStatus.Failed;
+        // The timestamp proves when the signature existed only when its own authority validated: an
+        // authority that failed or could not be checked must not move the signer's check into the past.
+        bool timestamped = info.Timestamp is { IsIntact: true } && authority?.Status == PdfCheckStatus.Passed;
         (DateTimeOffset at, PdfValidationTimeSource from) = options.ValidationTime is DateTimeOffset given ? (given, PdfValidationTimeSource.Caller)
             : timestamped ? (info.Timestamp!.Time, PdfValidationTimeSource.Timestamp) : (now, PdfValidationTimeSource.Current);
         info.Validation = validator.Validate(signer, cms.Certificates, CertificateRole.Signer, at, from);

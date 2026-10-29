@@ -265,7 +265,8 @@ internal sealed partial class LayoutEngine
     /// A track list (CSS Grid 1, 7.2): sizes, repeat() and line names. With subgrid, the line name
     /// list instead (CSS Grid 2, 9.1).
     /// </summary>
-    private static TrackList ParseTracks(List<CssValue> value, double? basis, double gap)
+    /// <param name="inRepeat">True for the track list inside a repeat(); CSS allows no repeat() there, so a nested one is ignored and parsing stays linear.</param>
+    private static TrackList ParseTracks(List<CssValue> value, double? basis, double gap, bool inRepeat = false)
     {
         var list = new TrackList();
         List<CssValue> items = value.Where(v => !v.IsWhitespace).ToList();
@@ -305,9 +306,9 @@ internal sealed partial class LayoutEngine
         {
             if (v.Function == "repeat")
             {
-                if (Repeat(v) is (int count, List<CssValue> unit))
+                if (!inRepeat && Repeat(v) is (int count, List<CssValue> unit))
                 {
-                    List<TrackSize> sizes = ParseTracks(unit, basis, gap).Sizes;
+                    List<TrackSize> sizes = ParseTracks(unit, basis, gap, inRepeat: true).Sizes;
                     others += count * sizes.Sum(FixedSize);
                     otherCount += count * sizes.Count;
                 }
@@ -330,8 +331,8 @@ internal sealed partial class LayoutEngine
             if (v.IsIdent("none")) continue;
             if (v.Function == "repeat")
             {
-                if (Repeat(v) is not (var count, var values)) continue;
-                TrackList unit = ParseTracks(values, basis, gap);
+                if (inRepeat || Repeat(v) is not (var count, var values)) continue;
+                TrackList unit = ParseTracks(values, basis, gap, inRepeat: true);
                 if (unit.Sizes.Count == 0) continue;
                 int times = count ?? 1;
                 if (count is null)

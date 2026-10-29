@@ -221,6 +221,9 @@ public sealed class LongTermSignatureTests
         Assert.AreEqual(PdfCheckStatus.NotChecked, v.Chain);
         Assert.AreEqual(PdfCheckStatus.Indeterminate, v.Status);
         Assert.HasCount(3, v.Certificates);
+
+        // A timestamp whose authority could not be validated does not move the check into the past.
+        Assert.AreEqual(PdfValidationTimeSource.Current, v.TimeSource);
     }
 
     [TestMethod]

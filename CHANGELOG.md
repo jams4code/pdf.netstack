@@ -52,7 +52,8 @@
   Only revocation data that matches the certificate and is signed by its issuer or delegated
   responder is kept; delta and partitioned CRLs are not used. The library makes no network calls.
 - Signature validation: `PdfSigner.Verify(pdf, PdfValidationOptions)` builds chains to caller
-  supplied trust anchors and checks validity at the timestamp's time (or now), key usage (signer,
+  supplied trust anchors and checks validity at the timestamp's time when its authority validates
+  (otherwise now), key usage (signer,
   CA with path length, time stamp authority) and revocation from the document security store or
   supplied data, with OCSP freshness and delegated responders. `PdfCertificateValidation` reports
   each check per certificate as passed, failed, indeterminate or not checked, with the reasons.
