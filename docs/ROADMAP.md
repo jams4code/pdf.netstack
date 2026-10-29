@@ -45,8 +45,10 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
 8. **Remaining document features.** Done for 1.1: viewer preferences, page layout and mode,
    open action, right to left reading, page labels, language, custom properties, file
    attachments.
-9. **Signatures and PDF/A.** PAdES baseline signing with incremental save, signature
-   validation report, PDF/A-2b and 3b output with XMP sync and embedded output intent.
+9. **Signatures and PDF/A.** PDF/A-2b, 2u, 3b and 3u output: done for 1.1 (checks, sRGB output
+   intent, XMP sync, associated files). Next: veraPDF validation in CI, Factur-X and ZUGFeRD
+   XMP extension schemas, PAdES baseline signing with incremental save, and a signature
+   validation report.
 
 ## HTML and CSS to PDF
 

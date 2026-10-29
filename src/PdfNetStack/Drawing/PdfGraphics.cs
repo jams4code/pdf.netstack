@@ -765,6 +765,7 @@ public sealed class PdfGraphics : IDisposable
 
     private void WriteColor(PdfColor color, bool stroke)
     {
+        if (color.Space == PdfColorSpace.Cmyk) _doc.UsesDeviceCmyk = true;
         double[] c = color.Components();
         foreach (double v in c) _w.Number(v);
         _w.Op(color.Space switch
@@ -799,6 +800,7 @@ public sealed class PdfGraphics : IDisposable
             for (int i = 0; i < stops.Length; i++) stops[i] = stops[i] with { Color = stops[i].Color.ToRgb() };
         }
 
+        if (space == PdfColorSpace.Cmyk) _doc.UsesDeviceCmyk = true;
         var shading = new PdfDictionary
         {
             ["ColorSpace"] = new PdfName(space switch { PdfColorSpace.Gray => "DeviceGray", PdfColorSpace.Rgb => "DeviceRGB", _ => "DeviceCMYK" }),

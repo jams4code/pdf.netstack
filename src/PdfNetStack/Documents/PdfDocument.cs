@@ -26,6 +26,13 @@ public sealed record PdfSaveOptions
 
     /// <summary>Flate effort for streams the writer compresses. Default <see cref="CompressionEffort.Maximum"/>.</summary>
     public CompressionEffort Compression { get; init; } = CompressionEffort.Maximum;
+
+    /// <summary>
+    /// A standard to conform to, such as PDF/A-3b for archiving and e-invoices. Saving checks what
+    /// cannot be repaired and throws listing every problem, then adds the output intent and
+    /// metadata the standard requires.
+    /// </summary>
+    public PdfConformance Conformance { get; init; }
 }
 
 /// <summary>
@@ -46,6 +53,9 @@ public sealed class PdfDocument
     private readonly Dictionary<Fonts.PdfFont, Fonts.FontResource> _fonts = new();
     private readonly Dictionary<Drawing.PdfImage, PdfReference> _images = new();
     private PdfAcroForm? _form;
+
+    /// <summary>True once drawing or images used DeviceCMYK, which PDF/A with an RGB intent forbids.</summary>
+    internal bool UsesDeviceCmyk { get; set; }
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -228,6 +238,7 @@ public sealed class PdfDocument
         // everything drawn, so they are written now.
         foreach (Fonts.FontResource font in _fonts.Values) font.Finish();
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
+        if (options.Conformance != PdfConformance.None) PdfArchive.Prepare(this, options.Conformance);
         Security.RequireOwner();
 
         CompressionLevel level = options.Compression switch

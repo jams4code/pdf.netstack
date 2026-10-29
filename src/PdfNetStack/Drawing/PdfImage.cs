@@ -139,6 +139,8 @@ public sealed class PdfImage
                 ["Filter"] = new PdfName("DCTDecode"),
             };
 
+            if (h.Components == 4 && h.IccProfile is null) doc.UsesDeviceCmyk = true;
+
             // Adobe applications write CMYK JPEGs inverted; every reader undoes it this way.
             if (h.Components == 4 && h.Adobe) dict.Set("Decode", PdfArray.Of(1, 0, 1, 0, 1, 0, 1, 0));
             return doc.AddObject(new PdfStream(dict, data));

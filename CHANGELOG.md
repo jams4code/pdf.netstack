@@ -61,6 +61,10 @@
   reading, opening page and zoom), `PdfDocument.PageLabels` (roman, decimal and letter ranges
   with prefixes, label lookup), `PdfDocument.Attachments` (embed, read, replace, remove files)
   and `PdfDocument.Language`.
+- PDF/A: `PdfSaveOptions.Conformance` writes PDF/A-2b, 2u, 3b or 3u. Problems that cannot be
+  repaired are listed together in one exception; the output gets an sRGB output intent with a
+  profile the library generates, XMP metadata synchronized with the document information,
+  printable annotations, and PDF/A-3 associated file entries for attachments.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 
