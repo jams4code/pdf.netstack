@@ -131,8 +131,9 @@ caller, and installed system fonts, and falls back to the standard 14 fonts for 
 `PdfNetStack.Ocr`, an optional package that makes scanned PDFs searchable: page images are
 recognized and an invisible text layer is written over them, so text can be selected, copied
 and searched. The core stays pure managed and MIT; the OCR engine and its models live only in
-the add-on. Scoping (engine choice, the image decoders scanned PDFs need, the text layer) is in
-progress.
+the add-on. The design is in [OCR.md](OCR.md): ONNX Runtime with the PaddleOCR PP-OCRv5 models
+(Latin and Arabic), and the core work it needs first (pixel decoding for JPEG, CCITT and JBIG2
+images, a content stream walker that finds page images, and invisible text).
 
 ## Optimizer, next
 
