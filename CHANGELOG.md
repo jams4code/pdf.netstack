@@ -28,7 +28,44 @@
   and `PdfTextField.FormattedText` returns it. The call is parsed and the formatting done in C#;
   no JavaScript runs, and any other script leaves the value as it is.
 - Fixed: form flattening threw on a widget whose appearance entry was not a stream.
-
+- HTML grid layout follows CSS Grid 1 and 2 further: `grid-auto-flow` with `column` and `dense`
+  packing; line names in track lists and `repeat()`, placement by name and by `span name`, with
+  the `name-start` and `name-end` lines of areas and the implicit lines past the explicit grid;
+  implicit tracks before the explicit grid for negative lines; `subgrid` on rows, columns or
+  both, with the parent's line names, the subgrid's own name list, its own gaps, and its items
+  sizing the parent's tracks through its margins, borders and padding. `repeat(auto-fill)`
+  counts the other tracks of the list when working out how many repetitions fit, and the empty
+  tracks of `repeat(auto-fit)` collapse with their gaps. The `grid-template` and `grid`
+  shorthands are read, area strings and `auto-flow` included.
+- HTML named pages: the `page` property works on any block in the block flow, not only children
+  of `body` (CSS Paged Media 3, 8). A change of page name forces a break, and the content after
+  it is laid out at its own page type's width. A box that spans the break is sliced: its top
+  edge shows before the break and its bottom edge after, and the margin after the break is kept.
+- HTML pagination: a forced break before the first content or after the last no longer adds an
+  empty page, so `break-before: page` on the first element starts the document on page one.
+- PAdES B-T, B-LT and B-LTA. `PdfTimestampClient` builds RFC 3161 requests (hash, random nonce,
+  optional policy) and checks the reply (status, hash, nonce, signature, a critical time stamping
+  extended key usage); the application supplies the transport. `PdfSignatureOptions.Timestamp`
+  adds a signature timestamp, `PdfSigner.AddDocumentTimestamp` a /DocTimeStamp, and
+  `PdfSigner.AddValidationData` the document security store: certificate chains, OCSP responses
+  and CRLs from an `IPdfRevocationSource`, and a VRI entry per signature, in an incremental update.
+  Only revocation data that matches the certificate and is signed by its issuer or delegated
+  responder is kept; delta and partitioned CRLs are not used. The library makes no network calls.
+- Signature validation: `PdfSigner.Verify(pdf, PdfValidationOptions)` builds chains to caller
+  supplied trust anchors and checks validity at the timestamp's time (or now), key usage (signer,
+  CA with path length, time stamp authority) and revocation from the document security store or
+  supplied data, with OCSP freshness and delegated responders. `PdfCertificateValidation` reports
+  each check per certificate as passed, failed, indeterminate or not checked, with the reasons.
+  `PdfSignatureInfo` now also reports document timestamps and signature timestamps.
+- Factur-X and ZUGFeRD: `PdfInvoice.Attach` embeds the invoice XML (checked for well formedness,
+  without DTDs) as factur-x.xml, or xrechnung.xml for XRECHNUNG, with the profile's relationship;
+  saving as PDF/A-3 writes the fx: XMP properties (MINIMUM to EXTENDED and XRECHNUNG) with their
+  extension schema, checks the attachment is still there, and keeps the metadata when an opened
+  invoice is saved again.
+- PDF/A-3: the catalog's /AF array now references the attachment's file specification itself
+  instead of a copy of it.
+- CI: a veraPDF job validates PDF/A-2b, 2u, 3b and 3u files made by the library, including a
+  Factur-X invoice signed to PAdES B-LTA.
 - `PdfNetStack.Azure` is discontinued so the project can focus on PDF itself. Reading from and
   writing to storage belongs to the application, around the stream APIs. Version 1.0.0 stays on
   NuGet and keeps working.

@@ -25,10 +25,10 @@ Done and in the main branch:
 | Annotations | Links, named destinations (read and rename), notes, text markup, free text, stamps, ink, squares, circles, lines with endings, polygons, polylines and file attachments, with appearance streams; flattening of one annotation, a page or a document |
 | Forms | Creating text, check box, radio, choice, signature and button fields; reading, filling and flattening; fields travel with imported and merged pages; the Acrobat number, percent, date, time and special format actions applied in C# |
 | Document features | Viewer preferences, page labels, language, custom properties, file attachments |
-| Signatures and PDF/A | PAdES B-B signing and verification (RSA and ECDSA); PDF/A-2b, 2u, 3b and 3u output |
+| Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; PDF/A-2b, 2u, 3b and 3u output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
 | Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
-| HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout, floats, positioning, paged media with margin boxes, named pages, running elements, web fonts, tagged PDF |
+| HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, tagged PDF |
 
 ## Next
 
@@ -41,14 +41,8 @@ Done and in the main branch:
   dictionary hyphenation.
 
 **Signatures and PDF/A**
-- veraPDF validation in CI.
-- RFC 3161 timestamps (PAdES B-T), long term validation data (B-LT), certificate chain and
-  revocation checks.
-- Factur-X and ZUGFeRD metadata.
-
-**HTML and CSS**
-- The `page` property on nested elements.
-- Grid: dense packing, column flow, subgrid, named lines.
+- Full ETSI EN 319 102-1 validation: certificate policies, name constraints, qualified status.
+- PDF/A-1b and PDF/A-4 output.
 
 **OCR**
 - A models package, then `PdfNetStack.Ocr` on NuGet.
