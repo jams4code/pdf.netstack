@@ -58,6 +58,10 @@ quality output, built on the canvas, fonts and text layout above.
 
 1. **Parsing.** An HTML5 tokenizer and tree builder, a CSS Syntax Level 3 parser, selectors
    Level 4 (minus dynamic pseudo classes), cascade, inheritance and computed values, `var()`.
+   Done: the HTML parser, the CSS tokenizer and rule parser (`@media`, `@page` with margin boxes,
+   `@font-face`, `@import`), selectors with all combinators, attribute operators, the `:nth-*`
+   family with `of S`, `:not`, `:is`, `:where`, `:lang`, `:dir`, pseudo-elements and
+   specificity. Next: the cascade and computed values.
 2. **Block and inline layout.** The box model, block formatting, inline formatting with the text
    engine (fonts, bidi, Arabic), floats, positioning, margins and collapsing, overflow clipping.
 3. **Paged media.** `@page` sizes and margins, margin boxes for running headers and footers,
