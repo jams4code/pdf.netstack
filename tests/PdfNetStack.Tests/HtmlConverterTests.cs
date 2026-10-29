@@ -86,6 +86,17 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void RepeatsFixedBoxesOnEveryPage()
+    {
+        PdfDocument doc = Convert("""
+            <div style="position: fixed; top: 0; right: 0">Draft</div>
+            <p>one</p><p style="break-before: page">two</p><p style="break-before: page">three</p>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        for (int page = 0; page < 3; page++) Assert.HasCount(1, Regex.Matches(Text(doc, page), "Draft"), $"page {page + 1}");
+    }
+
+    [TestMethod]
     public void AppliesPageRulesAndMarginBoxes()
     {
         PdfDocument doc = Convert("""

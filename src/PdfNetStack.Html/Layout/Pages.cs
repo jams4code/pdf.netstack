@@ -285,7 +285,15 @@ internal static class Paginator
             }
         }
 
-        List<BoxFragment> blocks = box.Children.OfType<BoxFragment>().ToList();
+        // Floats and positioned boxes are not in the flow: breaks go between in-flow siblings and never through them.
+        var blocks = new List<BoxFragment>();
+        foreach (BoxFragment child in box.Children.OfType<BoxFragment>())
+        {
+            bool outOfFlow = child.Style.Keyword("float") is not ("none" or "") || child.Style.Keyword("position") is "absolute" or "fixed";
+            if (outOfFlow) avoid.Add((child.Y, child.Bottom));
+            else blocks.Add(child);
+        }
+
         for (int i = 0; i < blocks.Count; i++)
         {
             BoxFragment child = blocks[i];

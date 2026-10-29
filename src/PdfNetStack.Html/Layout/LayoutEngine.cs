@@ -65,10 +65,21 @@ internal sealed partial class LayoutEngine
     }
 
     /// <summary>Lays out the root box across <paramref name="width"/>.</summary>
-    public BoxFragment Layout(BlockBox root, double width)
+    /// <param name="root">The root element's box.</param>
+    /// <param name="width">The page area width.</param>
+    /// <param name="pageHeight">The page area height: the initial containing block for absolute and fixed positioning.</param>
+    public BoxFragment Layout(BlockBox root, double width, double pageHeight = double.PositiveInfinity)
     {
-        Placed placed = LayoutBlockLevel(root, 0, width, 0, MarginCollapse.None, null);
-        return placed.Fragment;
+        _floats = new FloatContext();
+        _positioned.Clear();
+        _fixedPending.Clear();
+        Fixed.Clear();
+        _positioned.Push([]);
+        BoxFragment fragment = LayoutBlockLevel(root, 0, width, 0, MarginCollapse.None, null).Fragment;
+        double height = double.IsInfinity(pageHeight) ? fragment.Height : pageHeight;
+        LayoutPending(_positioned.Pop(), fragment, 0, 0, width, height);
+        foreach (Pending p in _fixedPending) Fixed.Add(LayoutAbsolute(p, 0, 0, width, height));
+        return fragment;
     }
 
     /// <summary>A laid out block-level box and the margins still collapsing below it.</summary>
@@ -106,6 +117,12 @@ internal sealed partial class LayoutEngine
 
         var fragment = new BoxFragment(box) { Border = border, Padding = padding };
         bool context = EstablishesContext(box);
+        bool positioned = IsPositioned(box);
+
+        // A formatting context keeps its floats to itself; a positioned box collects its absolute descendants.
+        FloatContext outerFloats = _floats;
+        if (context) _floats = new FloatContext();
+        if (positioned) _positioned.Push([]);
         MarginCollapse top = pending + margin.Top;
         bool collapseTop = border.Top == 0 && padding.Top == 0 && !context;
         double contentX = cbX + margin.Left + border.Left + padding.Left;
@@ -122,7 +139,7 @@ internal sealed partial class LayoutEngine
             {
                 double lineTop = cursor + inner.Value;
                 y ??= lineTop;
-                List<LineFragment> lines = inline.Layout(contentX, lineTop, out double height);
+                List<LineFragment> lines = inline.Layout(contentX, lineTop, out double height, Exclusions(contentX, contentWidth));
                 fragment.Children.AddRange(lines);
                 if (lines.Count > 0)
                 {
@@ -138,7 +155,40 @@ internal sealed partial class LayoutEngine
         {
             foreach (Box child in box.Children)
             {
-                Placed placed = LayoutBlockLevel(child, contentX, contentWidth, cursor, inner, ownHeight);
+                if (IsOutOfFlow(child))
+                {
+                    Defer(child, contentX, cursor + inner.Value);
+                    continue;
+                }
+
+                if (IsFloat(child))
+                {
+                    fragment.Children.Add(PlaceFloat(child, contentX, contentWidth, cursor + inner.Value));
+                    continue;
+                }
+
+                // Clearance moves the box below the floats it clears; its margin no longer collapses above.
+                string clear = child.Style.Keyword("clear");
+                if (clear is not ("none" or "") && !_floats.IsEmpty)
+                {
+                    double childMargin = BoxMetrics.Margins(child.Style, contentWidth).Top;
+                    double clearY = _floats.Clear(clear);
+                    if (clearY > cursor + (inner + childMargin).Value)
+                    {
+                        cursor = clearY - childMargin;
+                        inner = MarginCollapse.None;
+                    }
+                }
+
+                // A new formatting context sits beside floats rather than under them.
+                double childX = contentX, childWidth = contentWidth;
+                if (EstablishesContext(child) && !_floats.IsEmpty)
+                {
+                    (double l, double r, _) = _floats.Free(cursor + inner.Value, 1, contentX, contentX + contentWidth);
+                    (childX, childWidth) = (l, Math.Max(0, r - l));
+                }
+
+                Placed placed = LayoutBlockLevel(child, childX, childWidth, cursor, inner, ownHeight);
                 fragment.Children.Add(placed.Fragment);
                 if (placed.CollapsedThrough)
                 {
@@ -157,6 +207,14 @@ internal sealed partial class LayoutEngine
         bool empty = y is null;
         y ??= cursorY + top.Value;
         double contentTop = y.Value + border.Top + padding.Top;
+
+        // A formatting context root grows to contain its floats (CSS 2.1, 10.6.7).
+        if (context && !_floats.IsEmpty && _floats.Bottom > cursor + inner.Value)
+        {
+            cursor = _floats.Bottom;
+            inner = MarginCollapse.None;
+        }
+
         bool collapseBottom = border.Bottom == 0 && padding.Bottom == 0 && !context && ownHeight is null;
         double contentHeight;
         MarginCollapse bottom;
@@ -180,9 +238,16 @@ internal sealed partial class LayoutEngine
 
         if (box is BlockBox { Marker: Box marker }) PlaceMarker(fragment, marker);
         bool collapsedThrough = empty && collapseTop && collapseBottom && contentHeight == 0;
-        if (collapsedThrough) return new Placed(fragment, bottom, true);
-        Offset(fragment, style, cbWidth, cbHeight);
-        return new Placed(fragment, bottom, false);
+        if (!collapsedThrough) Offset(fragment, style, cbWidth, cbHeight);
+        _floats = outerFloats;
+
+        // Absolute descendants are placed against the padding box, now that it is final.
+        if (positioned)
+        {
+            LayoutPending(_positioned.Pop(), fragment, fragment.X + border.Left, fragment.Y + border.Top, fragment.Width - border.Horizontal, fragment.Height - border.Vertical);
+        }
+
+        return new Placed(fragment, bottom, collapsedThrough);
     }
 
     /// <summary>Width and horizontal margins of a block in normal flow (CSS 2.1, 10.3.3), with min and max (10.4).</summary>
@@ -362,22 +427,25 @@ internal sealed partial class LayoutEngine
             return wrapper;
         }
 
-        // Inline blocks and inline flex containers shrink to fit (CSS 2.1, 10.3.9).
+        // Inline blocks, floats and inline flex containers: a specified width, else shrink to fit
+        // (CSS 2.1, 10.3.9 and 10.3.5). Auto margins are 0; unlike blocks in the flow, no margin
+        // absorbs the rest of the line, so the width is always decided here.
         ComputedStyle s = box.Style;
         Edges margin = BoxMetrics.Margins(s, available);
         Edges border = BoxMetrics.Borders(s);
         Edges padding = BoxMetrics.Paddings(s, available);
         double frame = border.Horizontal + padding.Horizontal;
-        double? width = null;
-        if (BoxMetrics.IsAuto(s, "width"))
+        double width = DefiniteSize(s, "width", available, border, padding, horizontal: true) ?? ShrinkToFit();
+        if (DefiniteSize(s, "max-width", available, border, padding, horizontal: true) is double mx) width = Math.Min(width, mx);
+        if (DefiniteSize(s, "min-width", available, border, padding, horizontal: true) is double mn) width = Math.Max(width, mn);
+
+        double ShrinkToFit()
         {
             (double min, double max) = ContentIntrinsic(box);
-            width = Math.Min(Math.Max(min, available - margin.Horizontal - frame), max);
-            if (s.Keyword("max-width") != "none" && s.Length("max-width", available) is double mx) width = Math.Min(width.Value, mx - (s.Keyword("box-sizing") == "border-box" ? frame : 0));
-            if (s.Length("min-width", available) is double mn) width = Math.Max(width.Value, mn - (s.Keyword("box-sizing") == "border-box" ? frame : 0));
+            return Math.Min(Math.Max(min, available - margin.Horizontal - frame), max);
         }
 
-        Placed placed = LayoutBlockLevel(box, 0, available, 0, MarginCollapse.None, null, width);
+        Placed placed = LayoutBlockLevel(box, 0, available, 0, MarginCollapse.None, null, Math.Max(0, width));
         BoxFragment f = placed.Fragment;
         f.Translate(margin.Left - f.X, margin.Top - f.Y);
         return f;
@@ -432,7 +500,7 @@ internal sealed partial class LayoutEngine
         }
 
         double min = 0, max = 0;
-        foreach (Box child in box.Children)
+        foreach (Box child in box.Children.Where(c => !IsOutOfFlow(c)))
         {
             (double cmin, double cmax) = Intrinsic(child);
             min = Math.Max(min, cmin);

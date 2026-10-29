@@ -79,7 +79,11 @@ quality output, built on the canvas, fonts and text layout above.
    blocks shrink to fit, replaced elements keep their ratio under `max-width`, outside list
    markers sit on the first baseline. Fonts: `@font-face` (with weight ranges and `local()`),
    caller fonts, installed fonts, generic families as the standard 14 fonts, and installed
-   fonts with wide coverage as fallbacks. Next: floats, absolute positioning, overflow.
+   fonts with wide coverage as fallbacks. Floats: shrink-to-fit sizing, placement beside and
+   below earlier floats, line boxes shortened or moved down around them, `clear`, formatting
+   contexts that contain their floats and sit beside others. Positioning: `relative` offsets,
+   `absolute` against the nearest positioned ancestor's padding box (insets, auto sizes,
+   static position, centring, `z-index` below or above), `fixed` repeated on every page.
 3. **Paged media.** Done: `@page` with `:first`, `:left`, `:right`, named and custom sizes,
    orientation and margins; margin boxes with text and `counter(page)` / `counter(pages)`;
    breaks between lines and blocks, forced with `break-before` / `break-after` (and the

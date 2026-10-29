@@ -504,17 +504,23 @@ internal sealed class InlineLayout
     }
 
     /// <summary>Lays out the lines from (<paramref name="x"/>, <paramref name="y"/>); <paramref name="height"/> is their total height.</summary>
-    public List<LineFragment> Layout(double x, double y, out double height)
+    /// <param name="x">The left content edge.</param>
+    /// <param name="y">The top of the first line.</param>
+    /// <param name="height">The height of all lines.</param>
+    /// <param name="exclusions">Floats beside the lines: for a band given by its top and height, the room they take on each side and where that changes; null when there are none.</param>
+    public List<LineFragment> Layout(double x, double y, out double height, Func<double, double, Exclusion>? exclusions = null)
     {
         var lines = new List<LineFragment>();
         int n = _text.Length;
         double top = y;
         int lineStart = 0, next = 0;
         double indent = _container.Length("text-indent", _width) ?? 0;
+        double strut = Metrics(_container).LineHeight;
         while (lineStart < n)
         {
             bool first = lines.Count == 0;
-            double available = _width - (first ? indent : 0);
+            Exclusion band = exclusions?.Invoke(top, strut) ?? default;
+            double available = _width - band.Left - band.Right - (first ? indent : 0);
             int end = -1;
             bool mandatory = false;
             while (next < _breaks.Count && _breaks[next].Position <= lineStart) next++;
@@ -524,6 +530,13 @@ internal sealed class InlineLayout
                 end = _breaks[b].Position;
                 mandatory = _breaks[b].Mandatory;
                 if (mandatory) break;
+            }
+
+            // Nothing fits beside a float: the line moves down to where the float ends (CSS 2.1, 9.5).
+            if (end < 0 && band.Left + band.Right > 0 && band.Next > top && !double.IsInfinity(band.Next))
+            {
+                top = band.Next;
+                continue;
             }
 
             if (end < 0)
@@ -536,7 +549,7 @@ internal sealed class InlineLayout
             }
 
             bool last = end >= n;
-            LineFragment line = BuildLine(lineStart, end, x, top, available, first ? indent : 0, last || mandatory);
+            LineFragment line = BuildLine(lineStart, end, x + band.Left, top, available, first ? indent : 0, last || mandatory);
             lines.Add(line);
             top += line.Height;
             lineStart = end;
@@ -736,7 +749,7 @@ internal sealed class InlineLayout
         }
 
         double baseline = top - minTop;
-        var line = new LineFragment { X = x, Y = top, Width = _width, Height = maxBottom - minTop, Baseline = baseline };
+        var line = new LineFragment { X = x, Y = top, Width = available + indent, Height = maxBottom - minTop, Baseline = baseline };
 
         // Place segments left to right with their inline box edges.
         double cursor = x + (_rtl ? 0 : indent) + offset;

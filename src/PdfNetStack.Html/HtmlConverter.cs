@@ -76,7 +76,7 @@ public static class HtmlConverter
         BlockBox root = new BoxBuilder(resolver, resources.LoadImage).Build(doc);
         var master = new PageMaster(resolver, root.Style, options.PageStyle);
         var engine = new LayoutEngine(fonts);
-        BoxFragment layout = engine.Layout(root, master.Geometry(0).ContentWidth);
+        BoxFragment layout = engine.Layout(root, master.Geometry(0).ContentWidth, master.Geometry(0).ContentHeight);
         List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(i).ContentHeight);
 
         var pdf = PdfDocument.Create();
@@ -126,6 +126,17 @@ public static class HtmlConverter
                 // The page shows its slice; content may overflow sideways into the margins.
                 graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
                 new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated).Paint(layout);
+            }
+
+            // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
+            foreach (BoxFragment fixedBox in engine.Fixed)
+            {
+                using (graphics.Save())
+                {
+                    graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
+                    graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
+                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated).Paint(fixedBox);
+                }
             }
 
             MarginBoxes(graphics, master, engine, i, slices.Count);
