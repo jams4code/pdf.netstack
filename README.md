@@ -224,6 +224,25 @@ page.Annotations.AddNote(520, 40, "Please review", author: "Finance");
 g.AddLink(0, 0, 100, 20, new Uri("https://example.com"));   // follows the canvas transform
 ```
 
+Fill and flatten forms:
+
+```csharp
+PdfDocument doc = PdfDocument.Open("application.pdf");
+((PdfTextField)doc.Form["name"]!).Text = "Jamal Abdelkhalek";
+((PdfCheckBoxField)doc.Form["subscribe"]!).Checked = true;
+((PdfRadioButtonField)doc.Form["plan"]!).Selected = "pro";
+((PdfChoiceField)doc.Form["country"]!).Select("Morocco");
+doc.Form.Flatten();                                  // optional: values become page content
+doc.Save("filled.pdf");
+```
+
+Every field kind is read (text, check box, radio group, combo and list box, push button,
+signature) with fully qualified names, inherited attributes and widget pages. Setting a value
+redraws the field's appearance from its border, background, font and color settings, with
+multiline wrapping, comb cells, password masking and automatic font size, so filled forms look
+the same in every viewer. A font the form embeds whole is reused; others map to the closest
+standard font.
+
 ### Encryption
 
 ```csharp
@@ -394,7 +413,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Text layout | Line breaking, alignment, justification, rich text, Arabic and RTL | Done (next release) |
 | Images and overlays | JPEG and PNG placement, pages of other PDFs as watermarks, letterheads, n-up | Done (next release) |
 | Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
-| Forms (AcroForm) | Reading, filling and flattening fields | Planned |
+| Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
 | Signatures and PDF/A | PAdES signing, PDF/A-2b and 3b output | Planned |
 | HTML and CSS | WeasyPrint-style layout engine: CSS cascade, flexbox, tables, paged media, web fonts | Planned |
 

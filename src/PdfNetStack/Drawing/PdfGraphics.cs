@@ -83,6 +83,7 @@ public sealed class PdfGraphics : IDisposable
     private readonly PdfForm? _form;
     private readonly PdfDictionary _resourceOwner;
     private readonly PdfGraphicsLayer _layer;
+    private readonly PdfMatrix _flip;
     private readonly ContentWriter _w = new();
     private readonly Stack<State> _saved = new();
     private readonly Dictionary<(string Key, double Value), string> _alphaStates = new();
@@ -113,7 +114,8 @@ public sealed class PdfGraphics : IDisposable
         Height = box.Height;
 
         // Flip to a top left origin with y down. Everything below is in canvas coordinates.
-        _w.Op("q").Matrix(new PdfMatrix(1, 0, 0, -1, box.Left, box.Top)).Op("cm");
+        _flip = new PdfMatrix(1, 0, 0, -1, box.Left, box.Top);
+        _w.Op("q").Matrix(_flip).Op("cm");
         doc.RegisterGraphics(this);
     }
 
@@ -533,6 +535,21 @@ public sealed class PdfGraphics : IDisposable
         {
             // The form's space has y up from its bottom left corner.
             _w.Matrix(new PdfMatrix(width / form.Width, 0, 0, -height / form.Height, x, y + height)).Op("cm").Name(name).Op("Do");
+        }
+    }
+
+    /// <summary>
+    /// Paints an XObject placed by a matrix in PDF user space (y up), whatever the canvas
+    /// transform: for appearance streams, whose placement the specification defines that way.
+    /// </summary>
+    internal void DrawPdfSpaceXObject(PdfReference xobject, PdfMatrix placement)
+    {
+        ThrowIfDisposed();
+        string name = AddResource("XObject", "Fm", xobject);
+        PdfMatrix ctm = PdfMatrix.Multiply(_state.Matrix, _flip);
+        using (Save())
+        {
+            _w.Matrix(PdfMatrix.Multiply(placement, ctm.Invert())).Op("cm").Name(name).Op("Do");
         }
     }
 

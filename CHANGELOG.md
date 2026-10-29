@@ -52,6 +52,11 @@
   text markup (highlight, underline, strikeout, squiggly) and free text, each with an appearance
   stream. `PdfGraphics.AddLink` maps a canvas rectangle through the current transform.
 - `PdfGraphics.BlendMode`: the 16 PDF blend modes, saved and restored with the graphics state.
+- Interactive forms: `PdfDocument.Form` lists every field (`PdfTextField`, `PdfCheckBoxField`,
+  `PdfRadioButtonField`, `PdfChoiceField`, `PdfPushButtonField`, `PdfSignatureField`) with fully
+  qualified names, flags, options and widgets. Setting values regenerates appearances (borders,
+  backgrounds, DA font and color, auto size, multiline, comb, password) and drops XFA.
+  `PdfAcroForm.Flatten` stamps the appearances into the pages and removes the form.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

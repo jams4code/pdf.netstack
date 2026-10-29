@@ -39,8 +39,9 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
 6. **Annotations.** Done for 1.1: links to URLs and pages, named destinations when reading,
    notes, highlight, underline, strikeout, squiggly and free text, all with appearance streams;
    blend modes on the canvas. Still to do: stamps, ink, shapes, file attachments, flattening.
-7. **AcroForm.** Field tree, reading and setting values, appearance generation for text, check
-   box, radio and choice fields, flattening, import of fields together with their pages.
+7. **AcroForm.** Done for 1.1: field tree, reading and setting values, appearance generation
+   for text, check box, radio and choice fields, flattening. Still to do: creating new fields,
+   importing fields together with their pages, JavaScript formatting actions.
 8. **Remaining document features.** Viewer preferences, page layout and mode, page labels,
    custom document properties, file attachments.
 9. **Signatures and PDF/A.** PAdES baseline signing with incremental save, signature

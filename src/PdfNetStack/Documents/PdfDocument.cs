@@ -45,6 +45,7 @@ public sealed class PdfDocument
     private readonly List<Drawing.PdfGraphics> _openGraphics = new();
     private readonly Dictionary<Fonts.PdfFont, Fonts.FontResource> _fonts = new();
     private readonly Dictionary<Drawing.PdfImage, PdfReference> _images = new();
+    private PdfAcroForm? _form;
     private PdfOutlineCollection? _outlines;
 
     private PdfDocument(string version, StandardSecurity? security = null)
@@ -77,6 +78,9 @@ public sealed class PdfDocument
     internal int? InfoNumber { get; set; }
 
     internal PdfObject? Id { get; private set; }
+
+    /// <summary>The interactive form: fields, values, flattening. Empty when the document has none.</summary>
+    public PdfAcroForm Form => _form ??= new PdfAcroForm(this);
 
     /// <summary>PDF version from the file header, for example "1.7".</summary>
     public string Version { get; private set; }
