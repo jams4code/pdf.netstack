@@ -446,8 +446,14 @@ public sealed class VariableFontMatchingTests
     [DataRow("font-stretch: 1e309%")]
     [DataRow("font-weight: calc(infinity)")]
     [DataRow("font-style: oblique 1e309deg")]
+    [DataRow("font-size: 1e309px")]
+    [DataRow("font-size: calc(1e308px * 10)")]
+    [DataRow("font-size: 1e300px")]
+    [DataRow("font: oblique 1e309deg 1e309px A")]
+    [DataRow("font: oblique 80deg 1e300px A")]
     public void HostileFontValuesConvert(string declaration)
     {
+        // Font sizes clamp to 10000px, so even the largest lays out in a bounded number of pages.
         string html = $$"""
             <style>
             @font-face { font-family: A; src: url({{DataUri()}}); font-stretch: 1e309% 1e309%; font-variation-settings: "wght" 1e309 }
@@ -456,7 +462,8 @@ public sealed class VariableFontMatchingTests
             <p style="{{declaration}}">H</p>
             """;
         PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf(html, new HtmlConverterOptions { UseSystemFonts = false }));
-        StringAssert.Contains(doc.Pages[0].GetLetters().Single().FontName, "PdfNetStackTestAxes");
+        Assert.IsLessThanOrEqualTo(40, doc.Pages.Count);
+        StringAssert.Contains(doc.Pages.SelectMany(p => p.GetLetters()).First().FontName, "PdfNetStackTestAxes");
     }
 
     [TestMethod]

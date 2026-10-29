@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
+  across an unbounded number of pages. Computed lengths are now clamped to a million px either
+  way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000
+  and page sizes to 14400 points a side, and `HtmlConverterOptions.MaxPages` (default 10000)
+  ends a conversion that needs more pages with the new `HtmlConversionException`.
 - Variable fonts in font matching. `PdfFontCollection` counts a variable font for every weight,
   width and slant its axes cover, and registers its named instances as faces; faces are also
   found by full or PostScript name. `Find(family, PdfFontQuery)` matches width, then style, then

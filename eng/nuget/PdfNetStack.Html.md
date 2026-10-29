@@ -142,6 +142,13 @@ Parsing, styling and layout are bounded: nesting depth, selector complexity, `va
 expansion, table spans and background tiling all have limits, so hostile markup ends in a
 finite document rather than a hang or a crash.
 
+Sizes are bounded too. Computed lengths (margins, padding, borders, widths, line heights, letter
+and word spacing) are clamped to a million px either way, percentages to a million percent,
+font sizes to 10000px as in browsers, unitless line heights to 1000, and page sizes to PDF's
+largest page (14400 points a side). A conversion produces at most `MaxPages` pages (10000 by
+default); a document that needs more ends with `HtmlConversionException` rather than using
+memory without bound. Raise `MaxPages` for documents that are genuinely that long.
+
 ## Fonts
 
 No fonts ship in the package. The engine uses `@font-face` (TrueType, OpenType, WOFF and

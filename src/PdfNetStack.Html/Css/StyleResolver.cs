@@ -127,6 +127,14 @@ internal sealed class StyleResolver
     private const int MaxVarDepth = 32;
     private const int MaxVarOutput = 50_000;
 
+    // Lengths are clamped to this many px either way, about 260 m: past any page, yet small
+    // enough that positions summed over a whole document stay exact and valid PDF numbers.
+    internal const double MaxLength = 1_000_000;
+
+    // Font sizes stop at 10000px, as in browsers; unitless line heights at 1000 times the font size.
+    internal const double MaxFontSize = 10_000;
+    private const double MaxLineHeight = 1000;
+
     private readonly CssMedia _media;
     private readonly List<CssValue>[] _initial;
     private readonly List<Entry> _universal = [];
@@ -400,12 +408,18 @@ internal sealed class StyleResolver
         switch (property)
         {
             case "font-size":
-                style.FontSize = FontSize(value, parentSize);
+                double size = FontSize(value, parentSize);
+                style.FontSize = double.IsNaN(size) ? parentSize : Math.Max(0, Math.Min(MaxFontSize, size));
                 return [Px(style.FontSize)];
             case "font-weight":
                 return [Number(FontWeight(value, parent is null ? 400 : parent.Number("font-weight")))];
             case "line-height":
                 if (value.Count == 1 && value[0].IsToken && value[0].Token.Type == CssTokenType.Percentage) return [Px(value[0].Token.Number / 100 * style.FontSize)];
+                if (value.Count == 1 && value[0].IsToken && value[0].Token.Type == CssTokenType.Number && !(Math.Abs(value[0].Token.Number) <= MaxLineHeight))
+                {
+                    return [Number(double.IsNaN(value[0].Token.Number) ? 1.2 : Math.Max(0, Math.Min(MaxLineHeight, value[0].Token.Number)))];
+                }
+
                 break;
             case "color":
                 if (value.Count == 1 && value[0].IsIdent("currentcolor")) return parent?.Values["color"] ?? [new CssValue(new CssToken(CssTokenType.Ident, "black"))];
@@ -469,6 +483,7 @@ internal sealed class StyleResolver
             if (v.IsToken)
             {
                 if (v.Token.Type == CssTokenType.Dimension && ToPx(v.Token, em) is double px) converted = Px(px);
+                else if (v.Token.Type is CssTokenType.Dimension or CssTokenType.Percentage && !(Math.Abs(v.Token.Number) <= MaxLength) && IsLengthOrPercentage(v.Token)) converted = Clamped(v.Token);
             }
             else if (v.Function is not ("url" or "var"))
             {
@@ -514,7 +529,15 @@ internal sealed class StyleResolver
         _ => null,
     };
 
-    private static CssValue Px(double px) => new(new CssToken(CssTokenType.Dimension, Number: px, Unit: "px"));
+    /// <summary>A length in px, clamped to <see cref="MaxLength"/> either way; NaN is 0.</summary>
+    private static CssValue Px(double px) => new(new CssToken(CssTokenType.Dimension, Number: ClampLength(px), Unit: "px"));
+
+    internal static double ClampLength(double px) => double.IsNaN(px) ? 0 : Math.Max(-MaxLength, Math.Min(MaxLength, px));
+
+    private static bool IsLengthOrPercentage(CssToken t) => t.Type == CssTokenType.Percentage || t.Unit == "px";
+
+    /// <summary>A px length or a percentage past <see cref="MaxLength"/>, brought back to it.</summary>
+    private static CssValue Clamped(CssToken t) => new(t with { Number = ClampLength(t.Number) });
 
     private static CssValue Number(double n) => new(new CssToken(CssTokenType.Number, Number: n, IsInteger: n == Math.Floor(n)));
 

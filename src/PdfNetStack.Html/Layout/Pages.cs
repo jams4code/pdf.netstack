@@ -17,6 +17,9 @@ internal sealed record PageGeometry(double Width, double Height, Edges Margin, C
 /// </summary>
 internal sealed class PageMaster
 {
+    // 14400 PDF units, the largest page side, in CSS px.
+    private const double MaxPageSide = 19200;
+
     // Named sizes in mm, or inches for the North American ones (CSS Paged Media 3, 7.2.1).
     private static readonly Dictionary<string, (double W, double H, bool Inches)> Sizes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -109,7 +112,9 @@ internal sealed class PageMaster
         else if (lengths.Count >= 2) (w, h) = (lengths[0], lengths[1]);
         if (landscape == true && h > w) (w, h) = (h, w);
         if (landscape == false && w > h) (w, h) = (h, w);
-        return (w, h);
+
+        // PDF pages are 3 to 14400 units on a side (ISO 32000-1, Annex C).
+        return (Math.Max(4, Math.Min(MaxPageSide, w)), Math.Max(4, Math.Min(MaxPageSide, h)));
     }
 
     private static double? ToPx(CssToken t, double fontSize) => t.Unit switch
@@ -190,9 +195,11 @@ internal static class Paginator
 
     /// <param name="root">The laid out canvas.</param>
     /// <param name="pageHeight">The page area height of each page, from the first page of the canvas.</param>
+    /// <param name="maxPages">The most pages allowed.</param>
     /// <param name="start">Where the pages start, when the canvas holds content before them that other pages show.</param>
     /// <param name="last">The box whose end is the end of the pages, when content after it shows on other pages.</param>
-    public static List<Slice> Paginate(BoxFragment root, Func<int, double> pageHeight, double? start = null, BoxFragment? last = null)
+    /// <exception cref="HtmlConversionException">The canvas needs more than <paramref name="maxPages"/> pages.</exception>
+    public static List<Slice> Paginate(BoxFragment root, Func<int, double> pageHeight, int maxPages, double? start = null, BoxFragment? last = null)
     {
         var candidates = new List<Candidate>();
         var avoid = new List<(double Top, double Bottom)>();
@@ -220,6 +227,9 @@ internal static class Paginator
         var slices = new List<Slice>();
         while (top < end - Epsilon || slices.Count == 0)
         {
+            // Every page takes another slice, so the limit also ends a canvas whose positions are
+            // too large for a page height to move them.
+            if (slices.Count >= maxPages) throw new HtmlConversionException($"The document needs more than {maxPages} pages (HtmlConverterOptions.MaxPages).");
             double height = pageHeight(slices.Count);
             List<RepeatedHeader> headers = repeats
                 .Where(r => top > r.Start + Epsilon && top < r.End - Epsilon)

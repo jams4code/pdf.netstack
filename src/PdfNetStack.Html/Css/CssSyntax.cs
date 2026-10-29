@@ -220,7 +220,10 @@ internal static class CssTokenizer
         }
 
 #pragma warning disable CA1846 // .NET Standard 2.0 has no span overload.
-        double value = double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : 0;
+        // The syntax is valid, so a failed parse is an overflow, which .NET Framework reports and
+        // .NET reads as infinity: both become infinity, for the property to clamp or reject.
+        double value = double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v
+            : s[start] == '-' ? double.NegativeInfinity : double.PositiveInfinity;
 #pragma warning restore CA1846
         if (i < s.Length && s[i] == '%')
         {

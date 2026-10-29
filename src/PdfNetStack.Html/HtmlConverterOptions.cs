@@ -49,4 +49,18 @@ public sealed class HtmlConverterOptions
     /// Default true.
     /// </summary>
     public bool Tagged { get; init; } = true;
+
+    /// <summary>
+    /// The most pages a conversion may produce. Default 10000. A document that needs more, such as
+    /// one whose sizes run to kilometres, ends with <see cref="HtmlConversionException"/> instead of
+    /// using memory without bound.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is less than 1.</exception>
+    public int MaxPages
+    {
+        get => _maxPages;
+        init => _maxPages = value >= 1 ? value : throw new ArgumentOutOfRangeException(nameof(MaxPages), value, "At least one page.");
+    }
+
+    private readonly int _maxPages = 10_000;
 }

@@ -30,6 +30,7 @@ public static class HtmlConverter
     /// <summary>Converts an HTML string to a PDF document.</summary>
     /// <param name="html">The HTML. Malformed markup is repaired as browsers repair it.</param>
     /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
+    /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
     public static PdfDocument ConvertToDocument(string html, HtmlConverterOptions? options = null)
     {
         Compat.ThrowIfNull(html, nameof(html));
@@ -77,7 +78,7 @@ public static class HtmlConverter
         BlockBox root = builder.Build(doc);
         var running = new RunningElements(builder.Running, builder.PageCounters, resolver, fonts, resources.LoadImage);
         var master = new PageMaster(resolver, root.Style, options.PageStyle);
-        List<PageRun> runs = LayoutRuns(root, master, fonts);
+        List<PageRun> runs = LayoutRuns(root, master, fonts, options.MaxPages);
         int pageCount = runs.Sum(r => r.Slices.Count);
 
         var pdf = PdfDocument.Create();
@@ -206,7 +207,7 @@ public static class HtmlConverter
     /// the run after the break is laid out at its page type's width, so a landscape section gets
     /// the landscape width.
     /// </summary>
-    private static List<PageRun> LayoutRuns(BlockBox root, PageMaster master, FontResolver fonts)
+    private static List<PageRun> LayoutRuns(BlockBox root, PageMaster master, FontResolver fonts, int maxPages)
     {
         var named = new NamedPages(root);
         var runs = new List<PageRun>();
@@ -215,7 +216,7 @@ public static class HtmlConverter
         {
             using (named.Keep(i))
             {
-                PageRun run = LayoutRun(root, master, fonts, first, named.Name(i), named.First(i), named.Last(i));
+                PageRun run = LayoutRun(root, master, fonts, first, maxPages - first, named.Name(i), named.First(i), named.Last(i));
                 runs.Add(run);
                 first += run.Slices.Count;
             }
@@ -226,7 +227,7 @@ public static class HtmlConverter
 
     /// <param name="start">The box after the break the run starts at, or null for the first run.</param>
     /// <param name="end">The box before the break the run ends at, or null for the last run.</param>
-    private static PageRun LayoutRun(BlockBox root, PageMaster master, FontResolver fonts, int first, string? name, Box? start, Box? end)
+    private static PageRun LayoutRun(BlockBox root, PageMaster master, FontResolver fonts, int first, int maxPages, string? name, Box? start, Box? end)
     {
         PageGeometry g = master.Geometry(first, name);
         var engine = new LayoutEngine(fonts);
@@ -234,19 +235,21 @@ public static class HtmlConverter
         BoxFragment? startFragment = start is null ? null : NamedPages.Find(layout, start);
         BoxFragment? endFragment = end is null ? null : NamedPages.Find(layout, end);
         double? top = startFragment is null ? null : NamedPages.Start(startFragment);
-        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(first + i, name).ContentHeight, top, endFragment);
+        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(first + i, name).ContentHeight, maxPages, top, endFragment);
         return new PageRun(layout, engine, slices, name, first);
     }
 
     /// <summary>Converts an HTML string to PDF bytes.</summary>
     /// <param name="html">The HTML.</param>
     /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
+    /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
     public static byte[] ConvertToPdf(string html, HtmlConverterOptions? options = null) => ConvertToDocument(html, options).ToArray();
 
     /// <summary>Converts an HTML string and writes the PDF to a stream.</summary>
     /// <param name="html">The HTML.</param>
     /// <param name="output">Where the PDF is written.</param>
     /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
+    /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
     public static void ConvertToPdf(string html, Stream output, HtmlConverterOptions? options = null)
     {
         Compat.ThrowIfNull(output, nameof(output));
@@ -259,6 +262,7 @@ public static class HtmlConverter
     /// </summary>
     /// <param name="path">The HTML file, read as UTF-8 unless it starts with a byte order mark.</param>
     /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
+    /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
     public static PdfDocument ConvertFileToDocument(string path, HtmlConverterOptions? options = null)
     {
         Compat.ThrowIfNull(path, nameof(path));
