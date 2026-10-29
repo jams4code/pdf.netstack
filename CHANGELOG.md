@@ -11,7 +11,8 @@
     `@font-face`, `@page` with margin boxes, `calc()` and friends, CSS Color 4.
   - Layout: blocks with margin collapsing, inline text with Unicode line breaking, bidi and
     shaping, floats, relative, absolute and fixed positioning, tables in both border models,
-    flexbox, inline blocks, lists, counters and generated content.
+    flexbox, grid with fr tracks, `minmax()`, `repeat()` and named areas, inline blocks,
+    lists, counters and generated content.
   - Paged media: page sizes and margins, `:first`, `:left` and `:right`, running headers and
     footers with page counters, forced and avoided breaks, orphans and widows, table headers
     repeated on every page.

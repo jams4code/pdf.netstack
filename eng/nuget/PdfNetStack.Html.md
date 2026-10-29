@@ -75,7 +75,8 @@ boxes repeat on every page, for letterheads and watermarks.
 - **Layout.** Block flow with margin collapsing, inline layout with Unicode line breaking,
   justification and soft hyphens, floats and `clear`, relative, absolute and fixed
   positioning, tables (spans, both border models, fixed and automatic widths), flexbox (wrap,
-  gap, grow and shrink, alignment, order), inline blocks, list markers and counters,
+  gap, grow and shrink, alignment, order), grid (fr tracks, `minmax()`, `repeat()`, named
+  areas, auto-placement), inline blocks, list markers and counters,
   `::before` and `::after`.
 - **Text.** Right to left and Arabic with contextual shaping that matches HarfBuzz, bidi
   reordering, kerning, ligatures, fallback fonts per character, every `vertical-align`.
@@ -115,7 +116,8 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
 ## Limits
 
 - No JavaScript: pages must be rendered HTML, not built in the browser.
-- No CSS grid, multi-column layout or vertical writing modes yet.
+- No multi-column layout or vertical writing modes yet. Grid has no dense packing, column
+  flow, subgrid or named lines.
 - Images: JPEG and PNG. SVG, GIF and WebP do not load yet.
 - `@page` named pages, `string-set` and running elements are not supported yet; margin boxes
   take text and page counters.

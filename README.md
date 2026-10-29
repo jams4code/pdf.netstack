@@ -312,7 +312,7 @@ byte[] pdf = HtmlConverter.ConvertToPdf(html);                              // a
 PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a file and its assets
 ```
 
-A layout engine in C#, no browser: the CSS cascade, block, inline, table and flex layout,
+A layout engine in C#, no browser: the CSS cascade, block, inline, table, flex and grid layout,
 floats and positioning, paged media with `@page`, running headers and footers, page counters
 and repeated table headers, web fonts, right to left and Arabic text, links and bookmarks.
 Without a resource loader nothing is fetched from the network. Details, options and limits in the
@@ -470,7 +470,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Annotations | Web and page links, notes, highlight, underline, strikeout, free text, blend modes | Done (next release) |
 | Forms (AcroForm) | Reading, filling with generated appearances, flattening | Done (next release) |
 | Signatures and PDF/A | PAdES B-B signing and verification, PDF/A-2b, 2u, 3b and 3u output | Done (next release) |
-| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table and flex layout, floats, positioning, paged media, web fonts | Done (next release) |
+| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | Done (next release) |
 
 ### Low level access
 
