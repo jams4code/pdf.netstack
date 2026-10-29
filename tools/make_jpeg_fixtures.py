@@ -59,6 +59,27 @@ def main() -> None:
     large = Image.fromarray(photo(320, 240, 2))
     save(large, "photo-q95.jpg", quality=95, subsampling=2)
 
+    references()
+
+
+def references() -> None:
+    """The pixels libjpeg decodes from each small fixture, for the pixel decoder's tests.
+
+    Pillow reads Adobe CMYK inverted (raw mode CMYK;I); the references keep the samples as
+    stored, so CMYK is inverted back and written as RGBA, one channel per ink.
+    """
+    out = OUT / "Reference"
+    out.mkdir(exist_ok=True)
+    for path in sorted(OUT.glob("*.jpg")):
+        if path.stem == "photo-q95":
+            continue
+        image = Image.open(path)
+        image.load()
+        if image.mode == "CMYK":
+            stored = 255 - np.asarray(image)
+            image = Image.fromarray(stored.astype(np.uint8), "RGBA")
+        image.save(out / f"{path.stem}.png", optimize=True)
+
 
 if __name__ == "__main__":
     main()
