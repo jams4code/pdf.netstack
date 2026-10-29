@@ -85,10 +85,12 @@ quality output, built on the canvas, fonts and text layout above.
    `absolute` against the nearest positioned ancestor's padding box (insets, auto sizes,
    static position, centring, `z-index` below or above), `fixed` repeated on every page.
 3. **Paged media.** Done: `@page` with `:first`, `:left`, `:right`, named and custom sizes,
-   orientation and margins; margin boxes with text and `counter(page)` / `counter(pages)`;
-   breaks between lines and blocks, forced with `break-before` / `break-after` (and the
-   `page-break-*` aliases), avoided with `break-inside`, orphans and widows; margins truncated
-   at breaks. Next: named pages, `string-set`, running elements, table headers repeated per page.
+   orientation and margins; margin boxes with text, `counter(page)` / `counter(pages)` and
+   `string()`; named pages (the `page` property on body children, each run laid out at its
+   page's width); `string-set` with strings, `content(text)` and `attr()`; breaks between
+   lines and blocks, forced with `break-before` / `break-after` (and the `page-break-*`
+   aliases), avoided with `break-inside`, orphans and widows; margins truncated at breaks;
+   table headers repeated per page. Next: running elements, `page` on nested elements.
 4. **Visual CSS.** Done: background colors (with `background-clip` and the root and body
    background covering the page), solid, dashed, dotted and double borders, text decorations
    in every style, opacity, `overflow` clipping, `visibility`; border radius with overlap

@@ -116,6 +116,63 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    public void LaysOutNamedPagesAtTheirOwnSize()
+    {
+        // 25 words of Helvetica 16px are about 980px: two lines on A4 portrait (794px), one on landscape (1123px).
+        string words = string.Join(" ", Enumerable.Repeat("word", 25));
+        PdfDocument doc = Convert($$"""
+            <style>
+              @page { size: A4; margin: 0 }
+              @page wide { size: A4 landscape; margin-top: 40px; @top-center { content: "Annex" } }
+              body { margin: 0; font: 16px Helvetica }
+              .wide { page: wide }
+            </style>
+            <p>{{words}}</p>
+            <section class=wide><p>{{words}}</p></section>
+            <p id=back>back</p><p><a href="#back">link</a></p>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        Assert.AreEqual(595.28, doc.Pages[0].Width, 0.01);
+        Assert.AreEqual(841.89, doc.Pages[1].Width, 0.01, "the named page is landscape");
+        Assert.AreEqual(595.28, doc.Pages[2].Width, 0.01, "auto returns to the unnamed page");
+
+        int Lines(int page) => Regex.Matches(Content(doc, page), @"\bBT\b").Cast<Match>().Count();
+        Assert.AreEqual(2, Lines(0));
+        Assert.AreEqual(2, Lines(1), "one line of text and the margin box");
+        StringAssert.Contains(Text(doc, 1), "Annex");
+        Assert.DoesNotContain("Annex", Text(doc, 0) + Text(doc, 2));
+
+        // Internal links find their pages across the runs.
+        Assert.AreEqual(2, doc.Pages[2].Annotations.Single().Destination!.Index);
+    }
+
+    [TestMethod]
+    public void SetsNamedStringsForRunningHeaders()
+    {
+        PdfDocument doc = Convert("""
+            <style>
+              @page { @top-left { content: string(chapter) } @top-right { content: string(chapter, last) } @bottom-center { content: string(chapter, first-except) } }
+              h1 { string-set: chapter content(text) }
+              h2 { string-set: chapter "Part: " attr(title) }
+            </style>
+            <h1>Intro  text</h1><p>a</p>
+            <h1 style="break-before: page">Second</h1><h2 title="Two B">x</h2>
+            <p style="break-before: page">no heading here</p>
+            """);
+        Assert.HasCount(3, doc.Pages);
+        StringAssert.Contains(Text(doc, 0), "Intro text", "content(text) collapses white space");
+        Assert.DoesNotContain("Part", Text(doc, 0));
+
+        // Page two sets it twice: first takes the first, last takes the last.
+        string two = Text(doc, 1);
+        StringAssert.Contains(two, "Second");
+        StringAssert.Contains(two, "Part: Two B");
+
+        // Page three sets nothing: the value carries over, and first-except shows it.
+        Assert.HasCount(3, Regex.Matches(Text(doc, 2), "Part: Two B"));
+    }
+
+    [TestMethod]
     public void AddsLinksAndNestedBookmarks()
     {
         PdfDocument doc = Convert("""

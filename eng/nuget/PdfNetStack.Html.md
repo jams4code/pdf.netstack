@@ -60,6 +60,22 @@ h2 { break-before: page }
 tr, figure { break-inside: avoid }
 ```
 
+Named pages give a section its own page type, laid out at that page's width:
+
+```css
+@page wide { size: A4 landscape }
+.annex { page: wide }
+```
+
+Named strings carry text from the document into the margins, for running headers:
+
+```css
+h1 { string-set: chapter content(text) }
+@page { @top-left { content: string(chapter) } }
+```
+
+`string()` takes `first` (the default), `start`, `last` or `first-except`.
+
 Table header rows repeat at the top of every page a table continues on. `position: fixed`
 boxes repeat on every page, for letterheads and watermarks.
 
@@ -120,8 +136,9 @@ Installed fonts with wide coverage stand in for characters the chosen fonts lack
   flow, subgrid or named lines.
 - Images: JPEG, PNG and SVG (drawn as vectors, without filters, masks or patterns). GIF and WebP
   do not load yet.
-- `@page` named pages, `string-set` and running elements are not supported yet; margin boxes
-  take text and page counters.
+- The `page` property is read on the children of `body`, where sections usually sit. Running
+  elements (`position: running()`) are not supported; margin boxes take text, page counters and
+  named strings.
 - Box shadow blur is approximated, `text-shadow` blur is not drawn, and group opacity is applied
   per element.
 - WOFF2 fonts are not read.

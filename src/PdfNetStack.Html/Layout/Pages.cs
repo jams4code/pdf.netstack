@@ -28,7 +28,7 @@ internal sealed class PageMaster
     private readonly StyleResolver _resolver;
     private readonly ComputedStyle _root;
     private readonly List<CssDeclaration> _defaults;
-    private readonly Dictionary<int, PageGeometry> _cache = [];
+    private readonly Dictionary<(int, string), PageGeometry> _cache = [];
 
     /// <param name="defaults">Declarations below every @page rule, such as the converter's size and margins.</param>
     public PageMaster(StyleResolver resolver, ComputedStyle root, string defaults)
@@ -38,14 +38,15 @@ internal sealed class PageMaster
         _defaults = CssParser.ParseDeclarations(defaults);
     }
 
-    private IEnumerable<(CssPageRule Rule, int Specificity, int Order)> Matching(int index)
+    /// <summary>The @page rules for a page: unnamed rules always, named ones for pages of that name; a name outweighs a pseudo-class.</summary>
+    private IEnumerable<(CssPageRule Rule, int Specificity, int Order)> Matching(int index, string? name)
     {
         // The first page is a right page in left to right documents.
         bool right = (index % 2 == 0) != (_root.Keyword("direction") == "rtl");
         for (int i = 0; i < _resolver.PageRules.Count; i++)
         {
             CssPageRule rule = _resolver.PageRules[i];
-            if (rule.Name is not null) continue; // named pages need the page property, not yet laid out
+            if (rule.Name is not null && !string.Equals(rule.Name, name, StringComparison.Ordinal)) continue;
             int specificity = rule.Pseudo switch
             {
                 null => 0,
@@ -54,22 +55,24 @@ internal sealed class PageMaster
                 "right" when right => 1,
                 _ => -1,
             };
-            if (specificity >= 0) yield return (rule, specificity, i);
+            if (specificity >= 0) yield return (rule, specificity + (rule.Name is null ? 0 : 4), i);
         }
     }
 
-    public PageGeometry Geometry(int index)
+    /// <param name="index">The page's position in the document, from 0.</param>
+    /// <param name="name">The page name from the page property of its content, or null.</param>
+    public PageGeometry Geometry(int index, string? name = null)
     {
-        if (_cache.TryGetValue(index, out PageGeometry? cached)) return cached;
+        if (_cache.TryGetValue((index, name ?? ""), out PageGeometry? cached)) return cached;
         List<CssDeclaration> declarations = [.. _defaults];
-        foreach (var match in Matching(index).OrderBy(m => m.Specificity).ThenBy(m => m.Order)) declarations.AddRange(match.Rule.Declarations);
+        foreach (var match in Matching(index, name).OrderBy(m => m.Specificity).ThenBy(m => m.Order)) declarations.AddRange(match.Rule.Declarations);
 
         // Size first: percentages in margins are of the page width.
         List<CssValue>? size = declarations.LastOrDefault(d => d.Property == "size")?.Value;
         (double width, double height) = PageSize(size);
         ComputedStyle style = _resolver.ComputeDeclarations(declarations.Where(d => d.Property != "size"), _root);
         var geometry = new PageGeometry(width, height, BoxMetrics.Margins(style, width), style);
-        _cache[index] = geometry;
+        _cache[(index, name ?? "")] = geometry;
         return geometry;
     }
 
@@ -123,11 +126,11 @@ internal sealed class PageMaster
     };
 
     /// <summary>The margin boxes of a page that have content: name, style and content value.</summary>
-    public List<(string Name, ComputedStyle Style, List<CssValue> Content)> MarginBoxes(int index)
+    public List<(string Name, ComputedStyle Style, List<CssValue> Content)> MarginBoxes(int index, string? pageName = null)
     {
-        PageGeometry page = Geometry(index);
+        PageGeometry page = Geometry(index, pageName);
         var boxes = new Dictionary<string, List<CssDeclaration>>(StringComparer.Ordinal);
-        foreach (var match in Matching(index).OrderBy(m => m.Specificity).ThenBy(m => m.Order))
+        foreach (var match in Matching(index, pageName).OrderBy(m => m.Specificity).ThenBy(m => m.Order))
         {
             foreach (KeyValuePair<string, List<CssDeclaration>> box in match.Rule.MarginBoxes)
             {

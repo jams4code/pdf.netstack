@@ -13,8 +13,9 @@
     shaping, floats, relative, absolute and fixed positioning, tables in both border models,
     flexbox, grid with fr tracks, `minmax()`, `repeat()` and named areas, inline blocks,
     lists, counters and generated content.
-  - Paged media: page sizes and margins, `:first`, `:left` and `:right`, running headers and
-    footers with page counters, forced and avoided breaks, orphans and widows, table headers
+  - Paged media: page sizes and margins, `:first`, `:left` and `:right`, named pages laid out
+    at their own size, running headers and footers with page counters and named strings
+    (`string-set`, `string()`), forced and avoided breaks, orphans and widows, table headers
     repeated on every page.
   - Painting: backgrounds with images and gradients, rounded borders, shadows, outlines,
     transforms, `object-fit`, decorations; links and bookmarks; document metadata from the head.

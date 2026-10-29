@@ -75,28 +75,39 @@ public static class HtmlConverter
         fonts.AddFontFaces(resolver.FontFaces, resources.Load);
         BlockBox root = new BoxBuilder(resolver, resources.LoadImage).Build(doc);
         var master = new PageMaster(resolver, root.Style, options.PageStyle);
-        var engine = new LayoutEngine(fonts);
-        BoxFragment layout = engine.Layout(root, master.Geometry(0).ContentWidth, master.Geometry(0).ContentHeight);
-        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(i).ContentHeight);
+        List<PageRun> runs = LayoutRuns(root, master, fonts);
+        int pageCount = runs.Sum(r => r.Slices.Count);
 
         var pdf = PdfDocument.Create();
         Metadata(pdf, doc);
         var pages = new List<PdfPage>();
-        for (int i = 0; i < slices.Count; i++)
+        var pageRuns = new List<(PageRun Run, Paginator.Slice Slice)>();
+        foreach (PageRun run in runs)
         {
-            PageGeometry g = master.Geometry(i);
-            pages.Add(pdf.Pages.Add(new PdfRectangle(0, 0, g.Width * PointsPerPixel, g.Height * PointsPerPixel)));
+            foreach (Paginator.Slice slice in run.Slices)
+            {
+                PageGeometry g = master.Geometry(pages.Count, run.Name);
+                pages.Add(pdf.Pages.Add(new PdfRectangle(0, 0, g.Width * PointsPerPixel, g.Height * PointsPerPixel)));
+                pageRuns.Add((run, slice));
+            }
         }
 
-        Dictionary<string, (int Page, double Y)> anchors = Anchors(layout, slices);
-        (PdfPage Page, double Top)? Anchor(string id) =>
-            anchors.TryGetValue(id, out var a) ? (pages[a.Page], (master.Geometry(a.Page).Margin.Top + slices[a.Page].Inset + a.Y - slices[a.Page].Top) * PointsPerPixel) : null;
-
-        (CssColor canvas, Box? propagated) = Painter.CanvasBackground(layout);
-        for (int i = 0; i < slices.Count; i++)
+        Dictionary<string, (PageRun Run, int Page, double Y)> anchors = Anchors(runs);
+        (PdfPage Page, double Top)? Anchor(string id)
         {
-            PageGeometry g = master.Geometry(i);
-            Paginator.Slice slice = slices[i];
+            if (!anchors.TryGetValue(id, out var a)) return null;
+            Paginator.Slice slice = pageRuns[a.Page].Slice;
+            return (pages[a.Page], (master.Geometry(a.Page, a.Run.Name).Margin.Top + slice.Inset + a.Y - slice.Top) * PointsPerPixel);
+        }
+
+        List<StringAssignment> strings = Strings(runs);
+        List<BoxFragment> fixedBoxes = [.. runs.SelectMany(r => r.Engine.Fixed)];
+        (CssColor canvas, Box? propagated) = Painter.CanvasBackground(runs[0].Layout);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            (PageRun run, Paginator.Slice slice) = pageRuns[i];
+            BoxFragment layout = run.Layout;
+            PageGeometry g = master.Geometry(i, run.Name);
             using PdfGraphics graphics = pages[i].CreateGraphics();
             double pageWidth = g.Width * PointsPerPixel, pageHeight = g.Height * PointsPerPixel;
             CssColor pageColor = g.Style.Color("background-color");
@@ -129,7 +140,7 @@ public static class HtmlConverter
             }
 
             // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
-            foreach (BoxFragment fixedBox in engine.Fixed)
+            foreach (BoxFragment fixedBox in fixedBoxes)
             {
                 using (graphics.Save())
                 {
@@ -139,11 +150,70 @@ public static class HtmlConverter
                 }
             }
 
-            MarginBoxes(graphics, master, engine, i, slices.Count);
+            int page = i;
+            MarginBoxes(graphics, master, run.Engine, i, pages.Count, run.Name, (name, policy) => StringValue(strings, name, policy, page));
         }
 
-        if (options.Bookmarks) Bookmarks(pdf, layout, slices, pages);
+        if (options.Bookmarks) Bookmarks(pdf, runs, pages);
         return pdf;
+    }
+
+    /// <summary>A stretch of the document laid out for one page name: its canvas and the pages it fills.</summary>
+    private sealed record PageRun(BoxFragment Layout, LayoutEngine Engine, List<Paginator.Slice> Slices, string? Name, int FirstPage);
+
+    /// <summary>
+    /// Lays out the document in runs of one page name each (CSS Paged Media 3, 8): a child of the
+    /// body whose page differs from the child before it starts a new page, and is laid out at that
+    /// page type's width, so a landscape section gets the landscape width.
+    /// </summary>
+    private static List<PageRun> LayoutRuns(BlockBox root, PageMaster master, FontResolver fonts)
+    {
+        Box? body = root.Children.FirstOrDefault(c => c.Element?.Name == "body");
+        var groups = new List<(string? Name, List<Box> Boxes)>();
+        foreach (Box child in body?.Children ?? [])
+        {
+            string? name = PageName(child);
+            if (groups.Count == 0 || groups[^1].Name != name) groups.Add((name, []));
+            groups[^1].Boxes.Add(child);
+        }
+
+        if (body is null || groups.Count <= 1) return [LayoutRun(root, master, fonts, 0, groups.Count == 1 ? groups[0].Name : null)];
+
+        var runs = new List<PageRun>();
+        List<Box> all = [.. body.Children];
+        try
+        {
+            int first = 0;
+            foreach ((string? name, List<Box> boxes) in groups)
+            {
+                body.SetChildren(boxes);
+                PageRun run = LayoutRun(root, master, fonts, first, name);
+                runs.Add(run);
+                first += run.Slices.Count;
+            }
+        }
+        finally
+        {
+            body.SetChildren(all);
+        }
+
+        return runs;
+    }
+
+    private static PageRun LayoutRun(BlockBox root, PageMaster master, FontResolver fonts, int first, string? name)
+    {
+        PageGeometry g = master.Geometry(first, name);
+        var engine = new LayoutEngine(fonts);
+        BoxFragment layout = engine.Layout(root, g.ContentWidth, g.ContentHeight);
+        List<Paginator.Slice> slices = Paginator.Paginate(layout, i => master.Geometry(first + i, name).ContentHeight);
+        return new PageRun(layout, engine, slices, name, first);
+    }
+
+    /// <summary>The page property as a name; auto takes the body's page, which has none.</summary>
+    private static string? PageName(Box box)
+    {
+        List<CssValue> v = box.Style["page"];
+        return v.Count == 1 && v[0].IsToken && v[0].Token.Type == CssTokenType.Ident && !v[0].IsIdent("auto") ? v[0].Token.Value : null;
     }
 
     /// <summary>Converts an HTML string to PDF bytes.</summary>
@@ -243,32 +313,35 @@ public static class HtmlConverter
     }
 
     /// <summary>Where each element id first appears, for internal links.</summary>
-    private static Dictionary<string, (int Page, double Y)> Anchors(BoxFragment layout, List<Paginator.Slice> slices)
+    private static Dictionary<string, (PageRun Run, int Page, double Y)> Anchors(List<PageRun> runs)
     {
-        var anchors = new Dictionary<string, (int, double)>(StringComparer.Ordinal);
-        foreach (Fragment f in Walk(layout))
+        var anchors = new Dictionary<string, (PageRun, int, double)>(StringComparer.Ordinal);
+        foreach (PageRun run in runs)
         {
-            HtmlElement? element = f switch
+            foreach (Fragment f in Walk(run.Layout))
             {
-                BoxFragment b => b.Box.Element,
-                InlineFragment i => i.Box.Element,
-                _ => null,
-            };
-            string? id = element?.GetAttribute("id") ?? (element?.Name == "a" ? element.GetAttribute("name") : null);
-            if (string.IsNullOrEmpty(id) || anchors.ContainsKey(id!)) continue;
-            int page = PageOf(slices, f.Y);
-            anchors[id!] = (page, Math.Max(slices[page].Top, f.Y));
+                HtmlElement? element = f switch
+                {
+                    BoxFragment b => b.Box.Element,
+                    InlineFragment i => i.Box.Element,
+                    _ => null,
+                };
+                string? id = element?.GetAttribute("id") ?? (element?.Name == "a" ? element.GetAttribute("name") : null);
+                if (string.IsNullOrEmpty(id) || anchors.ContainsKey(id!)) continue;
+                int slice = PageOf(run.Slices, f.Y);
+                anchors[id!] = (run, run.FirstPage + slice, Math.Max(run.Slices[slice].Top, f.Y));
+            }
         }
 
         return anchors;
     }
 
     /// <summary>Bookmarks from bookmark-level (headings in the default style sheet), nested by level.</summary>
-    private static void Bookmarks(PdfDocument pdf, BoxFragment layout, List<Paginator.Slice> slices, List<PdfPage> pages)
+    private static void Bookmarks(PdfDocument pdf, List<PageRun> runs, List<PdfPage> pages)
     {
         var stack = new List<(int Level, PdfOutline Outline)>();
         var seen = new HashSet<Box>();
-        foreach (BoxFragment f in Walk(layout).OfType<BoxFragment>())
+        foreach ((PageRun run, BoxFragment f) in runs.SelectMany(r => Walk(r.Layout).OfType<BoxFragment>().Select(f => (r, f))))
         {
             List<CssValue> levelValue = f.Style["bookmark-level"];
             if (levelValue.Count != 1 || !levelValue[0].IsToken || levelValue[0].Token.Type != CssTokenType.Number || !seen.Add(f.Box)) continue;
@@ -276,7 +349,7 @@ public static class HtmlConverter
             string label = BookmarkLabel(f);
             if (label.Length == 0) continue;
 
-            PdfPage page = pages[PageOf(slices, f.Y)];
+            PdfPage page = pages[run.FirstPage + PageOf(run.Slices, f.Y)];
             while (stack.Count > 0 && stack[^1].Level >= level) stack.RemoveAt(stack.Count - 1);
             PdfOutline outline = stack.Count == 0 ? pdf.Outlines.Add(label, page) : stack[^1].Outline.Add(label, page);
             stack.Add((level, outline));
@@ -292,17 +365,16 @@ public static class HtmlConverter
         }
 
         // content(text), the default: the element's text with white space collapsed.
-        string text = f.Box.Element?.TextContent ?? "";
-        return string.Join(" ", text.Split([' ', '\t', '\n', '\r', '\f'], StringSplitOptions.RemoveEmptyEntries));
+        return Collapse(f.Box.Element?.TextContent ?? "");
     }
 
     /// <summary>Running headers and footers (CSS Paged Media 3, 5): text with page counters, in the page margins.</summary>
-    private static void MarginBoxes(PdfGraphics graphics, PageMaster master, LayoutEngine engine, int index, int count)
+    private static void MarginBoxes(PdfGraphics graphics, PageMaster master, LayoutEngine engine, int index, int count, string? pageName, Func<string, string, string> strings)
     {
-        PageGeometry g = master.Geometry(index);
-        foreach ((string name, ComputedStyle style, List<CssValue> content) in master.MarginBoxes(index))
+        PageGeometry g = master.Geometry(index, pageName);
+        foreach ((string name, ComputedStyle style, List<CssValue> content) in master.MarginBoxes(index, pageName))
         {
-            string text = MarginText(content, index + 1, count);
+            string text = MarginText(content, index + 1, count, strings);
             if (text.Length == 0) continue;
             (double x, double y, double w, double h)? area = MarginArea(name, g);
             if (area is not (double ax, double ay, double aw, double ah) || aw <= 0 || ah <= 0) continue;
@@ -323,7 +395,8 @@ public static class HtmlConverter
         }
     }
 
-    private static string MarginText(List<CssValue> content, int page, int pages)
+    /// <summary>Margin box content: strings, page counters and named strings from string-set.</summary>
+    private static string MarginText(List<CssValue> content, int page, int pages, Func<string, string, string> strings)
     {
         var sb = new StringBuilder();
         foreach (CssValue v in content)
@@ -341,9 +414,101 @@ public static class HtmlConverter
                 if (counter == "page") sb.Append(CounterStyle.Format(page, counterStyle));
                 else if (counter == "pages") sb.Append(CounterStyle.Format(pages, counterStyle));
             }
+            else if (v.Function == "string")
+            {
+                List<CssValue> args = v.Children.Where(c => c.IsToken && c.Token.Type == CssTokenType.Ident).ToList();
+                if (args.Count > 0) sb.Append(strings(args[0].Token.Value, args.Count > 1 ? args[1].Token.Value.ToLowerInvariant() : "first"));
+            }
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>A string-set assignment (CSS Generated Content for Paged Media 3, 1): a named string's value from here on.</summary>
+    private sealed record StringAssignment(string Name, int Page, string Value);
+
+    /// <summary>Every string-set assignment, in document order, with the page it falls on.</summary>
+    private static List<StringAssignment> Strings(List<PageRun> runs)
+    {
+        var result = new List<StringAssignment>();
+        var seen = new HashSet<(Box, string)>();
+        foreach (PageRun run in runs)
+        {
+            foreach (BoxFragment f in Walk(run.Layout).OfType<BoxFragment>())
+            {
+                List<CssValue> value = f.Style["string-set"];
+                if (value.Count == 0 || (value.Count == 1 && value[0].IsIdent("none"))) continue;
+                int page = run.FirstPage + PageOf(run.Slices, f.Y);
+                foreach (List<CssValue> part in SplitCommas(value))
+                {
+                    List<CssValue> items = part.Where(v => !v.IsWhitespace).ToList();
+                    if (items.Count < 2 || !items[0].IsToken || items[0].Token.Type != CssTokenType.Ident) continue;
+                    string name = items[0].Token.Value;
+
+                    // A box split across pages, or a table and its wrapper, assigns once.
+                    if (!seen.Add((f.Box is TableWrapperBox wrapper ? wrapper.Children[0] : f.Box, name))) continue;
+                    var text = new StringBuilder();
+                    foreach (CssValue v in items.Skip(1))
+                    {
+                        if (v.IsToken && v.Token.Type == CssTokenType.String) text.Append(v.Token.Value);
+                        else if (v.Function == "content") text.Append(Collapse(f.Box.Element?.TextContent ?? ""));
+                        else if (v.Function == "attr" && v.Children.FirstOrDefault(c => !c.IsWhitespace) is { IsToken: true } attribute)
+                        {
+                            text.Append(f.Box.Element?.GetAttribute(attribute.Token.Value.ToLowerInvariant()) ?? "");
+                        }
+                    }
+
+                    result.Add(new StringAssignment(name, page, text.ToString()));
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<List<CssValue>> SplitCommas(List<CssValue> value)
+    {
+        var part = new List<CssValue>();
+        foreach (CssValue v in value)
+        {
+            if (v.IsToken && v.Token.Type == CssTokenType.Comma)
+            {
+                yield return part;
+                part = [];
+            }
+            else
+            {
+                part.Add(v);
+            }
+        }
+
+        yield return part;
+    }
+
+    private static string Collapse(string text) => string.Join(" ", text.Split([' ', '\t', '\n', '\r', '\f'], StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>
+    /// A named string on a page. first: the first value set on the page, else the one carried in.
+    /// start: the value carried into the page. last: the last value set on the page.
+    /// first-except: empty on a page that sets it, else the value carried in.
+    /// </summary>
+    private static string StringValue(List<StringAssignment> strings, string name, string policy, int page)
+    {
+        string? before = null, first = null, last = null;
+        foreach (StringAssignment s in strings)
+        {
+            if (s.Name != name) continue;
+            if (s.Page < page) before = s.Value;
+            else if (s.Page == page) (first, last) = (first ?? s.Value, s.Value);
+        }
+
+        return policy switch
+        {
+            "start" => before ?? first ?? "",
+            "last" => last ?? before ?? "",
+            "first-except" => first is null ? before ?? "" : "",
+            _ => first ?? before ?? "",
+        };
     }
 
     /// <summary>The area of a margin box in page px; the three boxes of a side share it evenly.</summary>

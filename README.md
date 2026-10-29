@@ -318,8 +318,8 @@ PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a
 ```
 
 A layout engine in C#, no browser: the CSS cascade, block, inline, table, flex and grid layout,
-floats and positioning, paged media with `@page`, running headers and footers, page counters
-and repeated table headers, web fonts, right to left and Arabic text, links and bookmarks.
+floats and positioning, paged media with `@page` and named pages, running headers and footers
+with page counters and named strings, repeated table headers, web fonts, right to left and Arabic text, links and bookmarks.
 Without a resource loader nothing is fetched from the network. Details, options and limits in the
 [package readme](eng/nuget/PdfNetStack.Html.md).
 
