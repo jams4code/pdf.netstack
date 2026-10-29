@@ -1,7 +1,10 @@
 namespace PdfNetStack.Html.Css;
 
-/// <summary>A property and its value as written.</summary>
-internal sealed record CssDeclaration(string Property, List<CssValue> Value, bool Important)
+/// <summary>
+/// A property and its value as written. <paramref name="Shorthand"/> is set on a longhand whose
+/// shorthand value uses var(): it is expanded once the variables are substituted.
+/// </summary>
+internal sealed record CssDeclaration(string Property, List<CssValue> Value, bool Important, string? Shorthand = null)
 {
     public override string ToString() => Property + ": " + string.Concat(Value.Select(v => v.ToString())).Trim() + (Important ? " !important" : "");
 }

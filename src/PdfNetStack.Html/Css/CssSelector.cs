@@ -352,18 +352,22 @@ internal abstract class CssCondition
 
 internal sealed class IdCondition(string id) : CssCondition
 {
+    public string Id { get; } = id;
+
     public override CssSpecificity Specificity => new(1, 0, 0);
 
-    public override bool Matches(HtmlElement e) => e.GetAttribute("id") == id;
+    public override bool Matches(HtmlElement e) => e.GetAttribute("id") == Id;
 }
 
 internal sealed class ClassCondition(string name) : CssCondition
 {
+    public string Name { get; } = name;
+
     public override bool Matches(HtmlElement e)
     {
         foreach (string c in e.ClassList)
         {
-            if (c == name) return true;
+            if (c == Name) return true;
         }
 
         return false;

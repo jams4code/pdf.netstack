@@ -61,7 +61,11 @@ quality output, built on the canvas, fonts and text layout above.
    Done: the HTML parser, the CSS tokenizer and rule parser (`@media`, `@page` with margin boxes,
    `@font-face`, `@import`), selectors with all combinators, attribute operators, the `:nth-*`
    family with `of S`, `:not`, `:is`, `:where`, `:lang`, `:dir`, pseudo-elements and
-   specificity. Next: the cascade and computed values.
+   specificity. The cascade: origins and `!important`, style attributes, presentational
+   hints (`align`, `bgcolor`, `cellpadding` and the rest of the legacy table markup), media
+   queries for print with range syntax, shorthand expansion, `var()` with cycle detection and
+   an output budget, `calc()`, `min()`, `max()`, `clamp()`, inheritance and computed values in
+   CSS px, colors through CSS Color 4 (`oklch()`, `lab()`, `hwb()`). Next: the box tree.
 2. **Block and inline layout.** The box model, block formatting, inline formatting with the text
    engine (fonts, bidi, Arabic), floats, positioning, margins and collapsing, overflow clipping.
 3. **Paged media.** `@page` sizes and margins, margin boxes for running headers and footers,
