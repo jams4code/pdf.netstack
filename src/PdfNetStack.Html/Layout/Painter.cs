@@ -9,21 +9,24 @@ namespace PdfNetStack.Html.Layout;
 /// simplified to tree order): backgrounds, borders, then content; text with its decorations;
 /// images; links over anchors.
 /// </summary>
-internal sealed class Painter
+internal sealed partial class Painter
 {
     private readonly PdfGraphics _g;
     private readonly double _top;
     private readonly double _bottom;
     private readonly Func<string, (PdfPage Page, double Top)?> _anchor;
     private readonly Box? _skipBackground;
+    private readonly Func<string, PdfImage?>? _images;
 
     /// <param name="graphics">The canvas, already scaled to px with the slice at the top of the page area.</param>
     /// <param name="top">The slice of the canvas this page shows.</param>
     /// <param name="bottom">The end of the slice.</param>
     /// <param name="anchor">Finds the page and position of an element id, for internal links.</param>
     /// <param name="skipBackground">The box whose background was propagated to the page and is not painted again.</param>
-    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground)
+    /// <param name="images">Loads background images by URL; null to draw none.</param>
+    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, PdfImage?>? images = null)
     {
+        _images = images;
         _g = graphics;
         _top = top;
         _bottom = bottom;
@@ -49,28 +52,38 @@ internal sealed class Painter
         if (opacity <= 0) return;
         bool visible = f.Style.Keyword("visibility") == "visible";
         bool decorated = f.Box is not TableWrapperBox && !HiddenEmptyCell(f);
+        PdfCornerRadii radii = decorated ? Radii(f.Style, f.Width, f.Height) : default;
+
+        // A transform moves the box and everything inside it; overflow clips what is inside.
+        bool transformed = HasTransform(f.Style);
+        bool clipped = f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
+        using PdfGraphicsState? state = transformed || clipped ? _g.Save() : null;
+        if (transformed) Transform(f);
         if (visible && Visible(f))
         {
-            if (decorated && !ReferenceEquals(f.Box, _skipBackground)) Background(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, f.Padding, opacity);
-            if (decorated) Borders(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, true, true, opacity, f.CollapsedBorders);
-            if (f.Box is ReplacedBox image && f.ContentWidth > 0 && f.ContentHeight > 0)
+            if (decorated)
             {
-                _g.DrawImage(image.Image, f.ContentX, f.ContentY, f.ContentWidth, f.ContentHeight);
+                Shadows(f.Style, f.X, f.Y, f.Width, f.Height, radii, opacity);
+                if (!ReferenceEquals(f.Box, _skipBackground)) Background(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, f.Padding, opacity, radii);
+                Borders(f.Style, f.X, f.Y, f.Width, f.Height, f.Border, true, true, opacity, f.CollapsedBorders, radii);
             }
 
+            if (f.Box is ReplacedBox image) Image(f, image, radii);
+            if (decorated) Outline(f.Style, f.X, f.Y, f.Width, f.Height, opacity);
             Link(f.Box.Element, f.X, f.Y, f.Width, f.Height);
         }
 
-        bool clip = f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
-        using (clip ? _g.Save() : (PdfGraphicsState?)null)
+        // overflow other than visible clips the content to the padding box, rounded with the corners.
+        if (clipped)
         {
-            if (clip) _g.IntersectClip(f.X + f.Border.Left, f.Y + f.Border.Top, f.Width - f.Border.Horizontal, f.Height - f.Border.Vertical);
-            if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity);
-            foreach (Fragment child in f.Children)
-            {
-                if (child is BoxFragment b) Paint(b, opacity);
-                else if (child is LineFragment line && Visible(line)) PaintLine(line, opacity);
-            }
+            _g.IntersectClip(Shape(f.X + f.Border.Left, f.Y + f.Border.Top, f.Width - f.Border.Horizontal, f.Height - f.Border.Vertical, Inset(radii, f.Border)));
+        }
+
+        if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity);
+        foreach (Fragment child in f.Children)
+        {
+            if (child is BoxFragment b) Paint(b, opacity);
+            else if (child is LineFragment line && Visible(line)) PaintLine(line, opacity);
         }
     }
 
@@ -88,7 +101,7 @@ internal sealed class Painter
             {
                 case InlineFragment inline when inline.Box.Style.Keyword("visibility") == "visible":
                     double o = opacity * Opacity(inline.Box.Style);
-                    Background(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.Padding, o);
+                    Background(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.Padding, o, default);
                     Borders(inline.Box.Style, inline.X, inline.Y, inline.Width, inline.Height, inline.Border, inline.StartEdge, inline.EndEdge, o);
                     Link(inline.Box.Element, inline.X, inline.Y, inline.Width, inline.Height);
                     break;
@@ -106,31 +119,6 @@ internal sealed class Painter
     private static bool HiddenEmptyCell(BoxFragment f) =>
         f.Box is TableCellBox && f.CollapsedBorders is null && f.Style.Keyword("empty-cells") == "hide" && f.Children.Count == 0;
 
-    private void Background(ComputedStyle s, double x, double y, double w, double h, Edges border, Edges padding, double opacity)
-    {
-        CssColor color = s.Color("background-color");
-        if (color.A <= 0 || w <= 0 || h <= 0) return;
-
-        // background-clip: the border box by default, or the padding or content box.
-        string clip = s.Keyword("background-clip");
-        if (clip is "padding-box" or "content-box")
-        {
-            x += border.Left;
-            y += border.Top;
-            w -= border.Horizontal;
-            h -= border.Vertical;
-            if (clip == "content-box")
-            {
-                x += padding.Left;
-                y += padding.Top;
-                w -= padding.Horizontal;
-                h -= padding.Vertical;
-            }
-        }
-
-        if (w > 0 && h > 0) _g.DrawRectangle(null, new PdfSolidBrush(ToPdf(color, opacity)), x, y, w, h);
-    }
-
     /// <summary>The page's background: the root's, or the body's when the root has none (CSS 2.1, 14.2).</summary>
     public static (CssColor Color, Box? Source) CanvasBackground(BoxFragment root)
     {
@@ -141,11 +129,22 @@ internal sealed class Painter
     }
 
     /// <param name="collapsed">Resolved edges for a cell in the collapsing border model, top right bottom left; null for the box's own.</param>
-    private void Borders(ComputedStyle s, double x, double y, double w, double h, Edges border, bool startEdge, bool endEdge, double opacity, CollapsedEdge[]? collapsed = null)
+    /// <param name="radii">Rounded corners: the sides are drawn inside the rounded ring between the border and padding edges.</param>
+    private void Borders(ComputedStyle s, double x, double y, double w, double h, Edges border, bool startEdge, bool endEdge, double opacity, CollapsedEdge[]? collapsed = null, PdfCornerRadii radii = default)
     {
         if (border.Top + border.Right + border.Bottom + border.Left <= 0) return;
         double left = startEdge ? border.Left : 0, right = endEdge ? border.Right : 0;
         double x2 = x + w, y2 = y + h;
+
+        using PdfGraphicsState? state = radii.IsZero ? null : _g.Save();
+        if (!radii.IsZero)
+        {
+            // Rounded: clip to the ring, then each side's trapezoid fills its part of it.
+            PdfPath ring = new PdfPath { FillRule = PdfFillRule.EvenOdd }.AddRoundedRectangle(x, y, w, h, radii);
+            double iw = w - left - right, ih = h - border.Vertical;
+            if (iw > 0 && ih > 0) ring = ring.AddRoundedRectangle(x + left, y + border.Top, iw, ih, Inset(radii, border with { Left = left, Right = right }));
+            _g.IntersectClip(ring);
+        }
 
         // Each side is a trapezoid, so corners meet on the diagonal as in browsers.
         Side(s, "top", collapsed?[0], border.Top, opacity, [new(x, y), new(x2, y), new(x2 - right, y + border.Top), new(x + left, y + border.Top)], x, y + (border.Top / 2), x2, y + (border.Top / 2));
@@ -199,6 +198,8 @@ internal sealed class Painter
                 double extra = t.JustifySpace * 1000 / t.Size;
                 glyphs = glyphs.Select(g => t.Text.Length > 0 && g.CodePoint is ' ' or 0xA0 ? g with { Advance = g.Advance + extra } : g).ToList();
             }
+
+            TextShadows(t, glyphs, opacity);
 
             _g.DrawGlyphs(glyphs, t.Font, t.Size, null, new PdfSolidBrush(ToPdf(color, opacity)), t.X, t.Baseline, t.Text);
         }

@@ -91,8 +91,11 @@ quality output, built on the canvas, fonts and text layout above.
    at breaks. Next: named pages, `string-set`, running elements, table headers repeated per page.
 4. **Visual CSS.** Done: background colors (with `background-clip` and the root and body
    background covering the page), solid, dashed, dotted and double borders, text decorations
-   in every style, opacity, `overflow` clipping, `visibility`. Next: background images and
-   gradients, border radius, box shadows, transforms, `object-fit`.
+   in every style, opacity, `overflow` clipping, `visibility`; border radius with overlap
+   scaling (elliptical corners, mixed side colors, rounded clipping), background layers with
+   images (`background-size`, `-position`, `-repeat`, `-origin`, `-clip`) and linear and
+   radial gradients, box shadows with blur and spread, 2D transforms around
+   `transform-origin`, `object-fit` and `object-position`, outlines, text shadows.
 5. **Flexbox, tables, then grid.** Tables done: the auto width algorithm browsers share (min
    and max per column, spanning cells, percentages, constrained columns, shrink to fit),
    `table-layout: fixed`, row and column spans, header groups first and footer groups last,
@@ -117,6 +120,14 @@ packages never depend on it.
 
 Fonts: no fonts ship in the MIT packages. The engine uses `@font-face`, fonts passed in by the
 caller, and installed system fonts, and falls back to the standard 14 fonts for Latin text.
+
+## OCR, queued
+
+`PdfNetStack.Ocr`, an optional package that makes scanned PDFs searchable: page images are
+recognized and an invisible text layer is written over them, so text can be selected, copied
+and searched. The core stays pure managed and MIT; the OCR engine and its models live only in
+the add-on. Scoping (engine choice, the image decoders scanned PDFs need, the text layer) is in
+progress.
 
 ## Optimizer, next
 

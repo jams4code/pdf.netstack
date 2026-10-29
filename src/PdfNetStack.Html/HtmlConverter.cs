@@ -115,7 +115,7 @@ public static class HtmlConverter
                     using (graphics.Save())
                     {
                         graphics.TranslateTransform(0, offset - header.Header.Y);
-                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated).Paint(header.Header);
+                        new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage).Paint(header.Header);
                     }
 
                     offset += header.Advance;
@@ -125,7 +125,7 @@ public static class HtmlConverter
 
                 // The page shows its slice; content may overflow sideways into the margins.
                 graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
-                new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated).Paint(layout);
+                new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage).Paint(layout);
             }
 
             // position: fixed repeats on every page, placed against the page area (CSS 2.1, 9.6.1).
@@ -135,7 +135,7 @@ public static class HtmlConverter
                 {
                     graphics.TranslateTransform(g.Margin.Left * PointsPerPixel, g.Margin.Top * PointsPerPixel);
                     graphics.ScaleTransform(PointsPerPixel, PointsPerPixel);
-                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated).Paint(fixedBox);
+                    new Painter(graphics, double.MinValue / 4, double.MaxValue / 4, Anchor, propagated, resources.LoadImage).Paint(fixedBox);
                 }
             }
 
