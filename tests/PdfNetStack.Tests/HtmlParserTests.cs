@@ -85,6 +85,7 @@ public sealed class HtmlParserTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: other tests' allocations would land in the measurement
     [DataRow("", "a<!---->", "")]
     [DataRow("<table>", "x<!---->", "</table>")]
     [DataRow("<p ", "a=1 ", ">")]

@@ -102,6 +102,7 @@ public sealed class HostileInputTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: other tests' allocations would land in the measurement
     public void ManyUnterminatedObjectsReconstructInLinearTime()
     {
         // Compare scaling, not wall time, so a busy machine cannot fail the test: four times the
