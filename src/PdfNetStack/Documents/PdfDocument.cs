@@ -15,7 +15,7 @@ public sealed record PdfSaveOptions
     /// <summary>Shared default instance.</summary>
     public static PdfSaveOptions Default { get; } = new();
 
-    /// <summary>Pack objects into compressed object streams (PDF 1.5). Default true.</summary>
+    /// <summary>Pack objects into compressed object streams (PDF 1.5). Default true. PDF/A-1 output never uses them.</summary>
     public bool UseObjectStreams { get; init; } = true;
 
     /// <summary>
@@ -531,7 +531,10 @@ public sealed class PdfDocument
             throw new InvalidOperationException("A Factur-X or ZUGFeRD invoice must be saved as PDF/A-3: set PdfSaveOptions.Conformance to PdfA3B or PdfA3U.");
         }
 
-        if (options.Conformance != PdfConformance.None) PdfArchive.Prepare(this, options.Conformance);
+        // Bookmarks are written first, so PDF/A sees their actions as they will be saved.
+        _outlines?.WriteTo(this);
+        int archive = PdfArchive.Part(options.Conformance);
+        if (archive != 0) PdfArchive.Prepare(this, options.Conformance);
         Security.RequireOwner();
 
         CompressionLevel level = options.Compression switch
@@ -556,7 +559,6 @@ public sealed class PdfDocument
         pagesNode.Set("Kids", kids);
         pagesNode.Set("Count", PdfNumber.FromInteger(Pages.Count));
         Catalog.Set("Pages", new PdfReference(pagesNumber, 0));
-        _outlines?.WriteTo(this);
 
         var dead = new HashSet<int>(_pageTreeNodes);
         var live = new HashSet<int>(Pages.Select(p => p.Number));
@@ -569,7 +571,23 @@ public sealed class PdfDocument
 
         var trailer = new PdfDictionary();
         trailer.Set("Root", new PdfReference(CatalogNumber, 0));
-        if (InfoNumber is { } info && Objects.ContainsKey(info)) trailer.Set("Info", new PdfReference(info, 0));
+        int? archiveInfo = null;
+        if (InfoNumber is { } info && Objects.ContainsKey(info))
+        {
+            // PDF/A-4 keeps the document information in XMP; the dictionary written holds only the modification date (ISO 19005-4, 6.1.3).
+            if (archive == 4 && Resolve(new PdfReference(info, 0)) is PdfDictionary full)
+            {
+                var dates = new PdfDictionary();
+                if (full["ModDate"] is { } modified) dates.Set("ModDate", modified);
+                archiveInfo = Add(dates);
+                trailer.Set("Info", new PdfReference(archiveInfo.Value, 0));
+            }
+            else
+            {
+                trailer.Set("Info", new PdfReference(info, 0));
+            }
+        }
+
         Id ??= NewId();
         trailer.Set("ID", Id);
 
@@ -604,8 +622,9 @@ public sealed class PdfDocument
         // Pages node is rebuilt on every save; drop it so a second save starts clean.
         var objects = order.Select(n => Objects[n]).ToList();
         int Map(PdfReference r) => index.TryGetValue(r.Number, out int n) ? n : -1;
-        bool objectStreams = options.UseObjectStreams;
-        string version = objectStreams && string.CompareOrdinal(Version, "1.5") < 0 ? "1.5" : Version;
+        // PDF/A-1 is PDF 1.4, which predates object and xref streams; PDF/A-4 is PDF 2.0.
+        bool objectStreams = options.UseObjectStreams && archive != 1;
+        string version = PdfArchive.HeaderVersion(archive) ?? (objectStreams && string.CompareOrdinal(Version, "1.5") < 0 ? "1.5" : Version);
         // The optimizer pass below does the exhaustive search; without it, the writer does.
         var settings = new WriterSettings(objectStreams, 200, version, level)
         {
@@ -613,6 +632,7 @@ public sealed class PdfDocument
         };
         byte[] written = PdfDocumentWriter.Write(objects, trailer, Map, settings).ToArray();
         Objects.Remove(pagesNumber);
+        if (archiveInfo is int infoCopy) Objects.Remove(infoCopy);
 
         if (options.Optimize)
         {

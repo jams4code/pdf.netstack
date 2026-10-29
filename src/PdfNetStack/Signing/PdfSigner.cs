@@ -116,7 +116,8 @@ public sealed class PdfSignatureInfo
     public PdfTimestampInfo? Timestamp { get; internal set; }
 
     /// <summary>
-    /// The signer's certificate checks: chain, validity, usage and revocation. Null unless
+    /// The signer's certificate checks: chain, validity, usage, name constraints, revocation,
+    /// certificate policies and the qualified status the certificate claims. Null unless
     /// <see cref="PdfSigner.Verify(byte[], PdfValidationOptions)"/> was given options. For a
     /// document timestamp, the authority's checks.
     /// </summary>
@@ -323,8 +324,9 @@ public static class PdfSigner
     /// <summary>
     /// Checks every signature and document timestamp of a file and, with
     /// <paramref name="options"/>, validates the certificates of signers and time stamp
-    /// authorities: chain to a trust anchor, validity, usage and revocation from the document
-    /// security store and supplied data. Certificates are checked at the time of a valid
+    /// authorities: chain to a trust anchor, validity, usage, name constraints and revocation from
+    /// the document security store and supplied data, certificate policies along the chain, and
+    /// the qualified status the certificate claims. Certificates are checked at the time of a valid
     /// timestamp when there is one, else now, unless the options set a time.
     /// </summary>
     public static IReadOnlyList<PdfSignatureInfo> Verify(byte[] pdf, PdfValidationOptions? options)

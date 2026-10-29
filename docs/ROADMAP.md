@@ -25,7 +25,7 @@ Done and in the main branch:
 | Annotations | Links, named destinations (read and rename), notes, text markup, free text, stamps, ink, squares, circles, lines with endings, polygons, polylines and file attachments, with appearance streams; flattening of one annotation, a page or a document |
 | Forms | Creating text, check box, radio, choice, signature and button fields; reading, filling and flattening; fields travel with imported and merged pages; the Acrobat number, percent, date, time and special format actions applied in C# |
 | Document features | Viewer preferences, page labels, language, custom properties, file attachments |
-| Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; PDF/A-2b, 2u, 3b and 3u output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
+| Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; the X.509 checks of ETSI EN 319 102-1: certificate policies with mappings and constraints (RFC 5280 on the RFC 9618 policy graph), name constraints, and the qualified status QCStatements claim; PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
 | Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
 | Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
 | Scale | Documents read on demand from a seekable stream, with incremental saving |
@@ -40,8 +40,7 @@ Done and in the main branch:
 - Dictionary hyphenation, once permissively licensed patterns cover the main languages.
 
 **Signatures and PDF/A**
-- Full ETSI EN 319 102-1 validation: certificate policies, name constraints, qualified status.
-- PDF/A-1b and PDF/A-4 output.
+- Qualified status confirmed against EU trusted lists supplied by the application.
 
 **OCR**
 - A models package, then `PdfNetStack.Ocr` on NuGet.

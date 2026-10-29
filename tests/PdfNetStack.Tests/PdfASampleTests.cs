@@ -38,7 +38,10 @@ public sealed class PdfASampleTests
     /// <summary>Every sample: its file name (flavour first) and bytes.</summary>
     private static IEnumerable<(string Name, byte[] Data)> Samples()
     {
-        yield return ("2b-plain.pdf", Page("PDF/A-2b").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA2B }));
+        yield return ("1b-plain.pdf", Page("PDF/A-1b").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA1B }));
+        yield return ("1b-unoptimized.pdf", Page("PDF/A-1b, not optimized").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA1B, Optimize = false }));
+        byte[] twoB = Page("PDF/A-2b").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA2B });
+        yield return ("2b-plain.pdf", twoB);
         yield return ("2u-plain.pdf", Page("PDF/A-2u").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA2U }));
         yield return ("3u-plain.pdf", Page("PDF/A-3u").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA3U, UseObjectStreams = false }));
 
@@ -54,6 +57,17 @@ public sealed class PdfASampleTests
         PdfDocument xrechnung = Page("ZUGFeRD XRECHNUNG");
         PdfInvoice.Attach(xrechnung, InvoiceXml, PdfInvoiceProfile.XRechnung);
         yield return ("3u-zugferd-xrechnung.pdf", xrechnung.ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA3U }));
+
+        yield return ("4-plain.pdf", Page("PDF/A-4").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA4 }));
+        yield return ("4e-plain.pdf", Page("PDF/A-4e").ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA4E }));
+
+        PdfDocument nested = Page("PDF/A-4 with an embedded PDF/A-2b file");
+        nested.Attachments.Add("earlier.pdf", twoB, "application/pdf");
+        yield return ("4-embedded-pdfa.pdf", nested.ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA4 }));
+
+        PdfDocument files = Page("PDF/A-4f with an attachment");
+        files.Attachments.Add("data.csv", "a,b\n1,2\n"u8.ToArray(), "text/csv");
+        yield return ("4f-attachment.pdf", files.ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA4F }));
 
         // A signed invoice with a signature timestamp, validation data and a document timestamp (PAdES B-LTA).
         var pki = new TestPki();

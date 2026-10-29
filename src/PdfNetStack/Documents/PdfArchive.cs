@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.Security;
 using System.Text;
+using PdfNetStack.Fonts;
+using PdfNetStack.Fonts.OpenType;
 using PdfNetStack.Objects;
+using PdfNetStack.Parsing;
 
 namespace PdfNetStack;
 
@@ -22,63 +25,268 @@ public enum PdfConformance
 
     /// <summary>PDF/A-3u: PDF/A-3b with Unicode text.</summary>
     PdfA3U,
+
+    /// <summary>
+    /// PDF/A-1b (ISO 19005-1), based on PDF 1.4: written with a classic cross-reference table and
+    /// no object streams. Transparency, JPEG 2000, optional content and embedded files are not
+    /// allowed, and subset CID fonts get the CIDSet stream the part requires.
+    /// </summary>
+    PdfA1B,
+
+    /// <summary>
+    /// PDF/A-4 (ISO 19005-4), based on PDF 2.0. The document information is kept in the XMP
+    /// metadata; the information dictionary in the file holds only the modification date.
+    /// Embedded files must themselves be PDF/A-1, PDF/A-2 or PDF/A-4 files.
+    /// </summary>
+    PdfA4,
+
+    /// <summary>PDF/A-4e: PDF/A-4 for engineering documents, which also allows 3D and RichMedia annotations and their actions.</summary>
+    PdfA4E,
+
+    /// <summary>PDF/A-4f: PDF/A-4 with at least one embedded file of any type, each declared as an associated file.</summary>
+    PdfA4F,
 }
 
 /// <summary>
-/// Prepares a document for PDF/A-2 or PDF/A-3 output: checks what cannot be repaired, then adds
-/// an sRGB output intent and XMP metadata that matches the document information, and fixes
-/// annotation flags and embedded file entries.
+/// Prepares a document for PDF/A output (ISO 19005, parts 1 to 4): checks what cannot be
+/// repaired, repairs what can (annotation flags, image interpolation, form appearance flags, LZW
+/// compression, CIDSet streams for PDF/A-1), then adds an sRGB output intent and XMP metadata
+/// that matches the document information, and declares embedded files as associated files.
 /// </summary>
 internal static class PdfArchive
 {
+    private const string Transparency = "Transparency (opacity, soft masks, images with an alpha channel, blend modes, transparency groups) is not allowed in PDF/A-1; use PDF/A-2 or later.";
+
     private static readonly Lazy<byte[]> Srgb = new(SrgbProfile.Create);
+
+    /// <summary>Annotation types PDF/A-1 allows: those of PDF 1.4 except file attachments, sounds and movies (ISO 19005-1, 6.5.2).</summary>
+    private static readonly HashSet<string> PdfA1Annotations =
+    [
+        "Text", "Link", "FreeText", "Line", "Square", "Circle", "Highlight", "Underline", "Squiggly", "StrikeOut",
+        "Stamp", "Ink", "Popup", "Widget", "PrinterMark", "TrapNet",
+    ];
+
+    /// <summary>Action types PDF/A-1 allows (ISO 19005-1, 6.6.1): those of PDF 1.4 that neither run code nor play media.</summary>
+    private static readonly HashSet<string> PdfA1Actions = ["GoTo", "GoToR", "Thread", "URI", "Named", "SubmitForm"];
+
+    /// <summary>Action types defined by ISO 32000-1 and 32000-2; any other type is refused.</summary>
+    private static readonly HashSet<string> KnownActions =
+    [
+        "GoTo", "GoToR", "GoToE", "GoToDp", "Launch", "Thread", "URI", "Sound", "Movie", "Hide", "Named", "SubmitForm",
+        "ResetForm", "ImportData", "SetOCGState", "Rendition", "Trans", "GoTo3DView", "JavaScript", "RichMediaExecute",
+    ];
+
+    /// <summary>Actions no part allows: they run code, play media, change what is shown or reach outside the file.</summary>
+    private static readonly HashSet<string> ForbiddenActions =
+        ["Launch", "Sound", "Movie", "ResetForm", "ImportData", "Hide", "SetOCGState", "Rendition", "Trans", "JavaScript"];
+
+    /// <summary>The ISO 19005 part of a conformance level, or 0 for none.</summary>
+    public static int Part(PdfConformance conformance) => conformance switch
+    {
+        PdfConformance.PdfA1B => 1,
+        PdfConformance.PdfA2B or PdfConformance.PdfA2U => 2,
+        PdfConformance.PdfA3B or PdfConformance.PdfA3U => 3,
+        PdfConformance.PdfA4 or PdfConformance.PdfA4E or PdfConformance.PdfA4F => 4,
+        _ => 0,
+    };
+
+    /// <summary>The header version a part fixes: PDF 1.4 for PDF/A-1, PDF 2.0 for PDF/A-4. Null for the others, which keep the document's.</summary>
+    public static string? HeaderVersion(int part) => part switch
+    {
+        1 => "1.4",
+        4 => "2.0",
+        _ => null,
+    };
+
+    /// <summary>The pdfaid:conformance letter; null for plain PDF/A-4, which has none.</summary>
+    private static string? Level(PdfConformance conformance) => conformance switch
+    {
+        PdfConformance.PdfA2U or PdfConformance.PdfA3U => "U",
+        PdfConformance.PdfA4 => null,
+        PdfConformance.PdfA4E => "E",
+        PdfConformance.PdfA4F => "F",
+        _ => "B",
+    };
+
+    private static string Name(PdfConformance conformance) =>
+        "PDF/A-" + Part(conformance).ToString(CultureInfo.InvariantCulture) + (Level(conformance)?.ToLowerInvariant() ?? "");
 
     public static void Prepare(PdfDocument doc, PdfConformance conformance)
     {
-        int part = conformance is PdfConformance.PdfA2B or PdfConformance.PdfA2U ? 2 : 3;
-        bool unicode = conformance is PdfConformance.PdfA2U or PdfConformance.PdfA3U;
+        int part = Part(conformance);
+        string? level = Level(conformance);
+        bool unicode = level == "U";
+        bool engineering = conformance == PdfConformance.PdfA4E;
         var problems = new List<string>();
         if (doc.Security.Target is not null) problems.Add("PDF/A files cannot be encrypted.");
-        if (string.CompareOrdinal(doc.Version, "1.7") > 0) problems.Add($"PDF/A-{part} is based on PDF 1.7; this document is PDF {doc.Version}.");
+        if (part is 2 or 3 && string.CompareOrdinal(doc.Version, "1.7") > 0) problems.Add($"PDF/A-{part} is based on PDF 1.7; this document is PDF {doc.Version}.");
         if (doc.UsesDeviceCmyk) problems.Add("DeviceCMYK colors or images are used; PDF/A with an sRGB output intent needs RGB, gray, or ICC based colors.");
-        CheckFonts(doc, problems, unicode);
+        if (doc.Invoice is not null && part != 3) problems.Add("A Factur-X or ZUGFeRD invoice must be saved as PDF/A-3.");
+        Resources resources = Collect(doc);
+        CheckFonts(doc, resources.Fonts, problems, unicode, part);
+        List<(PdfDictionary Descriptor, PdfStream Set)> cidSets = part == 1 ? CidSets(doc, resources.Fonts, problems) : [];
+        CheckGraphicsStates(doc, resources.GraphicsStates, part, problems);
+        CheckObjects(doc, part, problems);
         CheckScripts(doc, problems);
-        CheckAnnotations(doc, problems);
-        PrepareAttachments(doc, part, problems);
+        CheckActions(doc, part, engineering, problems);
+        CheckForm(doc, problems);
+        CheckAnnotations(doc, part, engineering, problems);
+        if (part == 1 && doc.Catalog["OCProperties"] is not null) problems.Add("Optional content (layers) is not allowed in PDF/A-1.");
+        PrepareAttachments(doc, conformance, problems);
         InvoiceMetadata? invoice = part == 3 ? PdfInvoice.Check(doc, problems) : null;
         if (problems.Count > 0)
         {
-            throw new InvalidOperationException("The document cannot be saved as PDF/A-" + part + (unicode ? "u" : "b") + ":\n- " + string.Join("\n- ", problems.Distinct()));
+            throw new InvalidOperationException("The document cannot be saved as " + Name(conformance) + ":\n- " + string.Join("\n- ", problems.Distinct()));
         }
 
+        foreach ((PdfDictionary descriptor, PdfStream set) in cidSets) descriptor.Set("CIDSet", doc.AddObject(set));
+
+        // The header carries the version the part fixes; a catalog entry must not claim another.
+        if (part is 1 or 4) doc.Catalog.Remove("Version");
         AddOutputIntent(doc);
-        WriteMetadata(doc, part, unicode ? "U" : "B", invoice);
+        WriteMetadata(doc, part, level, invoice);
     }
 
-    private static void CheckFonts(PdfDocument doc, List<string> problems, bool unicode)
+    private static void CheckFonts(PdfDocument doc, List<PdfDictionary> fonts, List<string> problems, bool unicode, int part)
     {
-        foreach (PdfDictionary font in Fonts(doc))
+        foreach (PdfDictionary font in fonts)
         {
             string name = font.GetName("BaseFont") ?? "(unnamed font)";
             string subtype = font.GetName("Subtype") ?? "";
             if (subtype == "Type3") continue;
             PdfDictionary? descriptor = doc.Resolve(font["FontDescriptor"]) as PdfDictionary;
-            if (subtype == "Type0" && doc.Resolve(font["DescendantFonts"]) is PdfArray { Count: > 0 } d && doc.Resolve(d[0]) is PdfDictionary cid)
+            PdfDictionary? cid = null;
+            if (subtype == "Type0" && doc.Resolve(font["DescendantFonts"]) is PdfArray { Count: > 0 } d && doc.Resolve(d[0]) is PdfDictionary descendant)
             {
+                cid = descendant;
                 descriptor = doc.Resolve(cid["FontDescriptor"]) as PdfDictionary;
             }
 
             bool embedded = descriptor is not null && (descriptor["FontFile"] ?? descriptor["FontFile2"] ?? descriptor["FontFile3"]) is not null;
             if (!embedded) problems.Add($"Font {name} is not embedded. PDF/A embeds every font: draw with a PdfOpenTypeFont instead of the standard fonts.");
             if (unicode && subtype == "Type0" && font["ToUnicode"] is null) problems.Add($"Font {name} has no ToUnicode map.");
+            if (part != 1 || descriptor is null) continue;
+
+            // PDF 1.4 knows no OpenType font programs, and its Type 1 subsets list their glyphs (ISO 19005-1, 6.3.4 and 6.3.5).
+            if (doc.Resolve(descriptor["FontFile3"]) is PdfStream program && program.Dictionary.GetName("Subtype") == "OpenType")
+            {
+                problems.Add($"Font {name} embeds an OpenType program, which PDF/A-1 (PDF 1.4) cannot hold.");
+            }
+
+            if (subtype is "Type1" or "MMType1" && embedded && IsSubset(name) && descriptor["CharSet"] is null)
+            {
+                problems.Add($"Font {name} is a Type 1 subset without the CharSet PDF/A-1 requires.");
+            }
+
+            // Identity is what an absent map means; PDF/A-1 wants it written (6.3.3.2).
+            if (cid?.GetName("Subtype") == "CIDFontType2" && cid["CIDToGIDMap"] is null) cid.Set("CIDToGIDMap", new PdfName("Identity"));
         }
     }
 
-    /// <summary>Every font dictionary used by pages, forms, patterns and annotation appearances.</summary>
-    private static IEnumerable<PdfDictionary> Fonts(PdfDocument doc)
+    private static bool IsSubset(string name) =>
+        name.Length > 7 && name[6] == '+' && name.Take(6).All(c => c is >= 'A' and <= 'Z');
+
+    /// <summary>
+    /// The CIDSet of every subset CID font (ISO 19005-1, 6.3.5): one bit per CID the embedded
+    /// program holds, read from the program itself. TrueType subsets keep their glyph ids, so the
+    /// program holds every glyph up to the highest used one, the unused ones empty.
+    /// </summary>
+    private static List<(PdfDictionary Descriptor, PdfStream Set)> CidSets(PdfDocument doc, List<PdfDictionary> fonts, List<string> problems)
     {
+        var sets = new List<(PdfDictionary, PdfStream)>();
+        foreach (PdfDictionary font in fonts)
+        {
+            if (font.GetName("Subtype") != "Type0" || doc.Resolve(font["DescendantFonts"]) is not PdfArray { Count: > 0 } d || doc.Resolve(d[0]) is not PdfDictionary cid) continue;
+            string name = cid.GetName("BaseFont") ?? font.GetName("BaseFont") ?? "";
+            if (!IsSubset(name) || doc.Resolve(cid["FontDescriptor"]) is not PdfDictionary descriptor) continue;
+            byte[]? set = null;
+            try
+            {
+                if (doc.Resolve(descriptor["FontFile2"]) is PdfStream trueType)
+                {
+                    byte[]? map = doc.Resolve(cid["CIDToGIDMap"]) is PdfStream m ? doc.GetStreamData(m) : null;
+                    set = TrueTypeCids(doc.GetStreamData(trueType), map);
+                }
+                else if (doc.Resolve(descriptor["FontFile3"]) is PdfStream compact && compact.Dictionary.GetName("Subtype") == "CIDFontType0C")
+                {
+                    set = Bits(new CffFont(doc.GetStreamData(compact)).GlyphToCid);
+                }
+                else
+                {
+                    continue;
+                }
+            }
+            catch (Exception e) when (e is PdfFormatException or FontFormatException or ArgumentException or IndexOutOfRangeException or OverflowException)
+            {
+                set = null;
+            }
+
+            if (set is null) problems.Add($"Font {name}: its embedded program cannot be read to list its glyphs, which PDF/A-1 requires (CIDSet).");
+            else sets.Add((descriptor, PdfStream.FromData(set)));
+        }
+
+        return sets;
+    }
+
+    /// <summary>The CIDs of a TrueType program: CID = glyph id, or through a CIDToGIDMap stream, for every glyph the maxp table counts.</summary>
+    private static byte[]? TrueTypeCids(byte[] program, byte[]? map)
+    {
+        if (GlyphCount(program) is not int glyphs) return null;
+        var cids = new List<int>();
+        if (map is null)
+        {
+            for (int g = 0; g < glyphs; g++) cids.Add(g);
+        }
+        else
+        {
+            for (int c = 0; c + 1 < map.Length && c / 2 <= ushort.MaxValue; c += 2)
+            {
+                int gid = map[c] << 8 | map[c + 1];
+                if (gid < glyphs && (gid != 0 || c == 0)) cids.Add(c / 2);
+            }
+        }
+
+        return Bits(cids);
+    }
+
+    /// <summary>numGlyphs from the maxp table of an sfnt program, or null when it cannot be found.</summary>
+    private static int? GlyphCount(byte[] sfnt)
+    {
+        if (sfnt.Length < 12) return null;
+        int tables = sfnt[4] << 8 | sfnt[5];
+        for (int i = 0; i < tables; i++)
+        {
+            int record = 12 + 16 * i;
+            if (record + 16 > sfnt.Length) return null;
+            if (sfnt[record] != 'm' || sfnt[record + 1] != 'a' || sfnt[record + 2] != 'x' || sfnt[record + 3] != 'p') continue;
+            long offset = (long)sfnt[record + 8] << 24 | (long)sfnt[record + 9] << 16 | (long)sfnt[record + 10] << 8 | sfnt[record + 11];
+            return offset + 6 <= sfnt.Length ? sfnt[offset + 4] << 8 | sfnt[offset + 5] : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>A CIDSet bit string: the high order bit of the first byte is CID 0.</summary>
+    private static byte[] Bits(IEnumerable<int> cids)
+    {
+        int[] all = [.. cids.Where(c => c is >= 0 and <= ushort.MaxValue)];
+        var bits = new byte[(all.Length == 0 ? 0 : all.Max()) / 8 + 1];
+        foreach (int c in all) bits[c >> 3] |= (byte)(0x80 >> (c & 7));
+        return bits;
+    }
+
+    /// <summary>What the resource dictionaries of pages, forms, patterns, soft masks, Type 3 fonts and annotation appearances use.</summary>
+    private sealed class Resources
+    {
+        public List<PdfDictionary> Fonts { get; } = [];
+
+        public List<PdfDictionary> GraphicsStates { get; } = [];
+    }
+
+    private static Resources Collect(PdfDocument doc)
+    {
+        var found = new Resources();
         var seen = new HashSet<PdfDictionary>();
-        var fonts = new List<PdfDictionary>();
         var pending = new Stack<PdfDictionary>();
         foreach (PdfPage page in doc.Pages)
         {
@@ -103,8 +311,21 @@ internal static class PdfArchive
                 {
                     if (doc.Resolve(f.Value) is PdfDictionary font && seen.Add(font))
                     {
-                        fonts.Add(font);
+                        found.Fonts.Add(font);
                         if (doc.Resolve(font["Resources"]) is PdfDictionary t3) pending.Push(t3);
+                    }
+                }
+            }
+
+            if (doc.Resolve(resources["ExtGState"]) is PdfDictionary states)
+            {
+                foreach (KeyValuePair<string, PdfObject> s in states)
+                {
+                    if (doc.Resolve(s.Value) is not PdfDictionary state || !seen.Add(state)) continue;
+                    found.GraphicsStates.Add(state);
+                    if (doc.Resolve(state["SMask"]) is PdfDictionary mask && doc.Resolve(mask["G"]) is PdfStream group && doc.Resolve(group.Dictionary["Resources"]) is PdfDictionary maskResources)
+                    {
+                        pending.Push(maskResources);
                     }
                 }
             }
@@ -125,7 +346,7 @@ internal static class PdfArchive
             }
         }
 
-        return fonts;
+        return found;
 
         void PushAppearances(PdfDictionary ap)
         {
@@ -148,15 +369,270 @@ internal static class PdfArchive
         }
     }
 
+    /// <summary>Transfer functions are refused by every part; PDF/A-1 also refuses soft masks, opacity and blend modes other than Normal.</summary>
+    private static void CheckGraphicsStates(PdfDocument doc, List<PdfDictionary> states, int part, List<string> problems)
+    {
+        foreach (PdfDictionary state in states)
+        {
+            if (state["TR"] is not null || (state["TR2"] is not null && doc.Resolve(state["TR2"]) is not PdfName { Value: "Default" }))
+            {
+                problems.Add("A graphics state sets a transfer function, which PDF/A forbids.");
+            }
+
+            if (part != 1) continue;
+            bool masked = state["SMask"] is not null && doc.Resolve(state["SMask"]) is not PdfName { Value: "None" };
+            bool faded = Opacity(state["CA"]) < 1 || Opacity(state["ca"]) < 1;
+            bool blended = doc.Resolve(state["BM"]) switch
+            {
+                null => false,
+                PdfName n => n.Value is not ("Normal" or "Compatible"),
+                PdfArray modes => modes.Any(m => doc.Resolve(m) is not PdfName { Value: "Normal" or "Compatible" }),
+                _ => true,
+            };
+            if (masked || faded || blended) problems.Add(Transparency);
+        }
+
+        double Opacity(PdfObject? value) => doc.Resolve(value) is PdfNumber n ? n.ToDouble() : 1;
+    }
+
+    /// <summary>
+    /// Every object the saved file will hold, reached from the catalog and the pages: streams
+    /// that keep their data in other files, LZW (re-encoded with Flate where it can be), image and
+    /// form XObject entries PDF/A forbids, and for PDF/A-1 JPEG 2000, transparency and ICC
+    /// profiles newer than version 2. Image interpolation is switched off.
+    /// </summary>
+    private static void CheckObjects(PdfDocument doc, int part, List<string> problems)
+    {
+        // Pages that were removed and the old page tree are not written; references to them are skipped.
+        var seen = new HashSet<int>();
+        var pending = new Stack<(PdfObject Value, int Depth)>();
+        pending.Push((doc.Catalog, 0));
+        foreach (PdfPage page in doc.Pages)
+        {
+            seen.Add(page.Number);
+            pending.Push((page.Dictionary, 0));
+            if (part == 1 && doc.Resolve(page.Dictionary["Group"]) is PdfDictionary group && group.GetName("S") == "Transparency") problems.Add(Transparency);
+        }
+
+        int budget = 10_000_000;
+        while (pending.Count > 0 && budget-- > 0)
+        {
+            (PdfObject value, int depth) = pending.Pop();
+            if (depth > PdfParser.MaxNesting) continue;
+            switch (value)
+            {
+                case PdfReference r:
+                    if (doc.IsPageTreeNode(r.Number) || doc.IsPage(r.Number) || !seen.Add(r.Number)) break;
+                    PdfObject? target = doc.Resolve(r);
+                    if (target is PdfStream stream) CheckStream(doc, stream, part, problems);
+                    if (target is not null) pending.Push((target, depth + 1));
+                    break;
+                case PdfStream s:
+                    pending.Push((s.Dictionary, depth + 1));
+                    break;
+                case PdfDictionary d:
+                    for (int i = 0; i < d.Count; i++)
+                    {
+                        // Parents are reached from their own roots; a page's parent is the old page tree.
+                        (string key, PdfObject item) = d.EntryAt(i);
+                        if (key != "Parent") pending.Push((item, depth + 1));
+                    }
+
+                    break;
+                case PdfArray a:
+                    if (part == 1 && a.Count == 2 && a[0] is PdfName { Value: "ICCBased" } && doc.Resolve(a[1]) is PdfStream profile) CheckProfile(doc, profile, problems);
+                    foreach (PdfObject item in a.Items) pending.Push((item, depth + 1));
+                    break;
+            }
+        }
+    }
+
+    private static void CheckStream(PdfDocument doc, PdfStream stream, int part, List<string> problems)
+    {
+        PdfDictionary d = stream.Dictionary;
+        if (d["F"] is not null || d["FFilter"] is not null || d["FDecodeParms"] is not null) problems.Add("A stream keeps its data in an external file, which PDF/A forbids.");
+
+        List<string> filters = doc.Resolve(d["Filter"]) switch
+        {
+            PdfName n => [n.Value],
+            PdfArray a => [.. a.Select(f => doc.Resolve(f) is PdfName n ? n.Value : "")],
+            _ => [],
+        };
+        if (filters.Contains("LZWDecode"))
+        {
+            // LZW is forbidden; the general filters decode losslessly and Flate replaces them.
+            if (filters.All(f => f is "LZWDecode" or "FlateDecode" or "ASCIIHexDecode" or "ASCII85Decode" or "RunLengthDecode"))
+            {
+                try
+                {
+                    byte[] plain = doc.GetStreamData(stream);
+                    stream.Data = Filters.StreamCodec.Deflate(plain, System.IO.Compression.CompressionLevel.Optimal);
+                    d.Set("Filter", new PdfName("FlateDecode"));
+                    d.Remove("DecodeParms");
+                    d.Remove("DL");
+                }
+                catch (PdfFormatException)
+                {
+                    problems.Add("An LZW compressed stream cannot be decoded, so it cannot be re-encoded; PDF/A forbids LZW.");
+                }
+            }
+            else
+            {
+                problems.Add("An image is LZW compressed ahead of an image codec; PDF/A forbids LZW.");
+            }
+        }
+
+        if (part == 1 && filters.Contains("JPXDecode")) problems.Add("JPEG 2000 images are not allowed in PDF/A-1.");
+        switch (d.GetName("Subtype"))
+        {
+            case "Image":
+                if (doc.Resolve(d["Interpolate"]) is PdfBoolean { Value: true }) d.Set("Interpolate", PdfBoolean.False);
+                if (d["Alternates"] is not null) problems.Add("Images with alternate versions are not allowed.");
+                if (d["OPI"] is not null) problems.Add("OPI proxy images are not allowed.");
+                if (part == 1 && d["SMask"] is not null) problems.Add(Transparency);
+                break;
+            case "Form":
+                if (d["OPI"] is not null) problems.Add("OPI proxy images are not allowed.");
+                if (d["Ref"] is not null) problems.Add("Reference XObjects, which show a page of another file, are not allowed.");
+                if (d.GetName("Subtype2") == "PS" || d["PS"] is not null) problems.Add("PostScript XObjects are not allowed.");
+                if (part == 1 && doc.Resolve(d["Group"]) is PdfDictionary group && group.GetName("S") == "Transparency") problems.Add(Transparency);
+                break;
+            case "PS":
+                if (d.GetName("Type") is null or "XObject") problems.Add("PostScript XObjects are not allowed.");
+                break;
+        }
+    }
+
+    /// <summary>PDF 1.4 reads ICC profiles up to version 2 (ISO 19005-1, 6.2.3.3).</summary>
+    private static void CheckProfile(PdfDocument doc, PdfStream profile, List<string> problems)
+    {
+        try
+        {
+            byte[] data = doc.GetStreamData(profile);
+            if (data.Length < 12) problems.Add("An ICC profile is damaged.");
+            else if (data[8] > 2) problems.Add($"An ICC profile of version {data[8]} is used; PDF/A-1 accepts version 2 profiles only.");
+        }
+        catch (PdfFormatException)
+        {
+            problems.Add("An ICC profile cannot be read.");
+        }
+    }
+
     private static void CheckScripts(PdfDocument doc, List<string> problems)
     {
         if (doc.Resolve(doc.Catalog["Names"]) is PdfDictionary names && names["JavaScript"] is not null) problems.Add("Document level JavaScript is not allowed.");
         if (doc.Catalog["AA"] is not null) problems.Add("Document additional actions are not allowed.");
-        if (doc.Resolve(doc.Catalog["OpenAction"]) is PdfDictionary open && open.GetName("S") is "JavaScript" or "Launch") problems.Add("The open action runs a script or launches a program.");
+    }
+
+    /// <summary>
+    /// The open action, link and widget actions, bookmark actions and their Next chains, and
+    /// additional actions on pages, widgets and fields (ISO 19005-1, 6.6; ISO 19005-2 and 4, 6.5).
+    /// </summary>
+    private static void CheckActions(PdfDocument doc, int part, bool engineering, List<string> problems)
+    {
+        var seen = new HashSet<PdfDictionary>();
+        Check(doc.Catalog["OpenAction"]);
+        foreach (PdfPage page in doc.Pages)
+        {
+            if (page.Dictionary["AA"] is not null) problems.Add("Page additional actions are not allowed.");
+            if (doc.Resolve(page.Dictionary["Annots"]) is not PdfArray annots) continue;
+            foreach (PdfObject a in annots)
+            {
+                if (doc.Resolve(a) is not PdfDictionary annot) continue;
+                Check(annot["A"]);
+                if (annot["AA"] is not null && (part == 1 || annot.GetName("Subtype") == "Widget")) problems.Add("Annotations and form fields cannot carry additional actions in PDF/A.");
+            }
+        }
+
+        // Bookmarks: siblings through Next, children through First.
+        var items = new Stack<PdfObject?>();
+        var visited = new HashSet<PdfDictionary>();
+        if (doc.Resolve(doc.Catalog["Outlines"]) is PdfDictionary outlines) items.Push(outlines["First"]);
+        while (items.Count > 0 && visited.Count < 100_000)
+        {
+            if (doc.Resolve(items.Pop()) is not PdfDictionary item || !visited.Add(item)) continue;
+            Check(item["A"]);
+            items.Push(item["Next"]);
+            items.Push(item["First"]);
+        }
+
+        // Fields that are not widgets themselves: through the form's Kids.
+        var fields = new Stack<PdfObject>();
+        visited.Clear();
+        if (doc.Resolve(doc.Catalog["AcroForm"]) is PdfDictionary form && doc.Resolve(form["Fields"]) is PdfArray roots)
+        {
+            foreach (PdfObject root in roots) fields.Push(root);
+        }
+
+        while (fields.Count > 0 && visited.Count < 100_000)
+        {
+            if (doc.Resolve(fields.Pop()) is not PdfDictionary field || !visited.Add(field)) continue;
+            if (field["AA"] is not null) problems.Add("Annotations and form fields cannot carry additional actions in PDF/A.");
+            Check(field["A"]);
+            if (doc.Resolve(field["Kids"]) is PdfArray kids)
+            {
+                foreach (PdfObject kid in kids) fields.Push(kid);
+            }
+        }
+
+        void Check(PdfObject? first)
+        {
+            var pending = new Stack<PdfObject?>();
+            pending.Push(first);
+            int budget = 10_000;
+            while (pending.Count > 0 && budget-- > 0)
+            {
+                // An open action may also be a plain destination array.
+                if (doc.Resolve(pending.Pop()) is not PdfDictionary action || !seen.Add(action)) continue;
+                if (ActionProblem(action, part, engineering) is string problem) problems.Add(problem);
+                switch (doc.Resolve(action["Next"]))
+                {
+                    case PdfDictionary next:
+                        pending.Push(next);
+                        break;
+                    case PdfArray chain:
+                        foreach (PdfObject next in chain) pending.Push(next);
+                        break;
+                }
+            }
+        }
+    }
+
+    private static string? ActionProblem(PdfDictionary action, int part, bool engineering)
+    {
+        string type = action.GetName("S") ?? "";
+        if (type == "Named")
+        {
+            string named = action.GetName("N") ?? "";
+            return named is "NextPage" or "PrevPage" or "FirstPage" or "LastPage"
+                ? null
+                : $"The named action {named} is not allowed; PDF/A allows only NextPage, PrevPage, FirstPage and LastPage.";
+        }
+
+        bool allowed = part == 1
+            ? PdfA1Actions.Contains(type)
+            : KnownActions.Contains(type) && !ForbiddenActions.Contains(type)
+                && (part == 4 || type is not ("GoToDp" or "GoTo3DView" or "RichMediaExecute"))
+                && (part != 4 || engineering || type is not ("GoTo3DView" or "RichMediaExecute"));
+        if (allowed) return null;
+        if (type.Length == 0) return "An action without a type is not allowed.";
+        return part == 4 && type is "GoTo3DView" or "RichMediaExecute" ? $"{type} actions need PDF/A-4e." : $"{type} actions are not allowed in PDF/A-{part}.";
+    }
+
+    /// <summary>
+    /// XFA is refused. NeedAppearances is dropped: every widget must carry its appearance anyway,
+    /// so viewers have nothing to regenerate.
+    /// </summary>
+    private static void CheckForm(PdfDocument doc, List<string> problems)
+    {
+        if (doc.Catalog["NeedsRendering"] is not null && doc.Resolve(doc.Catalog["NeedsRendering"]) is not PdfBoolean { Value: false }) problems.Add("Dynamic XFA forms are not allowed.");
+        if (doc.Resolve(doc.Catalog["AcroForm"]) is not PdfDictionary form) return;
+        if (form["XFA"] is not null) problems.Add("XFA forms are not allowed; remove the XFA entry to keep the AcroForm fields.");
+        if (form["NeedAppearances"] is not null) form.Remove("NeedAppearances");
     }
 
     /// <summary>Annotations must print, must not hide, and must carry an appearance (links and popups excepted).</summary>
-    private static void CheckAnnotations(PdfDocument doc, List<string> problems)
+    private static void CheckAnnotations(PdfDocument doc, int part, bool engineering, List<string> problems)
     {
         foreach (PdfPage page in doc.Pages)
         {
@@ -165,9 +641,15 @@ internal static class PdfArchive
             {
                 if (doc.Resolve(a) is not PdfDictionary annot) continue;
                 string subtype = annot.GetName("Subtype") ?? "";
-                if (subtype is "Movie" or "Sound" or "Screen" or "3D" or "RichMedia")
+                if (part == 1 && !PdfA1Annotations.Contains(subtype))
                 {
-                    problems.Add($"{subtype} annotations are not allowed.");
+                    problems.Add($"{subtype} annotations are not allowed in PDF/A-1.");
+                    continue;
+                }
+
+                if (subtype is "Movie" or "Sound" or "Screen" || (subtype is "3D" or "RichMedia" && !engineering))
+                {
+                    problems.Add(part == 4 && subtype is "3D" or "RichMedia" ? $"{subtype} annotations need PDF/A-4e." : $"{subtype} annotations are not allowed.");
                     continue;
                 }
 
@@ -176,17 +658,21 @@ internal static class PdfArchive
                 annot.Set("F", PdfNumber.FromInteger((flags | 4) & ~(1L | 2 | 32 | 256)));
                 PdfRectangle r = PdfRectangle.From(annot["Rect"], doc.Resolve) ?? default;
                 if (subtype != "Link" && r.Width != 0 && r.Height != 0 && annot["AP"] is null) problems.Add($"A {subtype} annotation on page {page.Index + 1} has no appearance.");
+                if (part == 1 && doc.Resolve(annot["CA"]) is PdfNumber opacity && opacity.ToDouble() < 1) problems.Add(Transparency);
             }
         }
     }
 
     /// <summary>
-    /// PDF/A-2 forbids embedded files other than PDF/A; PDF/A-3 allows any, each declared as an
-    /// associated file with its relationship, MIME type and modification date. Files in the
-    /// attachment list and files of file attachment annotations are covered alike.
+    /// PDF/A-1 and PDF/A-2 forbid embedded files; PDF/A-3 and PDF/A-4f allow any, each declared as
+    /// an associated file with its relationship, MIME type and modification date. PDF/A-4 and 4e
+    /// accept PDF/A-1, PDF/A-2 and PDF/A-4 files only, declared the same way, and PDF/A-4f needs at
+    /// least one file. Files in the attachment list and files of file attachment annotations are
+    /// covered alike.
     /// </summary>
-    private static void PrepareAttachments(PdfDocument doc, int part, List<string> problems)
+    private static void PrepareAttachments(PdfDocument doc, PdfConformance conformance, List<string> problems)
     {
+        int part = Part(conformance);
         var specs = new List<(PdfDictionary Spec, PdfObject? Reference)>();
         // Attachment entries keep their references, so the associated file is the same object, not a copy.
         foreach ((string _, PdfObject entry) in doc.Attachments.Entries())
@@ -206,13 +692,19 @@ internal static class PdfArchive
             }
         }
 
-        if (specs.Count == 0) return;
-        if (part == 2)
+        if (specs.Count == 0)
         {
-            problems.Add("PDF/A-2 cannot embed files; use PDF/A-3 for attachments such as invoice XML.");
+            if (conformance == PdfConformance.PdfA4F) problems.Add("PDF/A-4f needs at least one embedded file; save as PDF/A-4 when there is none.");
             return;
         }
 
+        if (part is 1 or 2)
+        {
+            problems.Add($"PDF/A-{part} cannot embed files; use PDF/A-3 for attachments such as invoice XML.");
+            return;
+        }
+
+        bool anyType = part == 3 || conformance == PdfConformance.PdfA4F;
         var af = doc.Resolve(doc.Catalog["AF"]) as PdfArray ?? new PdfArray();
         foreach ((PdfDictionary spec, PdfObject? reference) in specs)
         {
@@ -222,6 +714,12 @@ internal static class PdfArchive
                 foreach (KeyValuePair<string, PdfObject> e in ef)
                 {
                     if (doc.Resolve(e.Value) is not PdfStream file) continue;
+                    if (!anyType && !IsArchivalPdf(doc, file))
+                    {
+                        string name = doc.Resolve(spec["UF"] ?? spec["F"]) is PdfString s ? s.ToText() : "an attachment";
+                        problems.Add($"{Name(conformance)} embeds only PDF/A-1, PDF/A-2 and PDF/A-4 files, and {name} is not one; save as PDF/A-4f to embed files of any type.");
+                    }
+
                     if (file.Dictionary["Subtype"] is null) file.Dictionary.Set("Subtype", new PdfName("application/octet-stream"));
                     var parameters = doc.Resolve(file.Dictionary["Params"]) as PdfDictionary ?? new PdfDictionary();
                     if (parameters["ModDate"] is null) parameters.Set("ModDate", new PdfString(Encoding.ASCII.GetBytes(Documents.PdfText.FormatDate(DateTimeOffset.UtcNow)).AsSpan()));
@@ -233,6 +731,49 @@ internal static class PdfArchive
         }
 
         doc.Catalog.Set("AF", af);
+    }
+
+    /// <summary>Whether an embedded file is a PDF whose XMP declares PDF/A-1, PDF/A-2 or PDF/A-4.</summary>
+    private static bool IsArchivalPdf(PdfDocument doc, PdfStream file)
+    {
+        try
+        {
+            byte[] data = doc.GetStreamData(file);
+            PdfFile pdf = PdfFile.Open(data, doc.DecodeLimit);
+            return DeclaredPart(pdf, doc.DecodeLimit) is 1 or 2 or 4;
+        }
+        catch (PdfFormatException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The pdfaid:part a file's XMP metadata declares, as an element or an attribute; null when it declares none.</summary>
+    internal static int? DeclaredPart(PdfFile file, long decodeLimit)
+    {
+        PdfDictionary? catalog = file.ResolveDictionary(file.Trailer["Root"]);
+        if (file.Resolve(catalog?["Metadata"]) is not PdfStream metadata) return null;
+        string xmp;
+        try
+        {
+            using Filters.DecodedStream decoded = Filters.StreamCodec.Decode(metadata.Data, Filters.StreamCodec.GetFilters(metadata.Dictionary, file.Resolve),
+                Filters.DecodeDepth.Full, decodeLimit, file.Resolve);
+            xmp = Compat.Latin1.GetString(decoded.Data.Span);
+        }
+        catch (Filters.StreamDecodeException)
+        {
+            return null;
+        }
+
+        for (int at = xmp.IndexOf("pdfaid:part", StringComparison.Ordinal); at >= 0; at = xmp.IndexOf("pdfaid:part", at + 1, StringComparison.Ordinal))
+        {
+            // <pdfaid:part>2</pdfaid:part> or pdfaid:part="2"; a closing tag is skipped.
+            int i = at + "pdfaid:part".Length;
+            while (i < xmp.Length && xmp[i] is ' ' or '\t' or '\r' or '\n' or '=' or '>' or '"' or '\'') i++;
+            if (i < xmp.Length && xmp[i] is >= '1' and <= '9' && (i + 1 == xmp.Length || xmp[i + 1] is < '0' or > '9')) return xmp[i] - '0';
+        }
+
+        return null;
     }
 
     private static void AddOutputIntent(PdfDocument doc)
@@ -256,8 +797,11 @@ internal static class PdfArchive
         doc.Catalog.Set("OutputIntents", PdfArray.Of(doc.AddObject(intent)));
     }
 
-    /// <summary>XMP with the PDF/A identification and the same values as the information dictionary.</summary>
-    private static void WriteMetadata(PdfDocument doc, int part, string conformance, InvoiceMetadata? invoice)
+    /// <summary>
+    /// XMP with the PDF/A identification and the same values as the information dictionary.
+    /// PDF/A-4 adds the revision year and names a conformance level only for 4e and 4f.
+    /// </summary>
+    private static void WriteMetadata(PdfDocument doc, int part, string? conformance, InvoiceMetadata? invoice)
     {
         PdfDocumentInfo info = doc.Info;
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -275,7 +819,9 @@ internal static class PdfArchive
         x.Append("<rdf:Description rdf:about=\"\"");
         x.Append(" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"");
         x.Append(" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\" xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\">\n");
-        x.Append("<pdfaid:part>").Append(part).Append("</pdfaid:part>\n<pdfaid:conformance>").Append(conformance).Append("</pdfaid:conformance>\n");
+        x.Append("<pdfaid:part>").Append(part).Append("</pdfaid:part>\n");
+        if (part == 4) x.Append("<pdfaid:rev>2020</pdfaid:rev>\n");
+        if (conformance is not null) x.Append("<pdfaid:conformance>").Append(conformance).Append("</pdfaid:conformance>\n");
         x.Append("<dc:format>application/pdf</dc:format>\n");
         if (info.Title is string title) x.Append("<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">").Append(Escape(title)).Append("</rdf:li></rdf:Alt></dc:title>\n");
         if (info.Author is string author) x.Append("<dc:creator><rdf:Seq><rdf:li>").Append(Escape(author)).Append("</rdf:li></rdf:Seq></dc:creator>\n");

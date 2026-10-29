@@ -29,7 +29,12 @@ internal static class Pkix
         "2.5.29.14", // subject key identifier
         "2.5.29.35", // authority key identifier
         "2.5.29.17", // subject alternative name
-        "2.5.29.32", // certificate policies: read, not enforced
+        CertificatePolicies.CertificatePoliciesOid,
+        CertificatePolicies.PolicyMappingsOid,
+        CertificatePolicies.PolicyConstraintsOid,
+        CertificatePolicies.InhibitAnyPolicyOid,
+        NameConstraints.Oid,
+        PdfQcStatements.Oid,
     ];
 
     public static string HashOid(HashAlgorithmName hash) =>

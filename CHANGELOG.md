@@ -22,7 +22,34 @@
   fall back to the font's default instance.
 - `tools/make_variable_font_fixtures.py` also builds Test-Axes.ttf, a font with wght, wdth,
   opsz, ital and slnt axes for the matching tests.
-
+- PDF/A-1b output (`PdfConformance.PdfA1B`): PDF 1.4 with a classic cross-reference table and no
+  object streams, also when the optimizer runs. Transparency (opacity, soft masks, alpha images,
+  blend modes, transparency groups), JPEG 2000, optional content, embedded files, file attachment
+  and other post PDF 1.4 annotations, OpenType font programs and ICC profiles newer than version 2
+  are refused with the rest of the problems; subset CID fonts get a CIDSet stream read from the
+  embedded program.
+- PDF/A-4, 4e and 4f output (`PdfA4`, `PdfA4E`, `PdfA4F`): PDF 2.0 with `pdfaid:rev` 2020. The
+  information dictionary written holds only the modification date; the document keeps its values
+  and the XMP carries them. Every embedded file is an associated file with its relationship; 4f
+  needs at least one and takes any type, plain 4 and 4e take PDF/A-1, 2 and 4 files only, and 4e
+  allows 3D and RichMedia annotations with their GoTo3DView and RichMediaExecute actions.
+- PDF/A checks for every part: actions are walked (open action, links, widgets, bookmarks and
+  `Next` chains) and Launch, JavaScript, ResetForm, ImportData, Hide, media and other forbidden
+  types, and named actions other than page navigation, are refused, as are additional actions on
+  pages, widgets and fields, XFA, transfer functions, external stream data, PostScript and
+  reference XObjects and OPI. LZW streams are re-encoded with Flate, image interpolation is
+  switched off and NeedAppearances is removed. Saving an invoice as anything but PDF/A-3 is
+  refused.
+- Signature validation, the X.509 checks of ETSI EN 319 102-1: certificate policy processing as in
+  RFC 5280, 6.1 with policy mappings, policy constraints and inhibit anyPolicy, on the policy graph
+  of RFC 9618 (`PdfValidationOptions.AcceptablePolicies`, `RequireExplicitPolicy`,
+  `InhibitPolicyMapping`, `InhibitAnyPolicy`; `PdfCertificateValidation.Policy` and
+  `ValidPolicies`); name constraints on DNS names, email addresses, URI hosts, directory names
+  and IP addresses, the trust anchor's included (`PdfCertificateCheck.NameConstraints`); and the
+  QCStatements of ETSI EN 319 412-5 (`PdfCertificateCheck.QcStatements`, `PdfQcStatements`),
+  with the qualification they claim (`PdfCertificateValidation.Qualification`: QESig, QESeal,
+  AdESig-QC and the rest). No trusted list is downloaded. Critical policy, name constraint and
+  QC statement extensions no longer fail a certificate as unknown.
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color

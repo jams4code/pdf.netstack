@@ -122,7 +122,7 @@ public sealed class FilterTests
     }
 
     /// <summary>Reference LZW encoder used only to test the decoder.</summary>
-    private static byte[] LzwEncode(byte[] data, int earlyChange)
+    internal static byte[] LzwEncode(byte[] data, int earlyChange)
     {
         var output = new List<byte>();
         int bitBuffer = 0, bitCount = 0, codeLength = 9;

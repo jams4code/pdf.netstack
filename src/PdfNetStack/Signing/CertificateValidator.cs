@@ -92,6 +92,9 @@ internal sealed class CertificateValidator
             problems.Add("No chain leads from " + Name(path[path.Count - 1]) + " to a trust anchor.");
         }
 
+        (PdfCheckStatus[] nameStatus, string?[] nameProblem) = CheckNames(path);
+        CheckPolicies(path, anchored, result, problems);
+
         var checks = new List<PdfCertificateCheck>();
         for (int i = 0; i < path.Count; i++)
         {
@@ -101,12 +104,24 @@ internal sealed class CertificateValidator
             bool anchor = anchored && i == path.Count - 1;
             check.IsTrustAnchor = anchor;
             var why = new List<string>();
+            try
+            {
+                check.Policies = CertificatePolicies.Asserted(cert);
+                check.QcStatements = PdfQcStatements.Read(cert);
+            }
+            catch (FormatException)
+            {
+                problems.Add(Name(cert) + ": its policies or QC statements cannot be read, so it counts as not qualified.");
+            }
 
             // A trust anchor is taken as given, unless it is the signer's own certificate.
             if (anchor && i > 0)
             {
                 continue;
             }
+
+            check.NameConstraints = nameStatus[i];
+            if (nameProblem[i] is string violation) why.Add(violation);
 
             check.Validity = time >= Pkix.NotBefore(cert) && time <= Pkix.NotAfter(cert) ? PdfCheckStatus.Passed : PdfCheckStatus.Failed;
             if (check.Validity == PdfCheckStatus.Failed) why.Add("it is not valid at " + time.ToString("u", System.Globalization.CultureInfo.InvariantCulture));
@@ -136,12 +151,14 @@ internal sealed class CertificateValidator
 
         result.Certificates = checks;
         result.Problems = problems;
-        var statuses = new List<PdfCheckStatus> { result.Chain };
+        result.Qualification = checks[0].QcStatements?.Qualification ?? PdfQualification.AdES;
+        var statuses = new List<PdfCheckStatus> { result.Chain, result.Policy };
         foreach (PdfCertificateCheck c in checks)
         {
             if (c.IsTrustAnchor && c != checks[0]) continue;
             statuses.Add(c.Validity);
             statuses.Add(c.KeyUsage);
+            statuses.Add(c.NameConstraints);
             if (_options.CheckRevocation && !c.IsTrustAnchor) statuses.Add(c.Revocation);
         }
 
@@ -149,6 +166,78 @@ internal sealed class CertificateValidator
             : statuses.Any(s => s is PdfCheckStatus.Indeterminate or PdfCheckStatus.NotChecked) ? PdfCheckStatus.Indeterminate
             : PdfCheckStatus.Passed;
         return result;
+    }
+
+    /// <summary>
+    /// Name constraints flow down from the top of the chain, the trust anchor's included: each
+    /// certificate is checked against the constraints of every certificate above it, except a
+    /// self-issued CA inside the chain (RFC 5280, 6.1.3 (b)).
+    /// </summary>
+    private static (PdfCheckStatus[] Status, string?[] Problem) CheckNames(List<X509Certificate2> path)
+    {
+        var status = new PdfCheckStatus[path.Count];
+        var problem = new string?[path.Count];
+        var constraints = new NameConstraints();
+        for (int i = path.Count - 1; i >= 0; i--)
+        {
+            X509Certificate2 cert = path[i];
+            status[i] = PdfCheckStatus.Passed;
+            try
+            {
+                if (constraints.Any && !(i > 0 && Pkix.IsSelfIssued(cert)) && constraints.Check(cert) is string violation)
+                {
+                    status[i] = PdfCheckStatus.Failed;
+                    problem[i] = violation;
+                }
+            }
+            catch (Exception e) when (e is FormatException or CryptographicException)
+            {
+                status[i] = PdfCheckStatus.Failed;
+                problem[i] = "its names cannot be read";
+            }
+
+            if (i == 0) break;
+            try
+            {
+                constraints.Add(cert);
+            }
+            catch (Exception e) when (e is FormatException or CryptographicException)
+            {
+                status[i] = PdfCheckStatus.Failed;
+                problem[i] = "its name constraints cannot be read";
+            }
+        }
+
+        return (status, problem);
+    }
+
+    /// <summary>
+    /// Certificate policy processing over the chain below the trust anchor (RFC 5280, 6.1). A
+    /// chain that reaches no anchor is processed for the policies it names, but not judged.
+    /// </summary>
+    private void CheckPolicies(List<X509Certificate2> path, bool anchored, PdfCertificateValidation result, List<string> problems)
+    {
+        // The anchor is input to path validation, not part of the path; so is a self-signed root at the top.
+        List<X509Certificate2> processed = [.. path];
+        if (processed.Count > 1 && (anchored || Pkix.IsSelfIssued(processed[processed.Count - 1]))) processed.RemoveAt(processed.Count - 1);
+        processed.Reverse();
+        try
+        {
+            CertificatePolicies.Result policy = CertificatePolicies.Process(processed, _options);
+            result.ValidPolicies = policy.Policies;
+            result.Policy = !anchored ? PdfCheckStatus.NotChecked : policy.Valid ? PdfCheckStatus.Passed : PdfCheckStatus.Failed;
+            if (result.Policy == PdfCheckStatus.Failed)
+            {
+                problems.Add(_options.AcceptablePolicies.Count > 0
+                    ? "The chain is valid for none of the acceptable certificate policies."
+                    : "The chain must be valid for an explicit certificate policy and is valid for none.");
+            }
+        }
+        catch (Exception e) when (e is FormatException or CryptographicException)
+        {
+            result.Policy = anchored ? PdfCheckStatus.Failed : PdfCheckStatus.NotChecked;
+            if (anchored) problems.Add("The certificate policies cannot be processed: " + e.Message);
+        }
     }
 
     /// <param name="role">The role of the first certificate, or null for a CA.</param>

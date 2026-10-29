@@ -2,7 +2,7 @@ name: PDF/A validation
 
 # Builds PDF/A files with the library (the PdfASampleTests test writes them when
 # PDFNETSTACK_PDFA_SAMPLES is set) and validates each one with the veraPDF command line tool
-# against the flavour its file name starts with: 2b, 2u, 3b or 3u.
+# against the flavour its file name starts with: 1b, 2b, 2u, 3b, 3u, 4, 4e or 4f.
 on:
   push:
     branches: [main]
