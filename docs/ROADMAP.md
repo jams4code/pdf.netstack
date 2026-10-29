@@ -95,7 +95,11 @@ quality output, built on the canvas, fonts and text layout above.
    `border-spacing` and `border-collapse` with conflict resolution between cells, rows, groups
    and the table, vertical alignment in cells, captions, `empty-cells`, inline tables, the
    legacy `cellpadding`, `cellspacing` and `border` attributes; rows never split, and header
-   rows repeat at the top of every page a table continues on. Next: flexbox, then grid.
+   rows repeat at the top of every page a table continues on. Flexbox done: rows and
+   columns, the reverse directions and right to left rows, wrapping with `gap`, flex base
+   sizes and the automatic minimum, flexible lengths with min and max freezing, auto margins,
+   `justify-content`, `align-items`, `align-self` (with baselines), `align-content`, `order`,
+   inline flex containers. Next: grid.
 6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
    the base folder load, so untrusted HTML cannot reach the network or other files. Style
    sheets from `<link>` and `@import`, images in JPEG and PNG. Next: SVG images.

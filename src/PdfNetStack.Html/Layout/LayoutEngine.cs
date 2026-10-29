@@ -96,6 +96,7 @@ internal sealed partial class LayoutEngine
     {
         if (box is ReplacedBox replaced) return LayoutReplacedBlock(replaced, cbX, cbWidth, cursorY, pending, cbHeight);
         if (box is TableBox table) return LayoutTable(table, cbX, cbWidth, cursorY, pending, shrink: false);
+        if (box is FlexBox flex) return LayoutFlex(flex, cbX, cbWidth, cursorY, pending, cbHeight, forcedWidth);
 
         ComputedStyle style = box.Style;
         Edges margin = BoxMetrics.Margins(style, cbWidth);
@@ -424,6 +425,7 @@ internal sealed partial class LayoutEngine
     private (double Min, double Max) ContentIntrinsic(Box box)
     {
         if (box.Children.Count == 0) return (0, 0);
+        if (box is FlexBox flex) return FlexIntrinsic(flex);
         if (box.Children.All(c => c.IsInlineLevel))
         {
             return new InlineLayout(this, box.Style, box, box.Children, double.MaxValue / 4, intrinsic: true).IntrinsicWidths();

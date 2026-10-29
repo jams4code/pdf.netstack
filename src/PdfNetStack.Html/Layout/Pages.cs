@@ -260,6 +260,9 @@ internal static class Paginator
             }
         }
 
+        // A flex row is not split: its items sit side by side.
+        if (box.Box is FlexBox && box.Style.Keyword("flex-direction") is "row" or "row-reverse") return;
+
         // Rows are not split: their cells sit side by side. A cell spanning rows keeps them together.
         if (box.Box is TableRowBox)
         {
