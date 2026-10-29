@@ -32,7 +32,13 @@ internal sealed partial class LayoutEngine
         public Dictionary<long, CellSlot> Slots { get; } = [];
     }
 
-    private static long Key(int row, int column) => ((long)row << 32) | (uint)column;
+    // A grid slot as one number. Not (row << 32 | column): a long hashes as its two halves XORed,
+    // so that layout puts slots with equal row ^ column in one bucket and every lookup degrades to a
+    // scan. Columns stay below 1024 (MaxColumns, MaxTracks), so row * 1024 + column is unique and
+    // spreads well.
+    private const int ColumnsPerRow = 1024;
+
+    private static long Key(int row, int column) => ((long)row * ColumnsPerRow) + column;
 
     /// <summary>Places cells in the grid (CSS 2.1, 17.5): header group first, footer group last, spans reserving slots.</summary>
     private static TableGrid BuildGrid(TableBox table)

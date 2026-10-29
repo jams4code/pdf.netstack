@@ -187,11 +187,20 @@ internal sealed partial class LayoutEngine
         int explicitColumns = Math.Max(columns.Count, areas.Count == 0 ? 0 : areas.Values.Max(a => a.ColumnEnd));
         int explicitRows = Math.Max(rows.Count, areas.Count == 0 ? 0 : areas.Values.Max(a => a.RowEnd));
         var items = new List<GridItem>();
+
+        // Spans share one budget of grid slots, as table spans do: past it an item spans one cell.
+        long slots = 0;
         foreach (Box child in box.Children.Where(c => !IsOutOfFlow(c)).OrderBy(c => (int)c.Style.Number("order")))
         {
             ComputedStyle cs = child.Style;
             (int row, int rowSpan) = Resolve(cs["grid-row-start"], cs["grid-row-end"], explicitRows, areas, rows: true);
             (int column, int columnSpan) = Resolve(cs["grid-column-start"], cs["grid-column-end"], explicitColumns, areas, rows: false);
+
+            // Columns stay inside the track limit: slot keys and track arrays depend on it.
+            if (column >= MaxTracks) column = MaxTracks - 1;
+            columnSpan = Math.Max(1, Math.Min(columnSpan, MaxTracks - Math.Max(0, column)));
+            if (slots + ((long)rowSpan * columnSpan) > MaxGridSlots) rowSpan = columnSpan = 1;
+            slots += (long)rowSpan * columnSpan;
             items.Add(new GridItem(child) { Row = row, Column = column, RowSpan = rowSpan, ColumnSpan = columnSpan });
         }
 
@@ -205,6 +214,9 @@ internal sealed partial class LayoutEngine
             }
         }
 
+        // Every cell any search looks at counts against one budget. Once it is spent, searches stop
+        // where they are: hostile input gets overlapping items rather than unbounded work.
+        long probes = 0;
         bool Free(int row, int column, int rowSpan, int columnSpan)
         {
             if (column + columnSpan > columnTotal) return false;
@@ -212,6 +224,7 @@ internal sealed partial class LayoutEngine
             {
                 for (int c = column; c < column + columnSpan; c++)
                 {
+                    if (++probes > MaxGridSlots) return true;
                     if (occupied.Contains(Key(r, c))) return false;
                 }
             }

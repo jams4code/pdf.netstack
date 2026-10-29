@@ -106,6 +106,19 @@ public sealed class GridLayoutTests
     }
 
     [TestMethod]
+    public void HostileSpansStayBounded()
+    {
+        // Large spans on many items, some fixed and some placed automatically, in a narrow grid.
+        string items = string.Concat(Enumerable.Range(0, 3000).Select(i => i % 2 == 0
+            ? "<div style=\"grid-row: span 1000; grid-column: span 1000\">x</div>"
+            : $"<div style=\"grid-row: {(i % 900) + 1}; grid-column: span 3\">y</div>"));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        BoxFragment root = Grid("width: 300px; grid-template-columns: repeat(3, 1fr)", items);
+        Assert.IsLessThan(30_000, clock.ElapsedMilliseconds);
+        Assert.IsNotNull(ById(root, "g"));
+    }
+
+    [TestMethod]
     public void ShrinksInlineGridsAndBreaksBetweenRows()
     {
         BoxFragment root = Layout("<p><span id=g style=\"display: inline-grid; grid-template-columns: auto auto; column-gap: 4px\"><b>ab</b><i>cd</i></span></p>", Bare);
