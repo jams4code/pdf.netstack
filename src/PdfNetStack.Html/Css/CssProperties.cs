@@ -158,6 +158,9 @@ internal static class CssProperties
         ["place-items"] = ["align-items", "justify-items"],
         ["place-content"] = ["align-content", "justify-content"],
         ["place-self"] = ["align-self", "justify-self"],
+        ["grid-column"] = ["grid-column-start", "grid-column-end"],
+        ["grid-row"] = ["grid-row-start", "grid-row-end"],
+        ["grid-area"] = ["grid-row-start", "grid-column-start", "grid-row-end", "grid-column-end"],
         ["font-variant"] = ["font-variant-caps", "font-variant-ligatures", "font-variant-numeric"],
     };
 
@@ -266,6 +269,8 @@ internal static class CssProperties
                 return Flex(items);
             case "flex-flow":
                 return AnyOrder(items, ("flex-direction", "row|row-reverse|column|column-reverse"), ("flex-wrap", "nowrap|wrap|wrap-reverse"));
+            case "grid-column" or "grid-row" or "grid-area":
+                return GridPlacement(Shorthands[name], value);
             case "gap" or "overflow" or "place-items" or "place-content" or "place-self":
                 return Pair(Shorthands[name], items);
             case "page-break-before" or "page-break-after" or "page-break-inside":
@@ -660,6 +665,35 @@ internal static class CssProperties
         return [(longhands[0], One(first)), (longhands[1], One(second))];
     }
 
+    /// <summary>
+    /// grid-row, grid-column and grid-area (CSS Grid 1, 8.4): lines separated by slashes. A
+    /// missing line repeats an area name before it, or is auto.
+    /// </summary>
+    private static List<(string, List<CssValue>)>? GridPlacement(string[] longhands, List<CssValue> value)
+    {
+        var parts = new List<List<CssValue>> { new() };
+        foreach (CssValue v in value)
+        {
+            if (v.IsToken && v.Token is { Type: CssTokenType.Delim, Value: "/" }) parts.Add([]);
+            else parts[^1].Add(v);
+        }
+
+        parts = [.. parts.Select(Trim)];
+        if (parts.Count > longhands.Length || parts.Any(p => p.Count == 0)) return null;
+        bool IsName(List<CssValue> p) => p.Count == 1 && p[0].IsToken && p[0].Token.Type == CssTokenType.Ident && !p[0].IsIdent("auto") && !p[0].IsIdent("span");
+        // Which given line a missing one copies: an end copies its start; in grid-area the column
+        // start copies the row start, and the column end copies the column start.
+        int Source(int i) => longhands.Length == 2 ? 0 : i == 3 ? Math.Min(1, parts.Count - 1) : 0;
+        var result = new List<(string, List<CssValue>)>();
+        for (int i = 0; i < longhands.Length; i++)
+        {
+            List<CssValue> line = i < parts.Count ? parts[i] : IsName(parts[Source(i)]) ? parts[Source(i)] : Ident("auto");
+            result.Add((longhands[i], line));
+        }
+
+        return result;
+    }
+
     private static List<(string, List<CssValue>)>? PageBreak(string longhand, List<CssValue> items)
     {
         if (items.Count != 1 || !items[0].IsToken || items[0].Token.Type != CssTokenType.Ident) return null;
@@ -844,6 +878,15 @@ internal static class CssProperties
         Add("align-items", N, "normal", "*");
         Add("align-self", N, "auto", "*");
         Add("row-gap", N, "normal", "normal|lp");
+
+        // Grid.
+        Add("grid-template-columns", N, "none", "*");
+        Add("grid-template-rows", N, "none", "*");
+        Add("grid-template-areas", N, "none", "*");
+        Add("grid-auto-columns", N, "auto", "*");
+        Add("grid-auto-rows", N, "auto", "*");
+        Add("grid-auto-flow", N, "row", "row|column|dense{1,2}");
+        foreach (string line in new[] { "grid-column-start", "grid-column-end", "grid-row-start", "grid-row-end" }) Add(line, N, "auto", "*");
         Add("column-gap", N, "normal", "normal|lp");
         return all;
     }

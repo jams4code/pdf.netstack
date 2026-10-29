@@ -108,6 +108,14 @@ internal sealed class FlexBox(ComputedStyle style, HtmlElement? element) : Block
     public override bool IsBlockLevel => !IsInline;
 }
 
+/// <summary>A grid container (CSS Grid 1); its children are the grid items.</summary>
+internal sealed class GridBox(ComputedStyle style, HtmlElement? element) : BlockBox(style, element)
+{
+    public bool IsInline { get; init; }
+
+    public override bool IsBlockLevel => !IsInline;
+}
+
 /// <summary>The table wrapper's table box: row groups, rows, columns and captions inside.</summary>
 internal sealed class TableBox(ComputedStyle style, HtmlElement? element) : BlockBox(style, element)
 {

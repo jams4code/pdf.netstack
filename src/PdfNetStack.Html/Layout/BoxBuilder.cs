@@ -99,7 +99,9 @@ internal sealed class BoxBuilder
     {
         return display switch
         {
-            "inline-block" or "inline flow-root" or "inline-grid" or "inline grid" => new InlineBlockBox(style, e),
+            "inline-block" or "inline flow-root" => new InlineBlockBox(style, e),
+            "grid" or "block grid" => new GridBox(style, e),
+            "inline-grid" or "inline grid" => new GridBox(style, e) { IsInline = true },
             "flex" or "block flex" => new FlexBox(style, e),
             "inline-flex" or "inline flex" => new FlexBox(style, e) { IsInline = true },
             "table" or "block table" => new TableBox(style, e),
@@ -115,7 +117,7 @@ internal sealed class BoxBuilder
             "table-column-group" => new TableColumnGroupBox(style, e) { Span = Span(e?.GetAttribute("span"), 1) },
             "table-caption" => new TableCaptionBox(style, e),
             "inline" or "inline flow" or "ruby" => new InlineBox(style, e),
-            _ => new BlockBox(style, e), // block, list-item, flow-root, grid until grid layout lands
+            _ => new BlockBox(style, e), // block, list-item, flow-root
         };
     }
 
@@ -355,8 +357,8 @@ internal sealed class BoxBuilder
             case TableColumnGroupBox columns:
                 columns.SetChildren(columns.Children.Where(c => c is TableColumnBox));
                 break;
-            case FlexBox flex:
-                WrapInlineRuns(flex, always: true);
+            case FlexBox or GridBox:
+                WrapInlineRuns((BlockBox)box, always: true);
                 break;
             case BlockBox block:
                 WrapTableParts(block);

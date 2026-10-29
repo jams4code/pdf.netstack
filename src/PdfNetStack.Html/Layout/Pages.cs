@@ -260,6 +260,13 @@ internal static class Paginator
             }
         }
 
+        // A grid breaks only between rows that no item spans.
+        if (box.Box is GridBox)
+        {
+            foreach (double line in box.BreakLines ?? []) candidates.Add(new Candidate(line, line, false));
+            return;
+        }
+
         // A flex row is not split: its items sit side by side.
         if (box.Box is FlexBox && box.Style.Keyword("flex-direction") is "row" or "row-reverse") return;
 

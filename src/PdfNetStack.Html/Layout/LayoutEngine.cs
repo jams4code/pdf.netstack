@@ -88,12 +88,12 @@ internal sealed partial class LayoutEngine
     // Boxes whose margins do not collapse with their children (CSS 2.1, 9.4.1).
     private static bool EstablishesContext(Box box) =>
         box.Parent is null
-        || box is InlineBlockBox or TableCellBox or TableCaptionBox or FlexBox or TableBox or ReplacedBox
+        || box is InlineBlockBox or TableCellBox or TableCaptionBox or FlexBox or GridBox or TableBox or ReplacedBox
         || box.Style.Keywords("display") is "flow-root" or "inline flow-root"
         || box.Style.Keyword("overflow-x") is not ("visible" or "clip")
         || box.Style.Keyword("float") != "none"
         || box.Style.Keyword("position") is "absolute" or "fixed"
-        || box.Parent is FlexBox;
+        || box.Parent is FlexBox or GridBox;
 
     /// <param name="box">The block-level box.</param>
     /// <param name="cbX">The containing block's left content edge.</param>
@@ -108,6 +108,7 @@ internal sealed partial class LayoutEngine
         if (box is ReplacedBox replaced) return LayoutReplacedBlock(replaced, cbX, cbWidth, cursorY, pending, cbHeight);
         if (box is TableBox table) return LayoutTable(table, cbX, cbWidth, cursorY, pending, shrink: false);
         if (box is FlexBox flex) return LayoutFlex(flex, cbX, cbWidth, cursorY, pending, cbHeight, forcedWidth);
+        if (box is GridBox grid) return LayoutGrid(grid, cbX, cbWidth, cursorY, pending, cbHeight, forcedWidth);
 
         ComputedStyle style = box.Style;
         Edges margin = BoxMetrics.Margins(style, cbWidth);
@@ -494,6 +495,7 @@ internal sealed partial class LayoutEngine
     {
         if (box.Children.Count == 0) return (0, 0);
         if (box is FlexBox flex) return FlexIntrinsic(flex);
+        if (box is GridBox grid) return GridIntrinsic(grid);
         if (box.Children.All(c => c.IsInlineLevel))
         {
             return new InlineLayout(this, box.Style, box, box.Children, double.MaxValue / 4, intrinsic: true).IntrinsicWidths();

@@ -58,6 +58,9 @@ internal sealed class BoxFragment(Box box) : Fragment
     /// <summary>Block children or lines, in order.</summary>
     public List<Fragment> Children { get; } = [];
 
+    /// <summary>Where a page may break inside a container whose children sit side by side, such as between grid rows.</summary>
+    public List<double>? BreakLines { get; set; }
+
     /// <summary>The outside list marker, placed at the first line.</summary>
     public LineFragment? Marker { get; set; }
 
@@ -79,6 +82,7 @@ internal sealed class BoxFragment(Box box) : Fragment
         base.Translate(dx, dy);
         foreach (Fragment c in Children) c.Translate(dx, dy);
         Marker?.Translate(dx, dy);
+        if (BreakLines is not null) BreakLines = [.. BreakLines.Select(y => y + dy)];
         if (LastBaseline is double last) LastBaseline = last + dy;
         if (FirstBaseline is double first) FirstBaseline = first + dy;
     }

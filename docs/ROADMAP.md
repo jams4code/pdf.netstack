@@ -106,7 +106,12 @@ quality output, built on the canvas, fonts and text layout above.
    columns, the reverse directions and right to left rows, wrapping with `gap`, flex base
    sizes and the automatic minimum, flexible lengths with min and max freezing, auto margins,
    `justify-content`, `align-items`, `align-self` (with baselines), `align-content`, `order`,
-   inline flex containers. Next: grid.
+   inline flex containers. Grid done: track lists with lengths, percentages, `fr`, `auto`,
+   `min-content`, `max-content`, `minmax()`, `fit-content()` and `repeat()` (counts and
+   `auto-fill`), implicit tracks, placement by lines (negative too), spans and named areas,
+   row-major auto-placement, gaps, `justify-items`, `align-items` and the `-self` forms,
+   inline grids; pages break between rows no item spans. Next: dense packing, column flow,
+   subgrid and named lines.
 6. **Resources.** Done: a resource loader callback; without one only data: URIs and files under
    the base folder load, so untrusted HTML cannot reach the network or other files. Style
    sheets from `<link>` and `@import`, images in JPEG and PNG. Next: SVG images.
