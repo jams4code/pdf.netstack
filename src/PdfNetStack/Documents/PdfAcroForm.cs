@@ -42,7 +42,7 @@ public enum PdfFieldKind
 /// viewer without relying on NeedAppearances. Documents that also carry an XFA form lose it when
 /// values change, so viewers show the AcroForm values.
 /// </remarks>
-public sealed class PdfAcroForm
+public sealed partial class PdfAcroForm
 {
     internal const int MaxFieldNodes = 50_000;
     private const int MaxDepth = 64;
@@ -103,11 +103,7 @@ public sealed class PdfAcroForm
             using PdfGraphics g = page.CreateGraphics();
             foreach (PdfWidget w in list)
             {
-                if (w.Hidden || w.Appearance() is not PdfReference appearance) continue;
-                var stream = (PdfStream)_doc.Resolve(appearance)!;
-                stream.Dictionary.Set("Type", new PdfName("XObject"));
-                stream.Dictionary.Set("Subtype", new PdfName("Form"));
-                g.DrawPdfSpaceXObject(appearance, PlaceAppearance(stream.Dictionary, w.Rectangle));
+                if (!w.Hidden) PdfAnnotationCollection.DrawAppearance(g, page, w.Dictionary);
             }
         }
 
@@ -130,31 +126,41 @@ public sealed class PdfAcroForm
         _doc.Catalog.Remove("AcroForm");
     }
 
-    /// <summary>
-    /// The matrix that maps an appearance onto a widget rectangle (ISO 32000-1, 12.5.5): the
-    /// bounding box, transformed by the form's own matrix, is scaled and moved onto the rectangle.
-    /// </summary>
-    internal PdfMatrix PlaceAppearance(PdfDictionary form, PdfRectangle rect)
-    {
-        PdfRectangle bbox = PdfRectangle.From(form["BBox"], _doc.Resolve) ?? new PdfRectangle(0, 0, rect.Width, rect.Height);
-        PdfMatrix matrix = _doc.Resolve(form["Matrix"]) is PdfArray { Count: 6 } m && m.All(v => _doc.Resolve(v) is PdfNumber)
-            ? new PdfMatrix(Num(m[0]), Num(m[1]), Num(m[2]), Num(m[3]), Num(m[4]), Num(m[5]))
-            : PdfMatrix.Identity;
-        PdfPoint[] corners =
-        [
-            matrix.Transform(new PdfPoint(bbox.Left, bbox.Bottom)), matrix.Transform(new PdfPoint(bbox.Right, bbox.Bottom)),
-            matrix.Transform(new PdfPoint(bbox.Left, bbox.Top)), matrix.Transform(new PdfPoint(bbox.Right, bbox.Top)),
-        ];
-        double minX = corners.Min(c => c.X), minY = corners.Min(c => c.Y);
-        double w = corners.Max(c => c.X) - minX, h = corners.Max(c => c.Y) - minY;
-        double sx = w > 0 ? rect.Width / w : 1, sy = h > 0 ? rect.Height / h : 1;
-        return new PdfMatrix(sx, 0, 0, sy, rect.Left - minX * sx, rect.Bottom - minY * sy);
-
-        double Num(PdfObject o) => ((PdfNumber)_doc.Resolve(o)!).ToDouble();
-    }
-
     /// <summary>Drops an XFA form, which viewers would show instead of the AcroForm values.</summary>
     internal void DropXfa() => Dictionary?.Remove("XFA");
+
+    /// <summary>
+    /// Takes flattened widgets out of the field tree. Fields left without widgets go too, and the
+    /// form itself once no field is left.
+    /// </summary>
+    internal void RemoveWidgets(HashSet<int> widgets)
+    {
+        if (Dictionary is not PdfDictionary form || _doc.Resolve(form["Fields"]) is not PdfArray roots) return;
+        var visited = new HashSet<PdfDictionary>();
+        PdfArray kept = Prune(roots, 0);
+        form.Set("Fields", kept);
+        if (kept.Count == 0) _doc.Catalog.Remove("AcroForm");
+
+        PdfArray Prune(PdfArray kids, int depth)
+        {
+            var result = new PdfArray();
+            foreach (PdfObject kid in kids)
+            {
+                if (kid is PdfReference r && widgets.Contains(r.Number)) continue;
+                if (depth < MaxDepth && visited.Count < MaxFieldNodes && _doc.Resolve(kid) is PdfDictionary node && visited.Add(node)
+                    && _doc.Resolve(node["Kids"]) is PdfArray { Count: > 0 } children)
+                {
+                    PdfArray left = Prune(children, depth + 1);
+                    if (left.Count == 0) continue;
+                    if (left.Count != children.Count) node.Set("Kids", left);
+                }
+
+                result.Add(kid);
+            }
+
+            return result;
+        }
+    }
 
     private List<PdfField> Collect()
     {
@@ -255,19 +261,7 @@ public sealed class PdfWidget
             : [];
 
     /// <summary>The appearance stream shown now: the normal appearance, or the one the appearance state selects.</summary>
-    internal PdfReference? Appearance()
-    {
-        PdfDocument doc = _form.Document;
-        if (doc.Resolve(Dictionary["AP"]) is not PdfDictionary ap) return null;
-        PdfObject? normal = ap["N"];
-        if (doc.Resolve(normal) is PdfDictionary states)
-        {
-            string state = Dictionary.GetName("AS") ?? "Off";
-            normal = states[state];
-        }
-
-        return normal as PdfReference;
-    }
+    internal PdfReference? Appearance() => PdfAnnotationCollection.NormalAppearance(_form.Document, Dictionary);
 }
 
 /// <summary>A form field. Subclasses carry the value of each kind; <see cref="Dictionary"/> gives the rest.</summary>
@@ -391,6 +385,21 @@ public sealed class PdfTextField : PdfField
             foreach (PdfWidget w in Widgets) FieldAppearance.Text(this, w, value ?? "");
         }
     }
+
+    /// <summary>
+    /// The text as the field shows it: formatted by the field's format action when that calls
+    /// AFNumber_Format, AFPercent_Format, AFDate_Format, AFDate_FormatEx, AFTime_Format,
+    /// AFTime_FormatEx or AFSpecial_Format, and equal to <see cref="Text"/> otherwise. No
+    /// JavaScript runs; the call is read and the formatting done in C#.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// // A field whose format action is AFNumber_Format(2, 0, 0, 0, "$", true)
+    /// amount.Text = "1234.5";
+    /// Console.WriteLine(amount.FormattedText); // $1,234.50
+    /// </code>
+    /// </example>
+    public string? FormattedText => Text is string text ? (Password ? new string('*', text.Length) : FieldFormat.Apply(this, text).Text) : null;
 
     /// <summary>True for a box that wraps lines.</summary>
     public bool Multiline => (Flags & (1 << 12)) != 0;
@@ -627,7 +636,9 @@ internal static class FieldAppearance
 {
     public static void Text(PdfTextField field, PdfWidget widget, string text)
     {
+        PdfColor? color = null;
         if (field.Password) text = new string('*', text.Length);
+        else (text, color) = FieldFormat.Apply(field, text);
         Draw(field, widget, (g, w, h, style, pad) =>
         {
             int q = Quadding(field);
@@ -652,7 +663,7 @@ internal static class FieldAppearance
             }
 
             DrawLine(g, text, style, w, h, pad, q);
-        }, auto: field.Multiline ? 12 : 0);
+        }, auto: field.Multiline ? 12 : 0, color);
     }
 
     public static void Choice(PdfChoiceField field, PdfWidget widget, IReadOnlyList<string> selected)
@@ -663,7 +674,8 @@ internal static class FieldAppearance
             if (field.IsComboBox)
             {
                 string shown = selected.Count == 0 ? "" : options.FirstOrDefault(o => o.Value == selected[0]).Text ?? selected[0];
-                DrawLine(g, shown, style, w, h, pad, Quadding(field));
+                (shown, PdfColor? color) = FieldFormat.Apply(field, shown);
+                DrawLine(g, shown, color is PdfColor c ? style with { Brush = c } : style, w, h, pad, Quadding(field));
                 return;
             }
 
@@ -715,7 +727,7 @@ internal static class FieldAppearance
     private static double Baseline(PdfTextStyle style, double h) =>
         (h - (style.Font.Ascent + style.Font.Descent) * style.Size) / 2 + style.Font.Ascent * style.Size;
 
-    private static void Draw(PdfField field, PdfWidget widget, Action<PdfGraphics, double, double, PdfTextStyle, double> content, double auto)
+    private static void Draw(PdfField field, PdfWidget widget, Action<PdfGraphics, double, double, PdfTextStyle, double> content, double auto, PdfColor? color = null)
     {
         PdfDocument doc = field.Doc;
         PdfRectangle r = widget.Rectangle;
@@ -724,7 +736,7 @@ internal static class FieldAppearance
         double border = BorderWidth(field, widget);
         double pad = border + 1;
         if (size <= 0) size = auto > 0 ? auto : Math.Max(4, Math.Min(12, (h - 2 * pad) / font.GetLineHeight(1)));
-        var style = new PdfTextStyle(font, size) { Brush = Color(field) ?? PdfColor.Black };
+        var style = new PdfTextStyle(font, size) { Brush = color ?? Color(field) ?? PdfColor.Black };
 
         PdfForm form = PdfForm.Create(doc, w, h);
         form.AppendContent("/Tx BMC\n"u8);

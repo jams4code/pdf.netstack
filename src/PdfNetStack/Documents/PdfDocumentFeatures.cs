@@ -348,23 +348,7 @@ public sealed class PdfAttachmentCollection : IReadOnlyList<PdfAttachment>
         Compat.ThrowIfNull(name, nameof(name));
         Compat.ThrowIfNull(data, nameof(data));
         if (name.Length == 0) throw new ArgumentException("An attachment needs a name.", nameof(name));
-        PdfStream file = PdfStream.FromData(data);
-        file.Dictionary.Set("Type", new PdfName("EmbeddedFile"));
-        if (mimeType is not null) file.Dictionary.Set("Subtype", new PdfName(mimeType));
-        var parameters = new PdfDictionary { ["Size"] = PdfNumber.FromInteger(data.Length) };
-        if (modified is DateTimeOffset m) parameters.Set("ModDate", new PdfString(Encoding.ASCII.GetBytes(PdfText.FormatDate(m)).AsSpan()));
-        file.Dictionary.Set("Params", parameters);
-        PdfReference stream = _doc.AddObject(file);
-
-        var spec = new PdfDictionary
-        {
-            ["Type"] = new PdfName("Filespec"),
-            ["F"] = PdfString.FromText(name),
-            ["UF"] = PdfString.FromText(name),
-            ["EF"] = new PdfDictionary { ["F"] = stream, ["UF"] = stream },
-        };
-        if (description is not null) spec.Set("Desc", PdfString.FromText(description));
-
+        PdfDictionary spec = FileSpecification(_doc, name, data, mimeType, description, modified);
         List<(string Name, PdfObject Spec)> entries = [.. Entries().Where(e => e.Name != name)];
         entries.Add((name, _doc.AddObject(spec)));
         Write(entries);
@@ -382,6 +366,28 @@ public sealed class PdfAttachmentCollection : IReadOnlyList<PdfAttachment>
 
     /// <inheritdoc/>
     public IEnumerator<PdfAttachment> GetEnumerator() => Read().GetEnumerator();
+
+    /// <summary>A file specification with the file embedded (ISO 32000-1, 7.11.4), for the attachment list or a file attachment annotation.</summary>
+    internal static PdfDictionary FileSpecification(PdfDocument doc, string name, byte[] data, string? mimeType, string? description, DateTimeOffset? modified)
+    {
+        PdfStream file = PdfStream.FromData(data);
+        file.Dictionary.Set("Type", new PdfName("EmbeddedFile"));
+        if (mimeType is not null) file.Dictionary.Set("Subtype", new PdfName(mimeType));
+        var parameters = new PdfDictionary { ["Size"] = PdfNumber.FromInteger(data.Length) };
+        if (modified is DateTimeOffset m) parameters.Set("ModDate", new PdfString(Encoding.ASCII.GetBytes(PdfText.FormatDate(m)).AsSpan()));
+        file.Dictionary.Set("Params", parameters);
+        PdfReference stream = doc.AddObject(file);
+
+        var spec = new PdfDictionary
+        {
+            ["Type"] = new PdfName("Filespec"),
+            ["F"] = PdfString.FromText(name),
+            ["UF"] = PdfString.FromText(name),
+            ["EF"] = new PdfDictionary { ["F"] = stream, ["UF"] = stream },
+        };
+        if (description is not null) spec.Set("Desc", PdfString.FromText(description));
+        return spec;
+    }
 
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 

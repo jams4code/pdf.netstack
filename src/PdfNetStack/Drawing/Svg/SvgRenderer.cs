@@ -16,7 +16,7 @@ internal sealed class SvgRenderer
 
     // Work done whether or not anything paints: use fans out, so a small file can ask for 10^16
     // visits of empty groups. Every element entered and every clip shape counts.
-    private const int MaxVisited = 1_000_000;
+    private const int MaxVisited = 250_000;
     private const double DefaultFontSize = 16;
 
     // Properties that pass from parent to child (SVG 1.1, Appendix N).

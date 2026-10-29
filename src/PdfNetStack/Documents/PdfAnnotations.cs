@@ -72,6 +72,18 @@ public sealed class PdfAnnotation
         }
     }
 
+    /// <summary>The file a file attachment annotation carries, or null for other kinds.</summary>
+    public PdfAttachment? Attachment
+    {
+        get
+        {
+            PdfDocument doc = _page.Owner;
+            if (Subtype != "FileAttachment" || doc.Resolve(Dictionary["FS"]) is not PdfDictionary spec) return null;
+            string name = doc.Resolve(spec["UF"] ?? spec["F"]) is PdfString s ? s.ToText() : "";
+            return new PdfAttachment(doc, name, spec);
+        }
+    }
+
     internal PdfObject Entry { get; }
 }
 
@@ -80,7 +92,7 @@ public sealed class PdfAnnotation
 /// points from the top left corner of the media box, y down. New annotations come with an
 /// appearance stream, so every viewer shows them the same way.
 /// </summary>
-public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
+public sealed partial class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
 {
     private const int MaxNameTreeDepth = 32;
     private const int MaxNameTreeNodes = 10_000;
@@ -280,7 +292,7 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
         return null;
     }
 
-    private PdfRectangle ToPdf(double x, double y, double width, double height)
+    internal PdfRectangle ToPdf(double x, double y, double width, double height)
     {
         if (!(width > 0) || !(height > 0) || double.IsInfinity(width) || double.IsInfinity(height))
         {
@@ -315,11 +327,54 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
         return link;
     }
 
-    private void Appearance(PdfDictionary annotation, double width, double height, Action<PdfGraphics> draw)
+    /// <summary>
+    /// Draws the normal appearance. Below full opacity the drawing becomes a transparency group
+    /// faded as a whole, so a border over a fill does not show through it.
+    /// </summary>
+    private void Appearance(PdfDictionary annotation, double width, double height, Action<PdfGraphics> draw, double opacity = 1)
     {
         PdfForm form = PdfForm.Create(Doc, width, height);
-        using (PdfGraphics g = form.CreateGraphics()) draw(g);
+        if (opacity < 1)
+        {
+            PdfForm group = PdfForm.Create(Doc, width, height);
+            group.Stream.Dictionary.Set("Group", new PdfDictionary { ["S"] = new PdfName("Transparency") });
+            using (PdfGraphics g = group.CreateGraphics()) draw(g);
+            using PdfGraphics outer = form.CreateGraphics();
+            outer.SetConstantAlpha(opacity);
+            outer.DrawForm(group, 0, 0);
+        }
+        else
+        {
+            using PdfGraphics g = form.CreateGraphics();
+            draw(g);
+        }
+
         annotation.Set("AP", new PdfDictionary { ["N"] = form.Reference });
+    }
+
+    /// <summary>
+    /// The appearance stream an annotation shows now (ISO 32000-1, 12.5.5): its normal appearance,
+    /// or the one its appearance state selects when there are several. Null when there is none.
+    /// </summary>
+    internal static PdfReference? NormalAppearance(PdfDocument doc, PdfDictionary annotation)
+    {
+        if (doc.Resolve(annotation["AP"]) is not PdfDictionary ap) return null;
+        PdfObject? normal = ap["N"];
+        if (doc.Resolve(normal) is PdfDictionary states)
+        {
+            string state = annotation.GetName("AS") ?? "Off";
+            normal = states[state];
+        }
+
+        return normal is PdfReference r && doc.Resolve(r) is PdfStream ? r : null;
+    }
+
+    /// <summary>Adds a prepared annotation, such as a form widget, and returns its reference.</summary>
+    internal PdfReference AddAnnotation(PdfDictionary annotation)
+    {
+        PdfReference reference = Doc.AddObject(annotation);
+        Writable().Add(reference);
+        return reference;
     }
 
     private PdfAnnotation Add(PdfDictionary annotation)

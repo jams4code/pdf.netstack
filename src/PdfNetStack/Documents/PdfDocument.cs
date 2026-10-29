@@ -124,6 +124,9 @@ public sealed class PdfDocument
     /// <summary>The bookmark tree. Loaded on first access.</summary>
     public PdfOutlineCollection Outlines => _outlines ??= PdfOutlineCollection.Load(this);
 
+    /// <summary>The named destinations bookmarks and links point at, to list, resolve and rename.</summary>
+    public PdfNamedDestinations NamedDestinations => new(this);
+
     /// <summary>Creates an empty document. Add pages before saving.</summary>
     public static PdfDocument Create()
     {
@@ -185,6 +188,20 @@ public sealed class PdfDocument
         foreach (PdfDocument source in documents) result.Pages.Import(source.Pages);
         return result;
     }
+
+    /// <summary>
+    /// Flattens the annotations of every page: each one's appearance becomes page content and the
+    /// annotation goes. Links and form widgets stay unless <paramref name="options"/> asks for
+    /// them; hidden annotations stay. Returns how many were flattened.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// PdfDocument doc = PdfDocument.Open("reviewed.pdf");
+    /// doc.FlattenAnnotations();
+    /// doc.Save("reviewed-flat.pdf");
+    /// </code>
+    /// </example>
+    public int FlattenAnnotations(PdfFlattenOptions? options = null) => Pages.Sum(page => page.Annotations.Flatten(options));
 
     /// <summary>Returns one new document per page.</summary>
     public IEnumerable<PdfDocument> Split()

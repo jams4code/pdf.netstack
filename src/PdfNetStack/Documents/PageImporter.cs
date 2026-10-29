@@ -8,9 +8,10 @@ namespace PdfNetStack.Documents;
 /// Shared resources (fonts, images, color spaces) are copied once per source document and reused
 /// by every later import. Annotations are copied fresh for each page, because an annotation
 /// belongs to exactly one page. References to pages are remapped to their copies when those pages
-/// are imported in the same call, and become null otherwise.
+/// are imported in the same call, and become null otherwise. Form fields come along with their
+/// widgets (see <see cref="ImportFields"/>).
 /// </summary>
-internal sealed class PageImporter
+internal sealed partial class PageImporter
 {
     // Keys that never travel with a page: its place in the old tree, its slot in the old
     // structure tree, and article beads that point into the old document's threads.
@@ -63,6 +64,7 @@ internal sealed class PageImporter
             result.Add(new PdfPage(_target, numbers[i], copy));
         }
 
+        List<(int Target, string Key, PdfObject Value)> fixups = ImportFields(pageMap, batch, work);
         while (work.Count > 0)
         {
             (PdfObject source, int target) = work.Dequeue();
@@ -72,6 +74,11 @@ internal sealed class PageImporter
                 PdfDictionary d => CopyDictionary(d, 0, pageMap, batch, work),
                 _ => CopyValue(source, null, 0, pageMap, batch, work),
             };
+        }
+
+        foreach ((int target, string key, PdfObject value) in fixups)
+        {
+            if (_target.Objects[target] is PdfDictionary d) d.Set(key, value);
         }
 
         return result;
@@ -114,8 +121,10 @@ internal sealed class PageImporter
         {
             (string key, PdfObject value) = d.EntryAt(i);
 
-            // An annotation's slot in the source structure tree means nothing in the copy.
+            // An annotation's slot in the source structure tree means nothing in the copy. A
+            // widget's field is rebuilt by ImportFields.
             if (annotation && key == "StructParent") continue;
+            if (annotation && key == "Parent" && d.GetName("Subtype") == "Widget") continue;
             copy.Set(key, CopyValue(value, key, depth + 1, pageMap, batch, work));
         }
 

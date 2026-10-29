@@ -181,12 +181,26 @@ internal static class PdfArchive
 
     /// <summary>
     /// PDF/A-2 forbids embedded files other than PDF/A; PDF/A-3 allows any, each declared as an
-    /// associated file with its relationship, MIME type and modification date.
+    /// associated file with its relationship, MIME type and modification date. Files in the
+    /// attachment list and files of file attachment annotations are covered alike.
     /// </summary>
     private static void PrepareAttachments(PdfDocument doc, int part, List<string> problems)
     {
-        IReadOnlyList<PdfAttachment> attachments = doc.Attachments;
-        if (attachments.Count == 0) return;
+        var specs = new List<(PdfDictionary Spec, PdfObject? Reference)>();
+        foreach (PdfAttachment attachment in doc.Attachments) specs.Add((attachment.Dictionary, null));
+        foreach (PdfPage page in doc.Pages)
+        {
+            if (doc.Resolve(page.Dictionary["Annots"]) is not PdfArray annots) continue;
+            foreach (PdfObject a in annots)
+            {
+                if (doc.Resolve(a) is PdfDictionary annot && annot.GetName("Subtype") == "FileAttachment" && doc.Resolve(annot["FS"]) is PdfDictionary spec && spec["EF"] is not null)
+                {
+                    specs.Add((spec, annot["FS"] as PdfReference));
+                }
+            }
+        }
+
+        if (specs.Count == 0) return;
         if (part == 2)
         {
             problems.Add("PDF/A-2 cannot embed files; use PDF/A-3 for attachments such as invoice XML.");
@@ -194,9 +208,8 @@ internal static class PdfArchive
         }
 
         var af = doc.Resolve(doc.Catalog["AF"]) as PdfArray ?? new PdfArray();
-        foreach (PdfAttachment attachment in attachments)
+        foreach ((PdfDictionary spec, PdfObject? reference) in specs)
         {
-            PdfDictionary spec = attachment.Dictionary;
             if (spec["AFRelationship"] is null) spec.Set("AFRelationship", new PdfName("Unspecified"));
             if (doc.Resolve(spec["EF"]) is PdfDictionary ef)
             {
@@ -210,7 +223,7 @@ internal static class PdfArchive
                 }
             }
 
-            if (!af.Any(x => doc.Resolve(x) == spec)) af.Add(doc.AddObject(spec));
+            if (!af.Any(x => doc.Resolve(x) == spec)) af.Add(reference ?? doc.AddObject(spec));
         }
 
         doc.Catalog.Set("AF", af);

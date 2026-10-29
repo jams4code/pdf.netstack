@@ -15,14 +15,16 @@ public sealed class PdfOutline
         DestinationChanged = true;
     }
 
-    internal PdfOutline(string title, PdfPage? destination, PdfDictionary original, bool isOpen)
+    internal PdfOutline(string title, PdfPage? destination, PdfDictionary original, bool isOpen, PdfDocument document)
     {
+        _document = document;
         Title = title;
         _destination = destination;
         Original = original;
         IsOpen = isOpen;
     }
 
+    private readonly PdfDocument? _document;
     private PdfPage? _destination;
 
     /// <summary>Text shown in the bookmark panel.</summary>
@@ -39,6 +41,26 @@ public sealed class PdfOutline
         {
             _destination = value;
             DestinationChanged = true;
+        }
+    }
+
+    /// <summary>
+    /// The named destination the bookmark points at (its /Dest, or the /D of its GoTo action), or
+    /// null when it points at a page directly or has no destination.
+    /// </summary>
+    public string? DestinationName
+    {
+        get
+        {
+            if (Original is not PdfDictionary item || _document is not PdfDocument doc) return null;
+            PdfObject? dest = doc.Resolve(item["Dest"]);
+            if (dest is null && doc.Resolve(item["A"]) is PdfDictionary action && action.GetName("S") == "GoTo") dest = doc.Resolve(action["D"]);
+            return dest switch
+            {
+                PdfString s => s.ToText(),
+                PdfName n => n.Value,
+                _ => null,
+            };
         }
     }
 
@@ -91,7 +113,7 @@ public sealed class PdfOutlineCollection : Collection<PdfOutline>
             {
                 string title = PdfText.GetString(item, "Title", doc.Resolve) ?? "";
                 bool open = doc.Resolve(item["Count"]) is PdfNumber { IsInteger: true, IntegerValue: > 0 };
-                var outline = new PdfOutline(title, FindPage(doc, item, pageByNumber, names), item, open);
+                var outline = new PdfOutline(title, FindPage(doc, item, pageByNumber, names), item, open, doc);
                 into.Add(outline);
                 LoadLevel(item, outline.Children, depth + 1);
                 item = doc.ResolveDictionary(item["Next"]);

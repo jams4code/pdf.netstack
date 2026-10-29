@@ -104,6 +104,33 @@ public sealed class PdfATests
     }
 
     [TestMethod]
+    public void AnnotationFilesAndStampsInPdfA3()
+    {
+        PdfDocument doc = Document();
+        PdfPage page = doc.Pages[0];
+        page.Annotations.AddFileAttachment(500, 72, "data.csv", "a,b\n"u8.ToArray(), "text/csv");
+        var e = Assert.ThrowsExactly<InvalidOperationException>(() => doc.ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA2B }));
+        StringAssert.Contains(e.Message, "PDF/A-3");
+
+        // A stamp in a standard font cannot be archived; one in an embedded font can.
+        page.Annotations.AddStamp(PdfStampName.Final, 72, 200, 150, 45);
+        e = Assert.ThrowsExactly<InvalidOperationException>(() => doc.ToArray(new PdfSaveOptions { Conformance = PdfConformance.PdfA3B }));
+        StringAssert.Contains(e.Message, "Helvetica-Bold");
+        page.Annotations.Remove(page.Annotations[1]);
+        page.Annotations.AddStamp(72, 200, 150, 45, g => g.DrawString("AV", Font(), 20, PdfColor.Black, 10, 30), "Checked", new PdfAnnotationOptions { Opacity = 0.8 });
+
+        PdfDocument back = Save(doc, PdfConformance.PdfA3B);
+        PdfAnnotation attachment = back.Pages[0].Annotations[0];
+        var spec = (PdfDictionary)back.Resolve(attachment.Dictionary["FS"])!;
+        Assert.AreEqual("Unspecified", spec.GetName("AFRelationship"));
+        var af = (PdfArray)back.Resolve(back.Catalog["AF"])!;
+        Assert.AreSame(spec, back.Resolve(af.Single()));
+        var file = (PdfStream)back.Resolve(((PdfDictionary)back.Resolve(spec["EF"])!)["F"])!;
+        Assert.IsNotNull(((PdfDictionary)back.Resolve(file.Dictionary["Params"])!)["ModDate"]);
+        Assert.AreEqual("text/csv", attachment.Attachment!.MimeType);
+    }
+
+    [TestMethod]
     public void AnnotationsArePrintable()
     {
         PdfDocument doc = Document();

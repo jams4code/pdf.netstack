@@ -523,6 +523,42 @@ public sealed class PdfGraphics : IDisposable
         }
     }
 
+    /// <summary>Opens a marked content sequence for tagged PDF: content of a structure element, by its MCID (ISO 32000-1, 14.6 and 14.7.4).</summary>
+    internal void BeginMarkedContent(string tag, int mcid)
+    {
+        ThrowIfDisposed();
+        _w.Name(tag).Raw("<</MCID").Number(mcid).Raw(">>").Op("BDC");
+    }
+
+    /// <summary>Opens an artifact: content that is not part of the document's text, such as backgrounds and running headers (ISO 32000-1, 14.8.2.2).</summary>
+    internal void BeginArtifact()
+    {
+        ThrowIfDisposed();
+        _w.Name("Artifact").Op("BMC");
+    }
+
+    /// <summary>Opens content that shows only while an optional content group or membership dictionary is on (ISO 32000-1, 8.11.3.2).</summary>
+    internal void BeginOptionalContent(PdfObject group)
+    {
+        ThrowIfDisposed();
+        _w.Name("OC").Name(AddResource("Properties", "Oc", group)).Op("BDC");
+    }
+
+    /// <summary>Sets the constant stroke and fill opacity for what follows, such as a transparency group faded as a whole.</summary>
+    internal void SetConstantAlpha(double alpha)
+    {
+        ThrowIfDisposed();
+        SetAlpha("ca", alpha, ref _state.FillAlpha);
+        SetAlpha("CA", alpha, ref _state.StrokeAlpha);
+    }
+
+    /// <summary>Closes the marked content sequence opened last.</summary>
+    internal void EndMarkedContent()
+    {
+        ThrowIfDisposed();
+        _w.Op("EMC");
+    }
+
     private static bool NeedsActualText(string text, List<ShapedGlyph> glyphs)
     {
         if (HasRightToLeft(text)) return true;
