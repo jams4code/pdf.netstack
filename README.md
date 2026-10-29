@@ -243,6 +243,10 @@ multiline wrapping, comb cells, password masking and automatic font size, so fil
 the same in every viewer. A font the form embeds whole is reused; others map to the closest
 standard font.
 
+Document settings: `doc.Viewer` (layout, panels, opening page, right to left reading),
+`doc.PageLabels` (i, ii, iii then 1, 2, 3), `doc.Attachments` (embedded files, as e-invoices
+use) and `doc.Language`.
+
 ### Encryption
 
 ```csharp

@@ -57,6 +57,10 @@
   qualified names, flags, options and widgets. Setting values regenerates appearances (borders,
   backgrounds, DA font and color, auto size, multiline, comb, password) and drops XFA.
   `PdfAcroForm.Flatten` stamps the appearances into the pages and removes the form.
+- Document features: `PdfDocument.Viewer` (page layout, page mode, window options, right to left
+  reading, opening page and zoom), `PdfDocument.PageLabels` (roman, decimal and letter ranges
+  with prefixes, label lookup), `PdfDocument.Attachments` (embed, read, replace, remove files)
+  and `PdfDocument.Language`.
 - Packages now include `THIRD-PARTY-NOTICES.md`, which carries Adobe's notice for the standard
   font metrics.
 

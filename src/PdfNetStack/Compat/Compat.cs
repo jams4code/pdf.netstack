@@ -49,6 +49,15 @@ internal static class Compat
 #endif
     }
 
+    public static void ThrowIfNegative(int value, string name)
+    {
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegative(value, name);
+#else
+        if (value < 0) throw new ArgumentOutOfRangeException(name, value, "Value must not be negative.");
+#endif
+    }
+
     public static void ThrowIfGreaterThan(uint value, uint max, string name)
     {
         if (value > max) throw new ArgumentOutOfRangeException(name);

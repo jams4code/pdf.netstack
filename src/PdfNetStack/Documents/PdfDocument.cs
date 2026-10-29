@@ -79,6 +79,26 @@ public sealed class PdfDocument
 
     internal PdfObject? Id { get; private set; }
 
+    /// <summary>How viewers present the document: page layout, panels, window options, opening page.</summary>
+    public PdfViewerSettings Viewer => new(this);
+
+    /// <summary>The page numbers viewers show, such as a roman numbered preface.</summary>
+    public PdfPageLabels PageLabels => new(this);
+
+    /// <summary>Files embedded in the document.</summary>
+    public PdfAttachmentCollection Attachments => new(this);
+
+    /// <summary>The document's natural language as a BCP 47 tag, such as "en-US" or "ar", for screen readers and search.</summary>
+    public string? Language
+    {
+        get => Resolve(Catalog["Lang"]) is PdfString s ? s.ToText() : null;
+        set
+        {
+            if (value is null) Catalog.Remove("Lang");
+            else Catalog.Set("Lang", PdfString.FromText(value));
+        }
+    }
+
     /// <summary>The interactive form: fields, values, flattening. Empty when the document has none.</summary>
     public PdfAcroForm Form => _form ??= new PdfAcroForm(this);
 

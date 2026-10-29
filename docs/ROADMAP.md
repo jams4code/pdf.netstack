@@ -42,8 +42,9 @@ Released in 1.0: document editing (pages, import, merge, split, info, outlines) 
 7. **AcroForm.** Done for 1.1: field tree, reading and setting values, appearance generation
    for text, check box, radio and choice fields, flattening. Still to do: creating new fields,
    importing fields together with their pages, JavaScript formatting actions.
-8. **Remaining document features.** Viewer preferences, page layout and mode, page labels,
-   custom document properties, file attachments.
+8. **Remaining document features.** Done for 1.1: viewer preferences, page layout and mode,
+   open action, right to left reading, page labels, language, custom properties, file
+   attachments.
 9. **Signatures and PDF/A.** PAdES baseline signing with incremental save, signature
    validation report, PDF/A-2b and 3b output with XMP sync and embedded output intent.
 
