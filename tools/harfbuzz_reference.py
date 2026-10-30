@@ -66,7 +66,90 @@ SAMPLES = [
     ("ltr", "knda", "ಎಲ್ಲಾ ಮಾನವರೂ ಸ್ವತಂತ್ರರಾಗಿಯೇ ಜನಿಸಿದ್ದಾರೆ. ಹಾಗೂ ಘನತೆ ಮತ್ತು ಹಕ್ಕುಗಳಲ್ಲಿ ಸಮಾನರಾಗಿದ್ದಾರೆ. ವಿವೇಕ ಮತ್ತು ಅಂತಃಕರಣಗಳನ್ನು ಪಡೆದವರಾದ್ದರಿಂದ ಅವರು ಪರಸ್ಪರ ಸಹೋದರ ಭಾವದಿಂದ ವರ್ತಿಸಬೇಕು."),
     ("ltr", "mlym", "മനുഷ്യരെല്ലാവരും തുല്യാവകാശങ്ങളോടും അന്തസ്സോടും സ്വാതന്ത്ര്യത്തോടുംകൂടി ജനിച്ചിട്ടുള്ളവരാണ്‌. അന്യോന്യം ഭ്രാതൃഭാവത്തോടെ പെരുമാറുവാനാണ്‌ മനുഷ്യന് വിവേകബുദ്ധിയും മനസാക്ഷിയും സിദ്ധമായിരിക്കുന്നത്‌."),
     ("rtl", "hebr", "כָּל בְּנֵי הָאָדָם נוֹלְדוּ בְּנֵי חוֹרִין וְשָׁוִים בְּעֶרְכָּם וּבִזְכֻיּוֹתֵיהֶם"),
+    # Thai and Lao: sara am after tone marks, marks over tall consonants and under descenders.
+    ("ltr", "thai", "ภาษาไทย น้ำ กำ ทำ ป่ำ ปั่น ปิ่น ฟ้า ฝั่ง ญู ฐุ ฎุ ปุ่ ก็ ฬ์ ป้ ป๋ ฝื่"),
+    ("ltr", "lao ", "ພາສາລາວ ນ້ຳ ກຳ ເຂົ້າ ສະບາຍດີ ກ່ຳ"),
+    # Khmer: coeng ro before the base, split vowels, stacked subscripts, signs after vowels.
+    ("ltr", "khmr", "ភាសាខ្មែរ ស្រី ក្រុម ព្រះ កៀ កើ កោ កៅ ង្ក្រ ខ្ញុំ សួស្តី ក៏ ប៉ុ"),
+    # Myanmar: kinzi, medials, asat, the vowel e before the base, tones.
+    ("ltr", "mymr", "မြန်မာ ကြည့် သင်္ချိုင်း ကျွန်ုပ် မင်္ဂလာပါ ရှင်း ကြွ ဂေါ် ကေ့ ပြော"),
+    # Hangul: syllables, conjoining jamo that compose, a syllable and trailing jamo, Old Hangul,
+    # tone marks after a syllable and alone.
+    ("ltr", "hang", "한국어 훈민정음 각 각 ᄒᆞᆫ 한〮 〯 가 ꥠᅡ"),
+    # The Universal Shaping Engine.
+    ("ltr", "sinh", "සිංහල ශ්‍රී ක්‍ෂ කෙ කො කෞ ප්‍ර ර්‍ක ක්‍ය ක්ව කේ කෝ ලංකා"),
+    ("ltr", "tibt", "བོད་ཡིག བསྒྲུབས ཧཱུྃ ཨོཾ་མ་ཎི་པདྨེ་ཧཱུྃ ཀྲ སྐྱེ ཀཱི ཀྵ"),
+    ("ltr", "bali", "ᬩᬲᬩᬮᬶ ᬓ᭄ᬭ ᬓᬾ ᬓᭀ ᬓᭁ ᬭ᭄ᬓ ᬓᬃ ᬓ᭄ᬱᬾ ᬓᬸ ᬅᬓ᭄ᬱᬭ"),
+    ("ltr", "java", "ꦧꦱꦗꦮ ꦏꦿ ꦏꦾ ꦏꦺ ꦏꦺꦴ ꦫ꧀ꦏ ꦏꦂ ꦲꦤꦕꦫꦏ ꦏ꧀ꦱꦼ ꦏꦶꦁ"),
+    ("ltr", "mong", "ᠮᠣᠩᠭᠣᠯ ᠪᠢᠴᠢᠭ ᠠ᠋ᠨ ᠭ᠌ᠠ ᠨᠠ᠋ᠮ"),
+    ("rtl", "nko ", "ߒߞߏ ߞߊ߲ ߓߊ߯ ߞߊ߫"),
+    ("rtl", "adlm", "𞤀𞤣𞤤𞤢𞤥 𞤆𞤵𞤤𞤢𞤪"),
+    ("ltr", "tfng", "ⵜⴰⵎⴰⵣⵉⵖⵜ ⵜ⵿ⵜ"),
+    ("ltr", "bugi", "ᨅᨔ ᨕᨘᨁᨗ ᨀᨙ"),
+    ("ltr", "mtei", "ꯃꯤꯇꯩ ꯃꯌꯦꯛ ꯀ꯭ꯔ"),
+    ("ltr", "sund", "ᮞᮥᮔ᮪ᮓ ᮊᮦ ᮊᮢ ᮊᮁ"),
+    ("ltr", "lana", "ᨲᩫ᩠ᩅᨾᩮᩬᩥᩬᨦ"),
+    ("ltr", "lepc", "ᰛᰩᰵ ᰀᰦ"),
+    ("ltr", "tglg", "ᜆᜄᜎᜓᜄ᜔"),
+    ("ltr", "limb", "ᤕᤠᤰᤌᤢ"),
+    # Broken clusters, joiners and long stacks.
+    ("ltr", "thai", "ำ ่ำ กํ่ ปิํ ปั้ำ ญฺ่"),
+    ("ltr", "khmr", "ា ្ក ក្ក្រេះ ក‌៉ ង្រ្កុំ ឥ្រ កំា"),
+    ("ltr", "mymr", "ေ ် င်္ကြော့ ကေ︀ ရှော် ကိုင်း ၀ိ ‌ိ"),
+    ("ltr", "sinh", "් ෙ ක්‍රෙ ර්‍කෙ ක්‍යො අැ ක‌්"),
+    ("ltr", "tibt", "ཱ ཀཱུཾྂ སྒྲོཾ ཀཱྀ ༄༅ ཀུ༹ ༀ"),
+    ("ltr", "bali", "ᬾ ᭄ᬓ ᬓ᭄ᬭᬾᬃ ᬭ᭄ᬓ᭄ᬭᬾ ᬓᭀᬁ ᬓ᬴᭄ ᬆ"),
+    ("ltr", "java", "ꦺ ꦏ꧀ꦫꦺꦴ ꦫ꧀ꦏꦾꦺ ꦏꦿꦼꦂ ꦏ꦳꧀ ꦄꦴ"),
+    ("ltr", "mong", "ᠠ᠋ᠨ ᠭ᠌ᠠ ᠢ ᠨᠡ᠍ᠮ ᠲᠦ᠋ ᠠ‍ ‍ᠠ"),
+    ("rtl", "nko ", "ߊ߲߫ ߫ ߓߊ߽߳"),
+    ("ltr", "hang", "각〮 ᄀ ᅡ ᆨ 각ᆨ 가ᇃ ᅙᅡᇹ 〮〯"),
+    ("ltr", "lao ", "ກົ່ຳ ຳ ກິ້ຳ"),
 ]
+
+# OpenType script tags whose ISO 15924 code (what HarfBuzz takes) differs.
+ISO_SCRIPTS = {"lao ": "Laoo", "nko ": "Nkoo", "vai ": "Vaii", "yi  ": "Yiii"}
+
+# Brahmic scripts of the Universal Shaping Engine, sampled from their character names: vowel
+# signs, conjuncts, reph and below forms, signs and broken clusters.
+BRAHMIC = {
+    "brah": "BRAHMI", "cakm": "CHAKMA", "shrd": "SHARADA", "takr": "TAKRI", "gran": "GRANTHA", "khoj": "KHOJKI",
+    "sind": "KHUDAWADI", "mahj": "MAHAJANI", "modi": "MODI", "sidd": "SIDDHAM", "tirh": "TIRHUTA", "ahom": "AHOM",
+    "mult": "MULTANI", "bhks": "BHAIKSUKI", "marc": "MARCHEN", "newa": "NEWA", "gonm": "MASARAM GONDI", "soyo": "SOYOMBO",
+    "zanb": "ZANABAZAR SQUARE", "dogr": "DOGRA", "gong": "GUNJALA GONDI", "maka": "MAKASAR", "nand": "NANDINAGARI",
+    "kthi": "KAITHI", "sylo": "SYLOTI NAGRI", "saur": "SAURASHTRA", "cham": "CHAM", "batk": "BATAK", "kali": "KAYAH LI",
+    "rjng": "REJANG", "hano": "HANUNOO", "buhd": "BUHID", "tagb": "TAGBANWA", "khar": "KHAROSHTHI", "tale": "TAI LE",
+    "lepc": "LEPCHA", "tavt": "TAI VIET", "diak": "DIVES AKURU", "kawi": "KAWI", "tutg": "TULU-TIGALARI",
+}
+
+
+def brahmic_samples(tag, script):
+    def ch(*names):
+        for n in names:
+            try:
+                return unicodedata.lookup(f"{script} {n}")
+            except KeyError:
+                pass
+        return ""
+
+    ka, ga, ta, na, ma, ya, ra, va, sa = (ch(f"LETTER {n}") for n in ("KA", "GA", "TA", "NA", "MA", "YA", "RA", "VA", "SA"))
+    a = ch("LETTER A")
+    h = ch("SIGN VIRAMA", "VIRAMA", "SIGN HALANTA", "SIGN PATEN", "SIGN KILLER", "SIGN PAMUDPOD", "PANGOLAT")
+    vowels = [ch(f"VOWEL SIGN {v}") for v in ("AA", "I", "II", "U", "UU", "E", "AI", "O", "AU", "VOCALIC R")]
+    signs = [ch(f"SIGN {s}") for s in ("ANUSVARA", "CANDRABINDU", "VISARGA", "NUKTA")]
+    if not ka:
+        return []
+    words = [ka + v for v in vowels if v] + [ka + s for s in signs if s] + [a + v for v in vowels[:2] if a and v]
+    if h:
+        words += [ka + h + ssa for ssa in (sa, ta) if ssa] + [ra + h + ka, ka + h + ra, ka + h + ya, ka + h + va, ka + h,
+                                                            sa + h + ta + h + ra + vowels[1], ra + h + ka + vowels[1],
+                                                            na + h + ga + vowels[5], ma + h + ma + vowels[7], h + ka]
+    words += [v for v in vowels[:2] if v]
+    words = [w for w in words if w]
+    return [("rtl" if tag == "khar" else "ltr", tag, " ".join(words[i:i + 8])) for i in range(0, len(words), 8)]
+
+
+for _tag, _script in BRAHMIC.items():
+    SAMPLES.extend(brahmic_samples(_tag, _script))
 
 
 def covered(text, cmap):
@@ -92,7 +175,7 @@ def shape(face, text, direction, script, variations):
     buf = hb.Buffer()
     buf.add_codepoints([ord(c) for c in text])
     buf.direction = direction
-    buf.script = script
+    buf.script = ISO_SCRIPTS.get(script, script.strip())
     hb.shape(font, buf, {})
     infos, positions = buf.glyph_infos, buf.glyph_positions
     glyphs = [[i.codepoint, i.cluster, p.x_advance, p.x_offset, p.y_offset] for i, p in zip(infos, positions)]

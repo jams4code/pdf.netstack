@@ -24,11 +24,13 @@ internal sealed partial class Shaper
     /// <summary>
     /// Decomposes, reorders and recomposes the buffer, and maps every character to its glyph. A
     /// character alone keeps its own glyph when the font has one; within a base and its marks,
-    /// and always for Indic scripts, characters decompose as far as the font covers.
+    /// and always for the Indic, USE, Khmer and Myanmar shapers, characters decompose as far as
+    /// the font covers. Hangul only decomposes what the font lacks, and does not recompose.
     /// </summary>
     private void Normalize(ShaperKind kind)
     {
-        bool mightShortCircuit = kind != ShaperKind.Indic;
+        bool mightShortCircuit = kind is not (ShaperKind.Indic or ShaperKind.Use or ShaperKind.Khmer or ShaperKind.Myanmar);
+        bool alwaysShortCircuit = kind == ShaperKind.Hangul;
         var output = new List<GlyphInfo>(_buffer.Count);
         bool allSimple = true;
         int count = _buffer.Count;
@@ -47,18 +49,30 @@ internal sealed partial class Shaper
             bool variationSelector = false;
             for (int k = i; k < end; k++) variationSelector |= IsVariationSelector(_buffer[k].CodePoint);
 
-            // A cluster with a variation selector is left as it is: the selector picks the glyph.
-            for (; i < end; i++)
+            if (variationSelector)
             {
-                if (variationSelector) output.Add(WithGlyph(_buffer[i], GlyphOf(_buffer[i].CodePoint)));
-                else DecomposeCharacter(_buffer[i], false, kind, output);
+                VariationSelectorCluster(i, end, output);
+                i = end;
+                continue;
             }
+
+            for (; i < end; i++) DecomposeCharacter(_buffer[i], alwaysShortCircuit, kind, output);
         }
 
         _buffer = output;
-        if (allSimple) return;
-        ReorderMarks(kind);
-        Recompose(kind);
+        if (!allSimple) ReorderMarks(kind);
+
+        // A combining grapheme joiner that kept no marks from reordering is skipped by lookups
+        // like any default ignorable, as in HarfBuzz; one that did stays visible to them.
+        for (int i = 1; i + 1 < _buffer.Count; i++)
+        {
+            if (_buffer[i].CodePoint == 0x034F && (_buffer[i + 1].CombiningClass == 0 || _buffer[i - 1].CombiningClass <= _buffer[i + 1].CombiningClass))
+            {
+                _buffer[i].Flags &= ~GlyphFlags.Hidden;
+            }
+        }
+
+        if (!allSimple && !alwaysShortCircuit) Recompose(kind);
     }
 
     /// <summary>
@@ -97,6 +111,43 @@ internal sealed partial class Shaper
     {
         g.Glyph = glyph;
         return g;
+    }
+
+    /// <summary>
+    /// A cluster with a variation selector is not normalized, as in HarfBuzz: a character and the
+    /// selector after it become the font's glyph for the sequence (cmap format 14) when it has
+    /// one; otherwise each keeps its own glyph, for GSUB to handle.
+    /// </summary>
+    private void VariationSelectorCluster(int start, int end, List<GlyphInfo> output)
+    {
+        int i = start;
+        while (i < end)
+        {
+            GlyphInfo g = _buffer[i];
+            if (i + 1 < end && IsVariationSelector(_buffer[i + 1].CodePoint))
+            {
+                GlyphInfo selector = _buffer[i + 1];
+                if (_font.TryGetVariationGlyph(g.CodePoint, selector.CodePoint, out int variant))
+                {
+                    MergeClusters(_buffer, i, i + 2);
+                    g.Text += selector.Text;
+                    output.Add(WithGlyph(g, variant));
+                }
+                else
+                {
+                    output.Add(WithGlyph(g, GlyphOf(g.CodePoint)));
+                    output.Add(WithGlyph(selector, GlyphOf(selector.CodePoint)));
+                }
+
+                i += 2;
+                for (; i < end && IsVariationSelector(_buffer[i].CodePoint); i++) output.Add(WithGlyph(_buffer[i], GlyphOf(_buffer[i].CodePoint)));
+            }
+            else
+            {
+                output.Add(WithGlyph(g, GlyphOf(g.CodePoint)));
+                i++;
+            }
+        }
     }
 
     private static bool IsVariationSelector(int cp) =>
@@ -188,7 +239,8 @@ internal sealed partial class Shaper
 
     /// <summary>
     /// Canonical decomposition, except that the Indic shaper keeps Devanagari rra, Bengali rra and
-    /// rha and Tamil au whole: fonts draw them as their own letters.
+    /// rha and Tamil au whole (fonts draw them as their own letters), and the Khmer shaper splits
+    /// the vowel signs that start with the sign e on the left, which Unicode does not decompose.
     /// </summary>
     private static bool DecomposeFor(ShaperKind kind, int ab, out int a, out int b)
     {
@@ -198,21 +250,29 @@ internal sealed partial class Shaper
             return false;
         }
 
+        if (kind == ShaperKind.Khmer && ab is (>= 0x17BE and <= 0x17C0) or 0x17C4 or 0x17C5)
+        {
+            a = 0x17C1;
+            b = ab;
+            return true;
+        }
+
         return ShapingData.Decompose(ab, out a, out b);
     }
 
     /// <summary>
-    /// Canonical composition. The Indic shaper does not compose onto a mark (split vowel signs stay
-    /// split) and composes Bengali yya from ya and nukta; the Hebrew shaper also composes the
-    /// presentation forms of pointed letters when the font cannot position the points.
+    /// Canonical composition. The Indic, USE and Khmer shapers do not compose onto a mark (split
+    /// vowel signs stay split), and the Indic one composes Bengali yya from ya and nukta; the
+    /// Hebrew shaper also composes the presentation forms of pointed letters when the font cannot
+    /// position the points.
     /// </summary>
     private bool ComposeFor(ShaperKind kind, int a, int b, out int ab)
     {
-        if (kind == ShaperKind.Indic)
+        if (kind is ShaperKind.Indic or ShaperKind.Use or ShaperKind.Khmer)
         {
             ab = 0;
             if (ShapingData.IsMark(a)) return false;
-            if (a == 0x09AF && b == 0x09BC)
+            if (kind == ShaperKind.Indic && a == 0x09AF && b == 0x09BC)
             {
                 ab = 0x09DF;
                 return true;

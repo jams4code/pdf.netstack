@@ -475,6 +475,38 @@ public sealed class TextExtractionTests
     }
 
     [TestMethod]
+    public void RightToLeftLineEndingInALatinWordReadsLogically()
+    {
+        // Shin lamed mem, then "To.": the period closing the right to left paragraph is drawn at
+        // its left end, then the Latin word, then the Hebrew, mem first.
+        string cmap = CMap("1 begincodespacerange <00> <FF> endcodespacerange 3 beginbfchar <01> <05E9> <02> <05DC> <03> <05DD> endbfchar");
+        PdfPage page = Page(
+            "BT /F1 10 Tf 72 700 Td (.To ) Tj <030201> Tj ET",
+            "/Font<</F1 10 0 R>>",
+            (10, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica/ToUnicode 11 0 R>>"),
+            (11, "stream:|" + cmap));
+        Assert.AreEqual("\u05E9\u05DC\u05DD To.", page.ExtractText());
+    }
+
+    [TestMethod]
+    public void HtmlRightToLeftParagraphsWithLatinWordsReadInLogicalOrder()
+    {
+        var fonts = new PdfFontCollection();
+        fonts.AddFile(FontFile("Test-Arabic.ttf"));
+        string family = fonts.Families.Single();
+
+        // A right to left paragraph that ends in a Latin word, one that starts with one, and the
+        // same text in left to right paragraphs. Punctuation next to the Latin word stays with it.
+        string[] texts = ["\u0628\u0628 \u0628\u064E\u0628. To.", "To. \u0628\u064E\u0628 \u0628\u0628."];
+        string html = $"<body style=\"font-family: '{family}'; font-size: 20px\">"
+            + string.Concat(texts.Select(t => $"<p dir=rtl>{t}</p><p>{t}</p>")) + "</body>";
+        PdfDocument doc = HtmlConverter.ConvertToDocument(html, new HtmlConverterOptions { Fonts = fonts, UseSystemFonts = false });
+
+        string[] lines = Reopen(doc).Pages[0].ExtractText().Split('\n');
+        CollectionAssert.AreEqual(new[] { texts[0], texts[0], texts[1], texts[1] }, lines);
+    }
+
+    [TestMethod]
     public void SpacesAreNotDoubledAndGapsSplitWords()
     {
         PdfPage page = Page("BT /F1 10 Tf 72 700 Td (Hello ) Tj ( World) Tj [-3000 (again)] TJ ET", Helvetica);

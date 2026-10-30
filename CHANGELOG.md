@@ -81,6 +81,27 @@
 - `tools/PdfNetStack.Benchmarks` measures text extraction and HTML conversion with
   BenchmarkDotNet; it is not part of the solution or the packages.
 - Timing tests take the fastest of several runs, so a busy machine cannot fail them.
+- Shaping for more scripts, matching HarfBuzz glyph for glyph on the fonts we compare:
+  - The Universal Shaping Engine, with its categories generated from the Unicode Character
+    Database and Microsoft's overrides by `tools/make_shaping_data.py`: Balinese, Javanese,
+    Sinhala, Tibetan, Sundanese, Batak, Buginese, Cham, Tai Tham, Lepcha, Meetei Mayek, Chakma,
+    Grantha, Newa, Sharada, Tirhuta and the other Brahmic scripts HarfBuzz gives it, Indic fonts
+    made for it (dev3 and the other version 3 tags), and Mongolian, N'Ko, Adlam and the other
+    scripts that join like Arabic (a Mongolian free variation selector takes its letter's form),
+    and Egyptian hieroglyph clusters.
+  - Thai and Lao: sara am splits into nikhahit and sara aa, and fonts without Thai substitutions
+    get their marks placed through the Windows or Macintosh private use glyphs.
+  - Khmer (coeng ro and pre-base vowels reordered, split vowels decomposed, cfar), Myanmar
+    (kinzi, medials and pre-base vowels reordered) and Hangul (syllables composed or decomposed
+    for the font, ljmo, vjmo and tjmo, tone marks).
+  - All shapers: invalid vowel sequences of the Indic and USE scripts get a dotted circle, cmap
+    format 14 variation sequences pick their glyphs, a combining grapheme joiner that blocks no
+    reordering is skipped by lookups, a ZWJ keeps a mark from attaching to the base before it
+    (mark and mkmk see joiners), and contextual lookups whose nested lookups add glyphs index the
+    sequence as HarfBuzz does.
+- Text extraction reads right to left lines in logical order when they start or end with a Latin
+  word: the paragraph direction comes from both ends of the line, and punctuation next to the
+  word stays in it ("To." rather than "To .").
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color

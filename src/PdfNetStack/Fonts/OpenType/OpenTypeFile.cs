@@ -21,6 +21,9 @@ internal sealed class OpenTypeFile
     private readonly Dictionary<int, int> _cmap;
     private readonly int _numberOfHMetrics;
 
+    /// <summary>Offset in the cmap table of the variation sequences subtable (format 14), or -1.</summary>
+    private readonly int _variationSequences = -1;
+
     private OpenTypeFile(byte[] data, int sfntOffset, bool requireCmap = true)
     {
         Data = data;
@@ -105,6 +108,7 @@ internal sealed class OpenTypeFile
         SubfamilyName = Name(17) ?? Name(2) ?? "Regular";
         PostScriptName = SanitizePostScriptName(Name(6) ?? Name(4) ?? FamilyName + "-" + SubfamilyName);
         _cmap = HasTable("cmap") ? ReadCmap() : new Dictionary<int, int>();
+        if (HasTable("cmap")) _variationSequences = FindVariationSequences();
     }
 
     /// <summary>The file bytes. For a collection, the whole collection: table offsets are absolute.</summary>
@@ -235,6 +239,76 @@ internal sealed class OpenTypeFile
 
     public bool TryGetGlyph(int codePoint, out int glyph) => _cmap.TryGetValue(codePoint, out glyph);
 
+    /// <summary>
+    /// The glyph of a variation sequence (cmap format 14): the variant the font maps it to, or the
+    /// character's own glyph when the sequence is a default one. False when the font has neither.
+    /// A damaged subtable maps nothing.
+    /// </summary>
+    public bool TryGetVariationGlyph(int codePoint, int selector, out int glyph)
+    {
+        glyph = 0;
+        if (_variationSequences < 0) return false;
+        try
+        {
+            ReadOnlySpan<byte> sub = Table("cmap").Slice(_variationSequences);
+            int records = BinarySearch(sub, 10, U32(sub, 6), 11, selector);
+            if (records < 0) return false;
+            int defaults = Offset32(sub, records + 3), variants = Offset32(sub, records + 7);
+            if (defaults > sub.Length || variants > sub.Length) return false;
+            if (variants != 0)
+            {
+                ReadOnlySpan<byte> v = sub.Slice(variants);
+                int at = BinarySearch(v, 4, U32(v, 0), 5, codePoint);
+                if (at >= 0)
+                {
+                    glyph = U16(v, at + 3);
+                    return glyph < GlyphCount;
+                }
+            }
+
+            if (defaults != 0)
+            {
+                // Ranges of default sequences: a start and how many follow it.
+                ReadOnlySpan<byte> r = sub.Slice(defaults);
+                long count = U32(r, 0);
+                if (count > (r.Length - 4) / 4) return false;
+                int lo = 0, hi = (int)count - 1;
+                while (lo <= hi)
+                {
+                    int mid = (lo + hi) >>> 1;
+                    int start = U24(r, 4 + 4 * mid);
+                    if (codePoint < start) hi = mid - 1;
+                    else if (codePoint > start + U8(r, 4 + 4 * mid + 3)) lo = mid + 1;
+                    else return TryGetGlyph(codePoint, out glyph);
+                }
+            }
+
+            return false;
+        }
+        catch (FontFormatException)
+        {
+            return false;
+        }
+
+        // The record of sorted 24 bit keys at the given stride whose key is the value, or -1. A
+        // count the data cannot hold makes the subtable damaged.
+        static int BinarySearch(ReadOnlySpan<byte> data, int first, long count, int stride, int value)
+        {
+            if (count > (data.Length - first) / stride) throw new FontFormatException("Font cmap variation sequences are truncated.");
+            int lo = 0, hi = (int)count - 1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) >>> 1;
+                int key = U24(data, first + stride * mid);
+                if (key == value) return first + stride * mid;
+                if (key < value) lo = mid + 1;
+                else hi = mid - 1;
+            }
+
+            return -1;
+        }
+    }
+
     /// <summary>Advance width of a glyph in font units.</summary>
     public int Advance(int glyph)
     {
@@ -311,6 +385,22 @@ internal sealed class OpenTypeFile
         }
 
         return sb.Length == 0 ? "Font" : sb.ToString(0, Math.Min(sb.Length, 63));
+    }
+
+    /// <summary>Offset of the Unicode variation sequences subtable (platform 0, encoding 5, format 14), or -1.</summary>
+    private int FindVariationSequences()
+    {
+        ReadOnlySpan<byte> cmap = Table("cmap");
+        int count = U16(cmap, 2);
+        for (int i = 0; i < count; i++)
+        {
+            int r = 4 + 8 * i;
+            if (U16(cmap, r) != 0 || U16(cmap, r + 2) != 5) continue;
+            int offset = Offset32(cmap, r + 4);
+            if (offset + 10 <= cmap.Length && U16(cmap, offset) == 14) return offset;
+        }
+
+        return -1;
     }
 
     /// <summary>

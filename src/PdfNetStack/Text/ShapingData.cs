@@ -37,6 +37,50 @@ internal static partial class ShapingData
     /// <summary>The Indic shaping category (low byte) and position (high byte) of a code point.</summary>
     public static int Indic(int codePoint) => Find(IndicStarts, IndicValues, codePoint);
 
+    /// <summary>The Universal Shaping Engine category of a code point.</summary>
+    public static int Use(int codePoint) => Find(UseStarts, UseValues, codePoint);
+
+    /// <summary>
+    /// The length of the invalid vowel sequence (one that looks like another vowel, as a letter a
+    /// with the sign aa looks like the letter aa) that starts at <paramref name="start"/>, or 0.
+    /// </summary>
+    public static int InvalidVowelSequence(IReadOnlyList<int> codePoints, int start)
+    {
+        if (!VowelConstraintIndex.Starts.TryGetValue(codePoints[start], out List<int>? offsets)) return 0;
+        foreach (int at in offsets)
+        {
+            int length = VowelConstraints[at];
+            if (start + length > codePoints.Count) continue;
+            int k = 1;
+            while (k < length && VowelConstraints[at + 1 + k] == codePoints[start + k]) k++;
+            if (k == length) return length;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Where each invalid vowel sequence starts in <see cref="VowelConstraints"/>, by its first
+    /// code point; built on first use, when the generated tables are ready.
+    /// </summary>
+    private static class VowelConstraintIndex
+    {
+        public static readonly Dictionary<int, List<int>> Starts = Build();
+
+        private static Dictionary<int, List<int>> Build()
+        {
+            var index = new Dictionary<int, List<int>>();
+            for (int at = 0; at < VowelConstraints.Length; at += 1 + VowelConstraints[at])
+            {
+                int first = VowelConstraints[at + 1];
+                if (!index.TryGetValue(first, out List<int>? list)) index[first] = list = [];
+                list.Add(at);
+            }
+
+            return index;
+        }
+    }
+
     /// <summary>
     /// One step of canonical decomposition: <paramref name="a"/> and <paramref name="b"/>, which is
     /// 0 for a singleton. Hangul syllables decompose algorithmically, LV + T or L + V.

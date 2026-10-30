@@ -263,8 +263,10 @@ PdfTextLayout layout = g.DrawText(p, 50, 120, 300);   // layout.Height is the ro
 Text goes through the Unicode line breaking (UAX #14) and bidirectional (UAX #9) algorithms,
 both passing the full Unicode conformance suites, and an OpenType shaper that matches HarfBuzz
 glyph for glyph: ligatures, kerning, Arabic joining and vowel marks, the nine Indic scripts
-(Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), and Unicode
-normalization against the font, so decomposed and precomposed text both find their glyphs.
+(Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam), Thai and
+Lao, Khmer, Myanmar, Hangul, and through the Universal Shaping Engine Sinhala, Tibetan, Balinese,
+Javanese, Mongolian and the other complex scripts, and Unicode normalization against the font,
+so decomposed and precomposed text both find their glyphs.
 Lines break greedily at break opportunities, overlong words break between characters, soft
 hyphens show a hyphen when used, and line height follows CSS. `PdfParagraph.Kashida` justifies
 Arabic lines by elongating letters with tatweel before widening spaces. `PdfTextLayout` measures before drawing and can draw a range
@@ -713,7 +715,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | 1.1, unreleased |
 | Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1, unreleased |
 | Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections, variable font instances (TrueType and CFF2) | 1.1, unreleased |
-| Text layout | Line breaking, alignment, justification (with kashida), rich text, Arabic, Indic and RTL, Unicode normalization | 1.1, unreleased |
+| Text layout | Line breaking, alignment, justification (with kashida), rich text, Arabic, Indic, Southeast Asian and other complex scripts, RTL, Unicode normalization | 1.1, unreleased |
 | Images and overlays | JPEG, PNG, GIF, BMP, TIFF, WebP and SVG placement with fit and opacity, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
 | Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1, unreleased |
 | Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1, unreleased |

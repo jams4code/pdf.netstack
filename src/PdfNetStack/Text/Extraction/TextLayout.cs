@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using PdfNetStack.Drawing;
 
@@ -476,11 +477,12 @@ internal static class TextLayout
         }
 
         // A gap wider than a fraction of the font size separates words, as a space glyph does.
-        var gapBefore = new bool[count];
+        // gaps[k] counts the gaps among the first k letters.
+        var gaps = new int[count + 1];
         for (int k = 1; k < count; k++)
         {
             double size = (visual[k - 1].Size + visual[k].Size) / 2;
-            gapBefore[k] = visual[k].U0 - visual[k - 1].U1 > WordGap * size;
+            gaps[k + 1] = gaps[k] + (visual[k].U0 - visual[k - 1].U1 > WordGap * size ? 1 : 0);
         }
 
         int[]? order = LogicalOrder(visual, count);
@@ -492,9 +494,12 @@ internal static class TextLayout
             ref readonly Item item = ref visual[order is null ? j : order[j]];
             if (j > 0)
             {
-                // Letters next to each other in the visual order and without a gap stay in one word.
-                int a = order is null ? j - 1 : order[j - 1], b = order is null ? j : order[j];
-                if (Math.Abs(a - b) != 1 || gapBefore[Math.Max(a, b)]) Flush();
+                // Letters next to each other in reading order may sit apart where runs of the two
+                // directions meet ("To." at the start of a right to left line has its period on
+                // the left of "To"). They are one word when no gap parts the letters between them.
+                int a = order is null ? j - 1 : Math.Min(order[j - 1], order[j]);
+                int b = order is null ? j : Math.Max(order[j - 1], order[j]);
+                if (gaps[b + 1] - gaps[a + 1] > 0) Flush();
             }
 
             foreach (char c in item.Letter.Text)
@@ -558,9 +563,7 @@ internal static class TextLayout
         var types = new Kind[n];
         for (int i = 0; i < n; i++) types[i] = visual[i].Kind;
 
-        // A left to right paragraph starts with a left to right character (rule P2), at the left
-        // end; so a line whose leftmost strong character is right to left is a right to left one.
-        int paragraph = Strong(types, -1, 1) == Kind.Right ? 1 : 0;
+        int paragraph = ParagraphLevel(visual, n, types);
         int[] levels = new int[n];
         for (int i = 0; i < n; i++)
         {
@@ -600,6 +603,46 @@ internal static class TextLayout
         }
 
         return order;
+    }
+
+    /// <summary>
+    /// The paragraph direction of a line in visual order: 1 for right to left, 0 for left to
+    /// right. Rule P2 takes it from the first strong character in reading order. A line with
+    /// right to left letters only is right to left whatever the order. With both, which end of
+    /// the line reading starts from is the question, so both ends are evidence: a strong letter
+    /// at either end counts for its own direction, and punctuation at an end counts twice, as
+    /// sentences end with it (a period on the left closes a right to left paragraph, one on the
+    /// right a left to right one). When the ends disagree, the direction of most letters
+    /// decides, then left to right.
+    /// </summary>
+    private static int ParagraphLevel(Item[] visual, int count, Kind[] types)
+    {
+        if (Array.IndexOf(types, Kind.Left) < 0) return 1;
+        int left = 0, right = count - 1;
+        while (left < right && string.IsNullOrWhiteSpace(visual[left].Letter.Text)) left++;
+        while (right > left && string.IsNullOrWhiteSpace(visual[right].Letter.Text)) right--;
+        int score = Evidence(left, 2) + Evidence(right, -2);
+        if (score == 0)
+        {
+            int rightToLeft = 0, leftToRight = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (types[i] == Kind.Right) rightToLeft += visual[i].Letter.Text.Length;
+                else if (types[i] == Kind.Left) leftToRight += visual[i].Letter.Text.Length;
+            }
+
+            score = rightToLeft - leftToRight;
+        }
+
+        return score > 0 ? 1 : 0;
+
+        // Positive for right to left: a right to left letter, or punctuation (worth the given score) at this end.
+        int Evidence(int i, int punctuation)
+        {
+            if (types[i] != Kind.Neutral) return types[i] == Kind.Right ? 1 : types[i] == Kind.Left ? -1 : 0;
+            string t = visual[i].Letter.Text;
+            return t.Length > 0 && t.All(c => char.GetUnicodeCategory(c) == UnicodeCategory.OtherPunctuation) ? punctuation : 0;
+        }
     }
 
     private static Kind Strong(Kind[] types, int at, int step)

@@ -4,7 +4,10 @@ using PdfNetStack.Text;
 
 namespace PdfNetStack.Fonts.OpenType;
 
-/// <summary>Indic shaping categories of characters (Microsoft script development specifications, with HarfBuzz's refinements).</summary>
+/// <summary>
+/// Indic shaping categories of characters (Microsoft script development specifications, with
+/// HarfBuzz's refinements). The Khmer and Myanmar shapers share them and add their own.
+/// </summary>
 internal enum IndicCategory : byte
 {
     X,
@@ -25,6 +28,24 @@ internal enum IndicCategory : byte
     CM,
     Symbol,
     CS,
+
+    // Khmer and Myanmar: vowel signs by side, Khmer robat and sign groups, Myanmar asat, medials,
+    // pwo tones and variation selectors.
+    VAbv,
+    VBlw,
+    VPre,
+    VPst,
+    Robatic,
+    Xgroup,
+    Ygroup,
+    As,
+    MH,
+    MR,
+    MW,
+    MY,
+    ML,
+    PT,
+    VS,
 }
 
 /// <summary>Positions in a syllable, in the order the syllable is sorted into.</summary>
@@ -181,7 +202,7 @@ internal sealed partial class Shaper
     private static IndicPosition PositionOf(GlyphInfo g) => (IndicPosition)g.IndicPosition;
 
     /// <summary>True when the glyph's category is one of <paramref name="flags"/>; a ligature is none of them.</summary>
-    private static bool IsOneOf(GlyphInfo g, int flags) => (g.Flags & GlyphFlags.Ligated) == 0 && ((1 << g.IndicCategory) & flags) != 0;
+    private static bool IsOneOf(GlyphInfo g, long flags) => (g.Flags & GlyphFlags.Ligated) == 0 && ((1L << g.IndicCategory) & flags) != 0;
 
     private static bool IsConsonant(GlyphInfo g) => IsOneOf(g, ConsonantFlags);
 
@@ -414,7 +435,7 @@ internal sealed partial class Shaper
         for (int i = start; i < end; i++)
         {
             GlyphInfo g = b[i];
-            int flag = 1 << g.IndicCategory;
+            long flag = 1L << g.IndicCategory;
             if ((flag & (JoinerFlags | 1 << (int)IndicCategory.N | 1 << (int)IndicCategory.RS | 1 << (int)IndicCategory.CM | 1 << (int)IndicCategory.H)) != 0)
             {
                 g.IndicPosition = (byte)lastPosition;
@@ -825,215 +846,53 @@ internal sealed partial class Shaper
 /// </summary>
 internal static class IndicSyllables
 {
-    /// <summary>A run of steps that cannot end a syllable stops the search; real syllables never have one this long.</summary>
-    private const int MaxDeadSteps = 32;
-
-    private static readonly Nfa[] Machines = Build();
+    private static readonly SyllableGrammar.Machine[] Machines = Build();
 
     /// <summary>Marks each glyph with its syllable: a serial number above 0, shifted left by 4, plus the syllable type.</summary>
     public static void Find(List<GlyphInfo> buffer)
     {
-        int n = buffer.Count;
-        var categories = new int[n];
-        for (int i = 0; i < n; i++) categories[i] = buffer[i].IndicCategory;
+        var categories = new int[buffer.Count];
+        for (int i = 0; i < categories.Length; i++) categories[i] = buffer[i].IndicCategory;
         int serial = 1;
-        for (int start = 0; start < n;)
+        foreach ((int start, int length, int type) in SyllableGrammar.Split(Machines, categories, 5))
         {
-            int best = 0, type = 5;
-            for (int m = 0; m < Machines.Length; m++)
-            {
-                int length = Machines[m].Longest(categories, start);
-                if (length <= best) continue;
-                best = length;
-                type = m;
-            }
-
-            if (best == 0) best = 1;
-            for (int i = start; i < start + best; i++) buffer[i].Syllable = serial << 4 | type;
+            for (int i = start; i < start + length; i++) buffer[i].Syllable = serial << 4 | type;
             serial++;
-            start += best;
         }
     }
 
-    private static Nfa[] Build()
+    private static SyllableGrammar.Machine[] Build()
     {
-        Rx c = Sym(IndicCategory.C, IndicCategory.Ra);
-        Rx n = Seq(Opt(Seq(Opt(Sym(IndicCategory.Zwnj)), Sym(IndicCategory.RS))), Opt(Seq(Sym(IndicCategory.N), Opt(Sym(IndicCategory.N)))));
-        Rx z = Sym(IndicCategory.Zwj, IndicCategory.Zwnj);
-        Rx reph = Or(Seq(Sym(IndicCategory.Ra), Sym(IndicCategory.H)), Sym(IndicCategory.Repha));
-        Rx cn = Seq(c, Opt(Sym(IndicCategory.Zwj)), n);
-        Rx symbol = Seq(Sym(IndicCategory.Symbol), Opt(Sym(IndicCategory.N)));
-        Rx matraGroup = Seq(Star(z), Sym(IndicCategory.M), Opt(Sym(IndicCategory.N)), Opt(Sym(IndicCategory.H)));
-        Rx syllableTail = Seq(Opt(Seq(Opt(z), Sym(IndicCategory.SM), Opt(Sym(IndicCategory.SM)), Opt(Sym(IndicCategory.Zwnj)))), Star(Sym(IndicCategory.A)));
-        Rx halantGroup = Seq(Opt(z), Sym(IndicCategory.H), Opt(Seq(Sym(IndicCategory.Zwj), Opt(Sym(IndicCategory.N)))));
-        Rx finalHalantGroup = Or(halantGroup, Seq(Sym(IndicCategory.H), Sym(IndicCategory.Zwnj)));
-        Rx medialGroup = Opt(Sym(IndicCategory.CM));
-        Rx halantOrMatraGroup = Or(finalHalantGroup, Star(matraGroup));
-        Rx complexTail = Seq(Star(Seq(halantGroup, cn)), medialGroup, halantOrMatraGroup, syllableTail);
-        Rx rephaOrStacker = Opt(Sym(IndicCategory.Repha, IndicCategory.CS));
+        SyllableGrammar.Rx c = Sym(IndicCategory.C, IndicCategory.Ra);
+        SyllableGrammar.Rx n = Seq(Opt(Seq(Opt(Sym(IndicCategory.Zwnj)), Sym(IndicCategory.RS))), Opt(Seq(Sym(IndicCategory.N), Opt(Sym(IndicCategory.N)))));
+        SyllableGrammar.Rx z = Sym(IndicCategory.Zwj, IndicCategory.Zwnj);
+        SyllableGrammar.Rx reph = Or(Seq(Sym(IndicCategory.Ra), Sym(IndicCategory.H)), Sym(IndicCategory.Repha));
+        SyllableGrammar.Rx cn = Seq(c, Opt(Sym(IndicCategory.Zwj)), n);
+        SyllableGrammar.Rx symbol = Seq(Sym(IndicCategory.Symbol), Opt(Sym(IndicCategory.N)));
+        SyllableGrammar.Rx matraGroup = Seq(Star(z), Sym(IndicCategory.M), Opt(Sym(IndicCategory.N)), Opt(Sym(IndicCategory.H)));
+        SyllableGrammar.Rx syllableTail = Seq(Opt(Seq(Opt(z), Sym(IndicCategory.SM), Opt(Sym(IndicCategory.SM)), Opt(Sym(IndicCategory.Zwnj)))), Star(Sym(IndicCategory.A)));
+        SyllableGrammar.Rx halantGroup = Seq(Opt(z), Sym(IndicCategory.H), Opt(Seq(Sym(IndicCategory.Zwj), Opt(Sym(IndicCategory.N)))));
+        SyllableGrammar.Rx finalHalantGroup = Or(halantGroup, Seq(Sym(IndicCategory.H), Sym(IndicCategory.Zwnj)));
+        SyllableGrammar.Rx medialGroup = Opt(Sym(IndicCategory.CM));
+        SyllableGrammar.Rx halantOrMatraGroup = Or(finalHalantGroup, Star(matraGroup));
+        SyllableGrammar.Rx complexTail = Seq(Star(Seq(halantGroup, cn)), medialGroup, halantOrMatraGroup, syllableTail);
+        SyllableGrammar.Rx rephaOrStacker = Opt(Sym(IndicCategory.Repha, IndicCategory.CS));
 
-        Rx consonant = Seq(rephaOrStacker, cn, complexTail);
-        Rx vowel = Seq(Opt(reph), Sym(IndicCategory.V), n, Or(Sym(IndicCategory.Zwj), complexTail));
-        Rx standalone = Seq(Or(Seq(rephaOrStacker, Sym(IndicCategory.Placeholder)), Seq(Opt(reph), Sym(IndicCategory.DottedCircle))), n, complexTail);
-        Rx symbolCluster = Seq(symbol, syllableTail);
-        Rx broken = Seq(Opt(reph), n, complexTail);
-        return [Nfa.From(consonant), Nfa.From(vowel), Nfa.From(standalone), Nfa.From(symbolCluster), Nfa.From(broken)];
+        SyllableGrammar.Rx consonant = Seq(rephaOrStacker, cn, complexTail);
+        SyllableGrammar.Rx vowel = Seq(Opt(reph), Sym(IndicCategory.V), n, Or(Sym(IndicCategory.Zwj), complexTail));
+        SyllableGrammar.Rx standalone = Seq(Or(Seq(rephaOrStacker, Sym(IndicCategory.Placeholder)), Seq(Opt(reph), Sym(IndicCategory.DottedCircle))), n, complexTail);
+        SyllableGrammar.Rx symbolCluster = Seq(symbol, syllableTail);
+        SyllableGrammar.Rx broken = Seq(Opt(reph), n, complexTail);
+        return [.. new[] { consonant, vowel, standalone, symbolCluster, broken }.Select(SyllableGrammar.Machine.From)];
     }
 
-    private static Rx Sym(params IndicCategory[] categories) => new SymbolRx(categories.Aggregate(0, (m, k) => m | 1 << (int)k));
+    private static SyllableGrammar.Rx Sym(params IndicCategory[] categories) => SyllableGrammar.Sym([.. categories.Select(k => (int)k)]);
 
-    private static Rx Seq(params Rx[] parts) => new SequenceRx(parts);
+    private static SyllableGrammar.Rx Seq(params SyllableGrammar.Rx[] parts) => SyllableGrammar.Seq(parts);
 
-    private static Rx Or(params Rx[] parts) => new ChoiceRx(parts);
+    private static SyllableGrammar.Rx Or(params SyllableGrammar.Rx[] parts) => SyllableGrammar.Or(parts);
 
-    private static Rx Opt(Rx r) => new ChoiceRx([r, new SequenceRx([])]);
+    private static SyllableGrammar.Rx Opt(SyllableGrammar.Rx r) => SyllableGrammar.Opt(r);
 
-    private static Rx Star(Rx r) => new StarRx(r);
-
-    /// <summary>A regular expression over categories, compiled to a Thompson NFA.</summary>
-    private abstract class Rx
-    {
-        public abstract (int Start, int End) Build(List<List<(int Mask, int To)>> edges);
-
-        protected static int State(List<List<(int Mask, int To)>> edges)
-        {
-            edges.Add([]);
-            return edges.Count - 1;
-        }
-    }
-
-    private sealed class SymbolRx(int mask) : Rx
-    {
-        public override (int Start, int End) Build(List<List<(int Mask, int To)>> edges)
-        {
-            int s = State(edges), e = State(edges);
-            edges[s].Add((mask, e));
-            return (s, e);
-        }
-    }
-
-    private sealed class SequenceRx(Rx[] parts) : Rx
-    {
-        public override (int Start, int End) Build(List<List<(int Mask, int To)>> edges)
-        {
-            int s = State(edges), e = s;
-            foreach (Rx part in parts)
-            {
-                (int ps, int pe) = part.Build(edges);
-                edges[e].Add((0, ps));
-                e = pe;
-            }
-
-            return (s, e);
-        }
-    }
-
-    private sealed class ChoiceRx(Rx[] parts) : Rx
-    {
-        public override (int Start, int End) Build(List<List<(int Mask, int To)>> edges)
-        {
-            int s = State(edges), e = State(edges);
-            foreach (Rx part in parts)
-            {
-                (int ps, int pe) = part.Build(edges);
-                edges[s].Add((0, ps));
-                edges[pe].Add((0, e));
-            }
-
-            return (s, e);
-        }
-    }
-
-    private sealed class StarRx(Rx inner) : Rx
-    {
-        public override (int Start, int End) Build(List<List<(int Mask, int To)>> edges)
-        {
-            int s = State(edges), e = State(edges);
-            (int ps, int pe) = inner.Build(edges);
-            edges[s].Add((0, ps));
-            edges[s].Add((0, e));
-            edges[pe].Add((0, s));
-            return (s, e);
-        }
-    }
-
-    private sealed class Nfa
-    {
-        private readonly (int Mask, int To)[][] _edges;
-        private readonly int _start, _accept;
-
-        private Nfa((int Mask, int To)[][] edges, int start, int accept)
-        {
-            _edges = edges;
-            _start = start;
-            _accept = accept;
-        }
-
-        public static Nfa From(Rx rx)
-        {
-            var edges = new List<List<(int Mask, int To)>>();
-            (int start, int end) = rx.Build(edges);
-            return new Nfa([.. edges.Select(e => e.ToArray())], start, end);
-        }
-
-        /// <summary>Length of the longest match at <paramref name="start"/>, 0 when there is none.</summary>
-        public int Longest(int[] categories, int start)
-        {
-            var current = new bool[_edges.Length];
-            var next = new bool[_edges.Length];
-            var stack = new Stack<int>();
-            Close(current, [_start], stack);
-            int best = 0, dead = 0;
-            for (int k = start; k < categories.Length && dead < MaxDeadSteps; k++)
-            {
-                Array.Clear(next, 0, next.Length);
-                var reached = new List<int>();
-                int bit = 1 << categories[k];
-                for (int s = 0; s < current.Length; s++)
-                {
-                    if (!current[s]) continue;
-                    foreach ((int mask, int to) in _edges[s])
-                    {
-                        if ((mask & bit) != 0) reached.Add(to);
-                    }
-                }
-
-                if (reached.Count == 0) break;
-                Close(next, reached, stack);
-                (current, next) = (next, current);
-                if (current[_accept])
-                {
-                    best = k - start + 1;
-                    dead = 0;
-                }
-                else
-                {
-                    dead++;
-                }
-            }
-
-            return best;
-        }
-
-        private void Close(bool[] set, List<int> seeds, Stack<int> stack)
-        {
-            foreach (int s in seeds)
-            {
-                if (set[s]) continue;
-                set[s] = true;
-                stack.Push(s);
-            }
-
-            while (stack.Count > 0)
-            {
-                int s = stack.Pop();
-                foreach ((int mask, int to) in _edges[s])
-                {
-                    if (mask != 0 || set[to]) continue;
-                    set[to] = true;
-                    stack.Push(to);
-                }
-            }
-        }
-    }
+    private static SyllableGrammar.Rx Star(SyllableGrammar.Rx r) => SyllableGrammar.Star(r);
 }

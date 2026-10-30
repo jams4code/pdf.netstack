@@ -21,6 +21,10 @@ internal sealed class ShapingTables(OpenTypeFile font)
 
     /// <summary>What the Indic shaper learns about the font, once per script.</summary>
     internal ConcurrentDictionary<string, IndicPlan> IndicPlans { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The GSUB features, the GSUB script chosen and the GPOS features, by the script tags searched.</summary>
+    internal ConcurrentDictionary<string, (List<(string Tag, int[] Lookups)> Gsub, string? Script, List<(string Tag, int[] Lookups)> Gpos)> Features { get; } =
+        new(StringComparer.Ordinal);
 }
 
 /// <summary>What happened to a glyph during shaping, and what kind of character it came from.</summary>
@@ -47,6 +51,9 @@ internal enum GlyphFlags : ushort
     Zwj = 32,
 
     Zwnj = 64,
+
+    /// <summary>A GSUB lookup replaced the glyph since the shaper last cleared this flag; shapers read it between stages.</summary>
+    Changed = 128,
 }
 
 /// <summary>A glyph being shaped. Positions are in font units; offsets are relative to the pen.</summary>
@@ -63,6 +70,7 @@ internal sealed class GlyphInfo
     public byte CombiningClass;
     public byte IndicCategory;
     public byte IndicPosition;
+    public byte UseCategory;
     public byte SpaceFallback;
     public int Syllable;
     public int LigatureId;
@@ -86,7 +94,9 @@ internal sealed class GlyphInfo
 /// <param name="Tag">The feature tag.</param>
 /// <param name="ManualJoiners">Joiners are not skipped: the font's rules spell them out.</param>
 /// <param name="PerSyllable">Matching stays inside the syllable of the first glyph.</param>
-internal readonly record struct ShapingFeature(string Tag, bool ManualJoiners = false, bool PerSyllable = false);
+/// <param name="ManualZwj">ZWJ is not skipped; ZWNJ still is.</param>
+/// <param name="Global">The feature applies to every glyph, even when its tag has a mask of its own (rphf, pref, blwf...).</param>
+internal readonly record struct ShapingFeature(string Tag, bool ManualJoiners = false, bool PerSyllable = false, bool ManualZwj = false, bool Global = false);
 
 /// <summary>
 /// OpenType shaping of one run (one font, script and direction): character to glyph mapping,
@@ -94,13 +104,17 @@ internal readonly record struct ShapingFeature(string Tag, bool ManualJoiners = 
 /// reordering, GSUB substitutions (single, multiple, alternate, ligature, contextual, chained,
 /// reverse chained) and GPOS positioning (single, pair, cursive, mark to base, ligature and mark,
 /// contextual). Feature selection, ordering and lookup matching follow HarfBuzz's default,
-/// Arabic, Hebrew and Indic shapers. Written from ISO/IEC 14496-22 and the Microsoft script
-/// development specifications.
+/// Arabic, Hebrew, Indic, Universal Shaping Engine, Thai and Lao, Khmer, Myanmar and Hangul
+/// shapers. Written from ISO/IEC 14496-22 and the Microsoft script development specifications.
 /// </summary>
 internal sealed partial class Shaper
 {
-    internal const uint Global = 1, Isol = 2, Fina = 4, Medi = 8, Init = 16, Rphf = 32, Pref = 64, Blwf = 128, Abvf = 256, Half = 512, Pstf = 1024;
+    internal const uint Global = 1, Isol = 2, Fina = 4, Medi = 8, Init = 16, Rphf = 32, Pref = 64, Blwf = 128, Abvf = 256, Half = 512, Pstf = 1024,
+        Cfar = 2048, Ljmo = 4096, Vjmo = 8192, Tjmo = 16384;
     private const int MaxNesting = 6;
+
+    /// <summary>A context sequence never grows past this many glyphs (HarfBuzz's limit too).</summary>
+    private const int MaxContextLength = 64;
 
     private static readonly ShapingFeature[][] ArabicStages =
     [
@@ -113,14 +127,36 @@ internal sealed partial class Shaper
         [new("rvrn"), new("ccmp"), new("locl"), new("rlig"), new("calt"), new("clig"), new("liga"), new("rclt")],
     ];
 
+    // As in HarfBuzz, mark and mkmk see joiners: a ZWJ between a base and its mark keeps them apart.
     private static readonly ShapingFeature[] PositionFeatures =
-        [new("abvm"), new("blwm"), new("curs"), new("dist"), new("kern"), new("mark"), new("mkmk")];
+        [new("abvm"), new("blwm"), new("curs"), new("dist"), new("kern"), new("mark", true), new("mkmk", true)];
 
-    /// <summary>OpenType tags of the Indic scripts shaped with the version 2 specifications, by their ISO 15924 tags.</summary>
-    private static readonly Dictionary<string, string> IndicTags = new(StringComparer.Ordinal)
+    /// <summary>
+    /// OpenType tags of the Indic scripts by their ISO 15924 tags, in the order a font is searched:
+    /// the Universal Shaping Engine's version 3, the version 2 specifications, then the old tag.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> IndicTags = new(StringComparer.Ordinal)
     {
-        ["deva"] = "dev2", ["beng"] = "bng2", ["guru"] = "gur2", ["gujr"] = "gjr2", ["orya"] = "ory2",
-        ["taml"] = "tml2", ["telu"] = "tel2", ["knda"] = "knd2", ["mlym"] = "mlm2",
+        ["deva"] = ["dev3", "dev2", "deva"], ["beng"] = ["bng3", "bng2", "beng"], ["guru"] = ["gur3", "gur2", "guru"],
+        ["gujr"] = ["gjr3", "gjr2", "gujr"], ["orya"] = ["ory3", "ory2", "orya"], ["taml"] = ["tml3", "tml2", "taml"],
+        ["telu"] = ["tel3", "tel2", "telu"], ["knda"] = ["knd3", "knd2", "knda"], ["mlym"] = ["mlm3", "mlm2", "mlym"],
+    };
+
+    /// <summary>Scripts of the Universal Shaping Engine (as HarfBuzz assigns them), by their OpenType tags.</summary>
+    private static readonly HashSet<string> UseScripts = new(StringComparer.Ordinal)
+    {
+        "tibt", "mong", "sinh", "buhd", "hano", "tglg", "tagb", "limb", "tale", "bugi", "khar", "sylo", "tfng", "bali",
+        "nko ", "phag", "cham", "kali", "lepc", "rjng", "saur", "sund", "egyp", "java", "kthi", "mtei", "lana", "tavt",
+        "batk", "brah", "mand", "cakm", "plrd", "shrd", "takr", "dupl", "gran", "khoj", "sind", "mahj", "mani", "modi",
+        "hmng", "phlp", "sidd", "tirh", "ahom", "mult", "adlm", "bhks", "marc", "newa", "gonm", "soyo", "zanb", "dogr",
+        "gong", "rohg", "maka", "medf", "sogo", "sogd", "elym", "nand", "hmnp", "wcho", "chrs", "diak", "kits", "yezi",
+        "cpmn", "ougr", "tnsa", "toto", "vith", "kawi", "nagm", "gara", "gukh", "krai", "onao", "sunu", "todr", "tutg",
+    };
+
+    /// <summary>Scripts of the Universal Shaping Engine that join like Arabic, with init, medi and fina forms.</summary>
+    private static readonly HashSet<string> JoiningScripts = new(StringComparer.Ordinal)
+    {
+        "mong", "nko ", "phag", "mand", "mani", "phlp", "adlm", "rohg", "sogd", "chrs", "ougr",
     };
 
     private readonly ShapingTables _tables;
@@ -167,6 +203,11 @@ internal sealed partial class Shaper
         Arabic,
         Hebrew,
         Indic,
+        Use,
+        Thai,
+        Khmer,
+        Myanmar,
+        Hangul,
     }
 
     /// <summary>
@@ -195,20 +236,10 @@ internal sealed partial class Shaper
         }
 
         FormClusters();
-        ShaperKind kind = script switch
-        {
-            "arab" or "syrc" or "nko " or "mong" => ShaperKind.Arabic,
-            "hebr" => ShaperKind.Hebrew,
-            _ when IndicTags.ContainsKey(script) => ShaperKind.Indic,
-            _ => ShaperKind.Default,
-        };
-        string[] tags = IndicTags.TryGetValue(script, out string? newTag) ? [newTag, script] : [script];
-        _gsubFeatures = _gsub?.Features(tags, out _gsubScript) ?? [];
-        _gposFeatures = _gpos?.Features(tags, out _) ?? [];
-
-        // As HarfBuzz: a font that has Indic text under DFLT or latn only gets the default shaper.
-        if (kind == ShaperKind.Indic && _gsubScript is "DFLT" or "latn") kind = ShaperKind.Default;
-
+        ShaperKind kind = SelectShaper(script);
+        if (kind == ShaperKind.Thai) PreprocessThai(script == "thai");
+        else if (kind == ShaperKind.Hangul) PreprocessHangul();
+        else if (kind is ShaperKind.Indic or ShaperKind.Use) PreprocessVowelConstraints();
         Normalize(kind);
 
         // Lookups visit every glyph, and context matching, ligatures and nesting cost steps on top;
@@ -218,20 +249,42 @@ internal sealed partial class Shaper
 
         // Multiple substitutions may grow the buffer, but never past this (HarfBuzz caps it too).
         _maxLength = Math.Max(64, _buffer.Count * 32);
-        if (kind == ShaperKind.Arabic) SetJoiningForms();
+        bool joining = kind == ShaperKind.Arabic || (kind == ShaperKind.Use && JoiningScripts.Contains(script));
+        if (joining) SetJoiningForms(script == "mong");
         Classify();
 
-        if (kind == ShaperKind.Indic)
+        switch (kind)
         {
-            SubstituteIndic(script);
-        }
-        else if (_gsub is not null)
-        {
-            foreach (ShapingFeature[] stage in kind == ShaperKind.Arabic ? ArabicStages : DefaultStages) ApplyStage(_gsub, _gsubFeatures, stage);
+            case ShaperKind.Indic:
+                SubstituteIndic(script);
+                break;
+            case ShaperKind.Use:
+                SubstituteUse(joining);
+                break;
+            case ShaperKind.Khmer:
+                SubstituteKhmer();
+                break;
+            case ShaperKind.Myanmar:
+                SubstituteMyanmar();
+                break;
+            default:
+                IReadOnlyList<ShapingFeature[]> stages = kind switch
+                {
+                    ShaperKind.Arabic => ArabicStages,
+                    ShaperKind.Thai => ThaiStages,
+                    ShaperKind.Hangul => HangulStages,
+                    _ => DefaultStages,
+                };
+                foreach (ShapingFeature[] stage in stages) ApplyStage(_gsub, _gsubFeatures, stage);
+                break;
         }
 
         foreach (GlyphInfo g in _buffer) g.XAdvance = _font.Advance(g.Glyph);
         PositionFallbackSpaces();
+
+        // The Universal Shaping Engine and Myanmar take mark advances away before positioning, so
+        // positioning adds to zero; most shapers do it after; Indic, Khmer and Hangul never do.
+        if (kind is ShaperKind.Use or ShaperKind.Myanmar) ZeroMarks();
         bool gposKern = false;
         if (_gpos is not null)
         {
@@ -242,9 +295,40 @@ internal sealed partial class Shaper
         // As HarfBuzz: the kern table applies when GPOS does not kern this script.
         if (!gposKern && _legacyKerning is not null) LegacyKern();
         HideDefaultIgnorables();
-        if (kind != ShaperKind.Indic) ZeroMarks();
+        if (kind is ShaperKind.Default or ShaperKind.Arabic or ShaperKind.Hebrew or ShaperKind.Thai) ZeroMarks();
         ResolveAttachments();
         return _buffer;
+    }
+
+    /// <summary>
+    /// Finds the font's features for the script and picks the shaper, as HarfBuzz does: Indic
+    /// fonts with version 3 tags, and the scripts of the Universal Shaping Engine, go to it; a
+    /// font that has the script only under DFLT or latn gets the default shaper, as does Myanmar
+    /// under its old mymr tag.
+    /// </summary>
+    private ShaperKind SelectShaper(string script)
+    {
+        string[] tags = IndicTags.TryGetValue(script, out string[]? indic) ? indic : script == "mymr" ? ["mym2", "mymr"] : [script];
+        (_gsubFeatures, _gsubScript, _gposFeatures) = _tables.Features.GetOrAdd(string.Join(",", tags), _ =>
+        {
+            string? chosen = null;
+            List<(string Tag, int[] Lookups)> gsub = _gsub?.Features(tags, out chosen) ?? [];
+            List<(string Tag, int[] Lookups)> gpos = _gpos?.Features(tags, out string? _) ?? [];
+            return (gsub, chosen, gpos);
+        });
+        bool fallback = _gsubScript is "DFLT" or "latn";
+        return script switch
+        {
+            "arab" or "syrc" => ShaperKind.Arabic,
+            "hebr" => ShaperKind.Hebrew,
+            "thai" or "lao " => ShaperKind.Thai,
+            "khmr" => ShaperKind.Khmer,
+            "hang" => ShaperKind.Hangul,
+            "mymr" => fallback || _gsubScript == "mymr" ? ShaperKind.Default : ShaperKind.Myanmar,
+            _ when indic is not null => fallback ? ShaperKind.Default : _gsubScript is { Length: 4 } && _gsubScript[3] == '3' ? ShaperKind.Use : ShaperKind.Indic,
+            _ when UseScripts.Contains(script) => fallback ? ShaperKind.Default : ShaperKind.Use,
+            _ => ShaperKind.Default,
+        };
     }
 
     /// <summary>Sets a glyph's character and the Unicode properties shaping reads from it.</summary>
@@ -302,8 +386,34 @@ internal sealed partial class Shaper
         for (int i = start; i < end; i++) buffer[i].Cluster = cluster;
     }
 
-    /// <summary>Arabic joining (Unicode chapter 9.2): each letter takes its isolated, final, medial or initial form.</summary>
-    private void SetJoiningForms()
+    /// <summary>
+    /// For preprocessing that builds a new buffer: merges the clusters of glyphs
+    /// <paramref name="start"/> to <paramref name="end"/> of <paramref name="output"/>, with the
+    /// neighbours that shared them; when that reaches the end of the output, the glyphs of
+    /// <paramref name="input"/> from <paramref name="next"/> on that shared the last cluster
+    /// join too (HarfBuzz's merge_out_clusters).
+    /// </summary>
+    private static void MergeOutClusters(List<GlyphInfo> output, int start, int end, List<GlyphInfo> input, int next)
+    {
+        if (end - start < 2) return;
+        int cluster = int.MaxValue;
+        for (int i = start; i < end; i++) cluster = Math.Min(cluster, output[i].Cluster);
+        while (start > 0 && output[start - 1].Cluster == output[start].Cluster) start--;
+        while (end < output.Count && output[end - 1].Cluster == output[end].Cluster) end++;
+        if (end == output.Count)
+        {
+            int last = output[end - 1].Cluster;
+            for (int i = next; i < input.Count && input[i].Cluster == last; i++) input[i].Cluster = cluster;
+        }
+
+        for (int i = start; i < end; i++) output[i].Cluster = cluster;
+    }
+
+    /// <summary>
+    /// Arabic joining (Unicode chapter 9.2): each letter takes its isolated, final, medial or
+    /// initial form. A Mongolian free variation selector takes the form of the letter before it.
+    /// </summary>
+    private void SetJoiningForms(bool mongolian)
     {
         int n = _buffer.Count;
         var types = new JoiningType[n];
@@ -324,6 +434,12 @@ internal sealed partial class Shaper
                 (false, true) => Init,
                 _ => Isol,
             };
+        }
+
+        if (!mongolian) return;
+        for (int i = 1; i < n; i++)
+        {
+            if (_buffer[i].CodePoint is (>= 0x180B and <= 0x180D) or 0x180F) _buffer[i].Mask |= _buffer[i - 1].Mask & (Isol | Fina | Medi | Init);
         }
     }
 
@@ -355,6 +471,10 @@ internal sealed partial class Shaper
         "abvf" => Abvf,
         "half" => Half,
         "pstf" => Pstf,
+        "cfar" => Cfar,
+        "ljmo" => Ljmo,
+        "vjmo" => Vjmo,
+        "tjmo" => Tjmo,
         _ => Global,
     };
 
@@ -372,12 +492,13 @@ internal sealed partial class Shaper
             while (f < stage.Count && stage[f].Tag != tag) f++;
             if (f == stage.Count) continue;
             ShapingFeature feature = stage[f];
-            uint mask = MaskOf(tag);
+            uint mask = feature.Global ? Global : MaskOf(tag);
+            bool autoZwj = !feature.ManualJoiners && !feature.ManualZwj, autoZwnj = !feature.ManualJoiners;
             foreach (int l in indices)
             {
                 lookups[l] = lookups.TryGetValue(l, out var e)
-                    ? (e.Mask | mask, e.AutoZwj && !feature.ManualJoiners, e.AutoZwnj && !feature.ManualJoiners, e.PerSyllable || feature.PerSyllable)
-                    : (mask, !feature.ManualJoiners, !feature.ManualJoiners, feature.PerSyllable);
+                    ? (e.Mask | mask, e.AutoZwj && autoZwj, e.AutoZwnj && autoZwnj, e.PerSyllable || feature.PerSyllable)
+                    : (mask, autoZwj, autoZwnj, feature.PerSyllable);
             }
         }
 
@@ -554,7 +675,7 @@ internal sealed partial class Shaper
                 {
                     GlyphInfo copy = g.Copy();
                     copy.Glyph = U16(d, seq + 2 + 2 * k);
-                    copy.Flags |= GlyphFlags.Substituted | GlyphFlags.Multiplied;
+                    copy.Flags |= GlyphFlags.Substituted | GlyphFlags.Changed | GlyphFlags.Multiplied;
                     copy.LigatureId = 0;
                     copy.Component = k;
                     if (k > 0) copy.Text = "";
@@ -582,7 +703,7 @@ internal sealed partial class Shaper
     private void Replace(GlyphInfo g, int glyph)
     {
         g.Glyph = glyph;
-        g.Flags |= GlyphFlags.Substituted;
+        g.Flags |= GlyphFlags.Substituted | GlyphFlags.Changed;
         if (_gdef?.HasClasses == true) g.Class = _gdef.ClassOf(glyph);
     }
 
@@ -618,7 +739,7 @@ internal sealed partial class Shaper
             first.Glyph = U16(d, lig);
             first.LigatureId = id;
             first.Component = 0;
-            first.Flags = (first.Flags | GlyphFlags.Substituted | GlyphFlags.Ligated) & ~GlyphFlags.Multiplied;
+            first.Flags = (first.Flags | GlyphFlags.Substituted | GlyphFlags.Changed | GlyphFlags.Ligated) & ~GlyphFlags.Multiplied;
             if (_gdef?.HasClasses == true) first.Class = _gdef.ClassOf(first.Glyph);
             else first.Class = GlyphClass.Ligature;
             for (int k = 1; k < components; k++)
@@ -790,21 +911,44 @@ internal sealed partial class Shaper
 
         int end = positions[^1] + 1;
         if (depth >= MaxNesting) return end;
+
+        // As in HarfBuzz: glyphs a nested lookup adds become sequence positions right after the
+        // one it ran at, and glyphs it removes take the positions after it away, so later
+        // records index into the sequence as it now is.
+        var sequence = new List<int>(positions);
         for (int r = 0; r < recordCount; r++)
         {
             int sequenceIndex = U16(d, records + 4 * r);
             int nested = U16(d, records + 4 * r + 2);
-            if (sequenceIndex >= positions.Length) continue;
+            if (sequenceIndex >= sequence.Count) continue;
             Lookup? inner = table.GetLookup(nested);
             if (inner is null || !Budget()) continue;
             int before = _buffer.Count;
-            int at = positions[sequenceIndex];
+            int at = sequence[sequenceIndex];
             if (at >= _buffer.Count) continue;
             ApplyAt(table, inner, at, substitute, depth + 1);
             int delta = _buffer.Count - before;
             if (delta == 0) continue;
-            for (int k = sequenceIndex + 1; k < positions.Length; k++) positions[k] = Math.Max(at, positions[k] + delta);
-            end = Math.Max(at + 1, end + delta);
+            end += delta;
+            if (end < at)
+            {
+                delta += at - end;
+                end = at;
+            }
+
+            int next = sequenceIndex + 1;
+            if (delta > 0)
+            {
+                if (sequence.Count + delta > MaxContextLength) break;
+                for (int k = 0; k < delta; k++) sequence.Insert(next + k, at + k + 1);
+                next += delta;
+            }
+            else
+            {
+                sequence.RemoveRange(next, Math.Min(-delta, sequence.Count - next));
+            }
+
+            for (; next < sequence.Count; next++) sequence[next] += delta;
         }
 
         return Math.Min(end, _buffer.Count);
@@ -1004,9 +1148,15 @@ internal sealed partial class Shaper
         }
         else
         {
-            // The base or ligature: the previous glyph that is not a mark or a default ignorable.
+            // The base or ligature: the previous glyph that is not a mark or a default ignorable
+            // (a ZWJ counts when the feature handles joiners by hand).
             target = i - 1;
-            while (target >= 0 && (_buffer[target].Class == GlyphClass.Mark || _buffer[target].IsIgnorable)) target--;
+            while (target >= 0 && (_buffer[target].Class == GlyphClass.Mark
+                || (_buffer[target].IsIgnorable && (_autoZwj || (_buffer[target].Flags & GlyphFlags.Zwj) == 0))))
+            {
+                target--;
+            }
+
             if (target < 0) return -1;
         }
 
@@ -1194,13 +1344,17 @@ internal sealed partial class Shaper
         || (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || (cp >= 0xFE00 && cp <= 0xFE0F)
         || (cp >= 0xFFF0 && cp <= 0xFFF8) || (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
 
-    /// <summary>Marks take no space; in left to right text an unattached mark moves back over its base.</summary>
+    /// <summary>
+    /// Marks take no space. In left to right text from a font without GPOS, a mark also moves back
+    /// over its base, as in HarfBuzz; with GPOS, placing marks is the font's business.
+    /// </summary>
     private void ZeroMarks()
     {
+        bool adjust = !_rtl && _gpos is null;
         foreach (GlyphInfo g in _buffer)
         {
             if (g.Class != GlyphClass.Mark) continue;
-            if (!_rtl && g.AttachTo < 0) g.XOffset -= g.XAdvance;
+            if (adjust) g.XOffset -= g.XAdvance;
             g.XAdvance = 0;
         }
     }

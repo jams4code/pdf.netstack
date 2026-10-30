@@ -33,6 +33,19 @@ Fixtures (tests/PdfNetStack.Tests/Fixtures/Fonts):
                          below, a dotted circle; and Latin letters with combining marks and one
                          precomposed letter, for Unicode normalization
     Test-Indic.shaping.jsonl   HarfBuzz's shaping of sample texts in Test-Indic.ttf
+    Test-Thai.ttf        Thai and Lao: sara am, marks, no Thai substitutions (so marks and
+                         descenders take the private use glyphs, one only in the Macintosh layout),
+                         a Lao ligature
+    Test-Khmer.ttf       Khmer: coeng ro (pref), subscripts (blwf), cfar, split vowels, robat,
+                         clig applied and liga not
+    Test-Myanmar.ttf     Myanmar (mym2): kinzi, medials, stacked consonants, the vowel e and a
+                         variation sequence for it (cmap format 14)
+    Test-Hangul.ttf      Hangul: two syllables, conjoining jamo with ljmo, vjmo and tjmo forms,
+                         tone marks with and without width
+    Test-Use.ttf         Universal Shaping Engine: Balinese repha, pre-base form, subscripts,
+                         pre-base vowel, cluster joining forms; Mongolian joining with a free
+                         variation selector; Sinhala with ZWJ and an invalid vowel sequence
+    Test-*.shaping.jsonl HarfBuzz's shaping of sample texts in each of these
 """
 
 import json
@@ -438,6 +451,351 @@ def build_indic():
     return font
 
 
+# Fonts for the Thai and Lao, Khmer, Myanmar, Hangul and Universal Shaping Engine shapers. Bases
+# are boxes; marks have no advance and are drawn left of the pen, as in real fonts.
+
+
+THAI_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("ko", 0x0E01, 500, [(50, 0, 450, 450)]),
+    ("popla", 0x0E1B, 500, [(50, 0, 450, 450), (400, 450, 450, 700)]),
+    ("yoying", 0x0E0D, 550, [(50, 0, 500, 450), (300, -200, 500, -20)]),
+    ("dochada", 0x0E0E, 550, [(50, 0, 500, 450), (100, -220, 250, -20)]),
+    ("thothan", 0x0E10, 550, [(50, 0, 500, 450), (300, -200, 500, -20)]),
+    ("saraaa", 0x0E32, 250, [(50, 0, 200, 450)]),
+    ("saraam", 0x0E33, 300, [(50, 0, 250, 450), (-150, 500, -50, 600)]),
+    ("maihanakat", 0x0E31, 0, [(-300, 500, -100, 600)]),
+    ("sarai", 0x0E34, 0, [(-350, 500, -50, 650)]),
+    ("sarau", 0x0E38, 0, [(-250, -200, -150, -50)]),
+    ("phinthu", 0x0E3A, 0, [(-220, -150, -180, -110)]),
+    ("maiek", 0x0E48, 0, [(-200, 700, -170, 850)]),
+    ("maitho", 0x0E49, 0, [(-220, 700, -150, 850)]),
+    ("nikhahit", 0x0E4D, 0, [(-220, 520, -160, 580)]),
+    ("maiek.sd", 0xF70A, 0, [(-200, 520, -170, 670)]),
+    ("maiek.sdl", 0xF705, 0, [(-300, 520, -270, 670)]),
+    ("maiek.sl", 0xF713, 0, [(-300, 700, -270, 850)]),
+    ("maitho.sl", 0xF88D, 0, [(-320, 700, -250, 850)]),
+    ("maihanakat.sl", 0xF710, 0, [(-400, 500, -200, 600)]),
+    ("sarai.sl", 0xF701, 0, [(-450, 500, -150, 650)]),
+    ("nikhahit.sl", 0xF711, 0, [(-320, 520, -260, 580)]),
+    ("sarau.sd", 0xF718, 0, [(-250, -400, -150, -250)]),
+    ("yoying.nd", 0xF70F, 550, [(50, 0, 500, 450)]),
+    ("lko", 0x0E81, 500, [(50, 0, 450, 450), (50, 450, 100, 550)]),
+    ("lsaraaa", 0x0EB2, 250, [(50, 0, 200, 450)]),
+    ("lsaraam", 0x0EB3, 300, [(50, 0, 250, 450), (-150, 500, -50, 600)]),
+    ("lsarai", 0x0EB4, 0, [(-350, 500, -50, 650)]),
+    ("lmaiek", 0x0EC8, 0, [(-200, 700, -170, 850)]),
+    ("lnikhahit", 0x0ECD, 0, [(-220, 520, -160, 580)]),
+    ("lko_aa", None, 700, [(50, 0, 450, 450), (500, 0, 650, 450)]),
+]
+
+# No Thai substitutions: the shaper falls back to the private use glyphs. Lao has a ligature.
+THAI_FEA = """
+languagesystem DFLT dflt;
+languagesystem thai dflt;
+languagesystem lao dflt;
+@BASES = [dottedcircle ko popla yoying dochada thothan saraaa saraam yoying.nd lko lsaraaa lsaraam lko_aa];
+@MARKS = [maihanakat sarai sarau phinthu maiek maitho nikhahit maiek.sd maiek.sdl maiek.sl maitho.sl
+          maihanakat.sl sarai.sl nikhahit.sl sarau.sd lsarai lmaiek lnikhahit];
+table GDEF {
+    GlyphClassDef @BASES, , @MARKS, ;
+} GDEF;
+feature liga { script lao; sub lko lsaraaa by lko_aa; } liga;
+markClass [maiek maitho lmaiek] <anchor 0 0> @TONE;
+feature mark { pos base [ko lko] <anchor 0 100> mark @TONE; } mark;
+feature kern { pos ko ko -20; } kern;
+"""
+
+THAI_SAMPLES = [
+    ("ltr", "thai", "กำ ก่ำ ป่ ปิ่ ปั้ ปำ ญุ ฎุ ฐุ"),
+    ("ltr", "thai", "ปุ่ ก่ กก ำ ป่ำ กํ่ ญฺ่ กิ่ำ"),
+    ("ltr", "lao ", "ກຳ ກ່ຳ ກິ່ຳ ກາ ຳ"),
+]
+
+KHMER_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("zwnj", 0x200C, 0, []),
+    ("zwj", 0x200D, 0, []),
+    ("ka", 0x1780, 500, [(50, 0, 450, 450)]),
+    ("nga", 0x1784, 500, [(50, 0, 450, 400)]),
+    ("ta", 0x178F, 500, [(50, 0, 450, 420)]),
+    ("ro", 0x179A, 450, [(50, 0, 400, 430)]),
+    ("sa", 0x179F, 550, [(50, 0, 500, 450)]),
+    ("qa", 0x17A2, 500, [(50, 0, 450, 460)]),
+    ("aa", 0x17B6, 200, [(50, 0, 150, 450)]),
+    ("ii", 0x17B8, 0, [(-300, 500, -100, 650)]),
+    ("u", 0x17BB, 0, [(-300, -200, -150, -50)]),
+    ("oe", 0x17BE, 200, [(50, 0, 150, 450), (-300, 500, 100, 600)]),
+    ("e", 0x17C1, 200, [(50, 0, 150, 450)]),
+    ("o", 0x17C4, 200, [(50, 0, 150, 450)]),
+    ("nikahit", 0x17C6, 0, [(-250, 500, -200, 550)]),
+    ("reahmuk", 0x17C7, 150, [(50, 100, 100, 150), (50, 300, 100, 350)]),
+    ("muusikatoan", 0x17C9, 0, [(-280, 500, -180, 560)]),
+    ("coeng", 0x17D2, 0, [(-300, -100, -200, -50)]),
+    ("ka.sub", None, 0, [(-400, -250, -100, -50)]),
+    ("ta.sub", None, 0, [(-400, -260, -100, -50)]),
+    ("ka.sub.cfar", None, 0, [(-450, -250, -100, -50)]),
+    ("ro.pre", None, 200, [(50, -200, 150, 450)]),
+    ("ta_aa", None, 650, [(50, 0, 450, 420), (500, 0, 600, 450)]),
+    ("sa_aa", None, 700, [(50, 0, 650, 450)]),
+    ("ka_ii", None, 500, [(50, 0, 450, 650)]),
+]
+
+KHMER_FEA = """
+languagesystem DFLT dflt;
+languagesystem khmr dflt;
+@BASES = [dottedcircle ka nga ta ro sa qa aa oe e o reahmuk ro.pre ta_aa sa_aa ka_ii];
+@MARKS = [ii u nikahit muusikatoan coeng ka.sub ta.sub ka.sub.cfar];
+table GDEF {
+    GlyphClassDef @BASES, , @MARKS, ;
+} GDEF;
+feature pref { sub coeng ro by ro.pre; } pref;
+feature blwf { sub coeng ka by ka.sub; sub coeng ta by ta.sub; } blwf;
+feature cfar { sub ka.sub by ka.sub.cfar; } cfar;
+feature abvs { sub ka ii by ka_ii; } abvs;
+feature clig { sub ta aa by ta_aa; } clig;
+feature liga { sub sa aa by sa_aa; } liga;
+markClass [ii nikahit muusikatoan] <anchor 0 0> @TOP;
+markClass [u ka.sub ta.sub ka.sub.cfar] <anchor 0 0> @BOTTOM;
+feature abvm { pos base [ka nga ta ro sa qa] <anchor 250 50> mark @TOP; } abvm;
+feature blwm { pos base [ka nga ta ro sa qa] <anchor 200 0> mark @BOTTOM; } blwm;
+feature kern { pos ka aa -10; } kern;
+"""
+
+KHMER_SAMPLES = [
+    ("ltr", "khmr", "ក្រ ក្រុ ស្ក្រ កើ កោ កេ ក៉ា"),
+    ("ltr", "khmr", "ង្ក្រុំ ក្ក ស្តា ោ ្ក កំា សា តា"),
+    ("ltr", "khmr", "ក‌៉ កី ក្រ្ក អះ កេះ ក្ត្រេ"),
+]
+
+MYANMAR_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("zwnj", 0x200C, 0, []),
+    ("zwj", 0x200D, 0, []),
+    ("ka", 0x1000, 500, [(50, 0, 450, 450)]),
+    ("kha", 0x1001, 500, [(50, 0, 450, 430)]),
+    ("nga", 0x1004, 450, [(50, 0, 400, 420)]),
+    ("ta", 0x1010, 500, [(50, 0, 450, 440)]),
+    ("ma", 0x1019, 500, [(50, 0, 450, 400)]),
+    ("ra", 0x101B, 450, [(50, 0, 400, 410)]),
+    ("sa", 0x101E, 500, [(50, 0, 450, 460)]),
+    ("aa", 0x102C, 250, [(50, 0, 200, 450)]),
+    ("i", 0x102D, 0, [(-300, 500, -150, 600)]),
+    ("u", 0x102F, 0, [(-250, -200, -150, -50)]),
+    ("e", 0x1031, 250, [(50, 0, 200, 450)]),
+    ("anusvara", 0x1036, 0, [(-250, 550, -200, 600)]),
+    ("dotbelow", 0x1037, 0, [(-150, -100, -100, -50)]),
+    ("visarga", 0x1038, 150, [(50, 100, 100, 150), (50, 300, 100, 350)]),
+    ("virama", 0x1039, 0, []),
+    ("asat", 0x103A, 0, [(-200, 550, -100, 650)]),
+    ("medialya", 0x103B, 150, [(0, -100, 100, 450)]),
+    ("medialra", 0x103C, 200, [(0, -100, 180, 450)]),
+    ("medialwa", 0x103D, 0, [(-300, -150, -200, -50)]),
+    ("medialha", 0x103E, 0, [(-250, -250, -150, -50)]),
+    ("vs1", 0xFE00, 0, []),
+    ("e.vs1", None, 250, [(50, 0, 220, 470)]),
+    ("kinzi", None, 0, [(-350, 600, -200, 700)]),
+    ("ka.sub", None, 0, [(-400, -250, -100, -50)]),
+    ("ta.sub", None, 0, [(-400, -260, -100, -50)]),
+    ("medialra.pre", None, 200, [(0, -120, 180, 450)]),
+    ("medialya.post", None, 150, [(0, -120, 100, 450)]),
+    ("e_ka", None, 700, [(50, 0, 650, 450)]),
+    ("u_dotbelow", None, 0, [(-250, -250, -100, -50)]),
+]
+
+MYANMAR_FEA = """
+languagesystem DFLT dflt;
+languagesystem mym2 dflt;
+@BASES = [dottedcircle ka kha nga ta ma ra sa aa e visarga medialya medialra e.vs1 medialra.pre medialya.post e_ka];
+@MARKS = [i u anusvara dotbelow asat medialwa medialha kinzi ka.sub ta.sub u_dotbelow];
+table GDEF {
+    GlyphClassDef @BASES, , @MARKS, ;
+} GDEF;
+feature rphf { sub nga asat virama by kinzi; } rphf;
+feature pref { sub medialra by medialra.pre; } pref;
+feature blwf { sub virama ka by ka.sub; sub virama ta by ta.sub; } blwf;
+feature pstf { sub medialya by medialya.post; } pstf;
+feature pres { sub e ka by e_ka; } pres;
+feature blws { sub u dotbelow by u_dotbelow; } blws;
+markClass [i anusvara asat kinzi] <anchor 0 0> @TOP;
+markClass [u dotbelow medialwa medialha ka.sub ta.sub u_dotbelow] <anchor 0 0> @BOTTOM;
+feature mark {
+    pos base [ka kha nga ta ma ra sa] <anchor 250 450> mark @TOP <anchor 250 0> mark @BOTTOM;
+} mark;
+feature kern { pos ka aa -15; } kern;
+"""
+
+MYANMAR_SAMPLES = [
+    ("ltr", "mymr", "ကြ ကျ ကွှ ကေ ကော ကို င်္ကြော့"),
+    ("ltr", "mymr", "ကေ︀ ‌ ေ ် ကိ္တ မြန ရှော် ကု့း"),
+    ("ltr", "mymr", "သ္တေ ကံ ချော င်္"),
+]
+
+HANGUL_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("ga", 0xAC00, 1000, [(100, 0, 900, 800)]),
+    ("gag", 0xAC01, 1000, [(100, -100, 900, 800)]),
+    ("kiyeok", 0x1100, 500, [(100, 300, 450, 800)]),
+    ("hieuh", 0x1112, 500, [(100, 300, 450, 820)]),
+    ("a", 0x1161, 300, [(50, 0, 250, 800)]),
+    ("araea", 0x119E, 300, [(50, 200, 150, 300)]),
+    ("tkiyeok", 0x11A8, 500, [(100, -100, 450, 200)]),
+    ("tnieun", 0x11AB, 500, [(100, -100, 450, 180)]),
+    ("kiyeokdikeut", 0xA960, 500, [(100, 300, 480, 800)]),
+    ("tonesingle", 0x302E, 200, [(50, 400, 100, 450)]),
+    ("tonedouble", 0x302F, 0, [(-150, 350, -100, 400), (-150, 500, -100, 550)]),
+    ("kiyeok.ljmo", None, 450, [(100, 350, 420, 800)]),
+    ("hieuh.ljmo", None, 450, [(100, 350, 420, 820)]),
+    ("kiyeokdikeut.ljmo", None, 450, [(100, 350, 430, 800)]),
+    ("a.vjmo", None, 250, [(50, 100, 200, 800)]),
+    ("araea.vjmo", None, 250, [(50, 250, 150, 350)]),
+    ("tkiyeok.tjmo", None, 0, [(-500, -100, -100, 150)]),
+    ("tnieun.tjmo", None, 0, [(-500, -100, -100, 130)]),
+]
+
+HANGUL_FEA = """
+languagesystem DFLT dflt;
+languagesystem hang dflt;
+feature ljmo { sub [kiyeok hieuh kiyeokdikeut] by [kiyeok.ljmo hieuh.ljmo kiyeokdikeut.ljmo]; } ljmo;
+feature vjmo { sub [a araea] by [a.vjmo araea.vjmo]; } vjmo;
+feature tjmo { sub [tkiyeok tnieun] by [tkiyeok.tjmo tnieun.tjmo]; } tjmo;
+feature kern { pos ga gag -30; } kern;
+"""
+
+HANGUL_SAMPLES = [
+    ("ltr", "hang", "가 각 가 각 각 간 ᄒᆞᆫ ꥠᅡ 한"),
+    ("ltr", "hang", "가〮 〯 가〯 ᄀ ᅡ ᆨ 〮 가각 한〮"),
+]
+
+USE_GLYPHS = [
+    (".notdef", None, 500, [(50, 0, 450, 700)]),
+    ("space", 0x20, 250, []),
+    ("dottedcircle", 0x25CC, 500, [(100, 200, 400, 500)]),
+    ("zwnj", 0x200C, 0, []),
+    ("zwj", 0x200D, 0, []),
+    ("cgj", 0x034F, 0, []),
+    ("ka", 0x1B13, 500, [(50, 0, 450, 450)]),
+    ("ta", 0x1B22, 500, [(50, 0, 450, 430)]),
+    ("ra", 0x1B2D, 450, [(50, 0, 400, 420)]),
+    ("sa", 0x1B32, 550, [(50, 0, 500, 440)]),
+    ("a", 0x1B05, 500, [(50, 0, 450, 460)]),
+    ("cecek", 0x1B02, 0, [(-250, 550, -200, 600)]),
+    ("surang", 0x1B03, 0, [(-300, 550, -150, 650)]),
+    ("bisah", 0x1B04, 150, [(50, 100, 100, 350)]),
+    ("rerekan", 0x1B34, 0, [(-200, 500, -150, 550)]),
+    ("tedung", 0x1B35, 200, [(50, 0, 150, 450)]),
+    ("ulu", 0x1B36, 0, [(-300, 500, -150, 650)]),
+    ("suku", 0x1B38, 0, [(-300, -200, -150, -50)]),
+    ("taling", 0x1B3E, 200, [(50, 0, 150, 450)]),
+    ("adeg", 0x1B44, 0, [(-200, -100, -100, 0)]),
+    ("ra.repha", None, 0, [(-250, 600, -100, 700)]),
+    ("ra.pref", None, 200, [(0, -100, 180, 450)]),
+    ("ka.sub", None, 0, [(-400, -250, -100, -50)]),
+    ("ta.sub", None, 0, [(-400, -260, -100, -50)]),
+    ("sa.sub", None, 0, [(-450, -250, -100, -50)]),
+    ("ka.isol", None, 520, [(50, 0, 470, 450)]),
+    ("ka.init", None, 510, [(50, 0, 510, 450)]),
+    ("ka.medi", None, 500, [(0, 0, 500, 450)]),
+    ("ka.fina", None, 510, [(0, 0, 460, 450)]),
+    ("ka_tedung", None, 650, [(50, 0, 600, 450)]),
+    ("ulu_cecek", None, 0, [(-300, 500, -150, 700)]),
+    ("ma", 0x182E, 400, [(100, 0, 300, 600)]),
+    ("na", 0x1828, 400, [(100, 0, 300, 580)]),
+    ("mga", 0x182D, 400, [(100, 0, 300, 560)]),
+    ("fvs1", 0x180B, 0, []),
+    ("nnbsp", 0x202F, 125, []),
+    ("ma.isol", None, 420, [(100, 0, 320, 600)]),
+    ("ma.init", None, 410, [(100, 0, 410, 600)]),
+    ("ma.medi", None, 400, [(0, 0, 400, 600)]),
+    ("ma.fina", None, 410, [(0, 0, 310, 600)]),
+    ("na.init", None, 410, [(100, 0, 410, 580)]),
+    ("na.medi", None, 400, [(0, 0, 400, 580)]),
+    ("na.fina", None, 410, [(0, 0, 310, 580)]),
+    ("na.isol", None, 420, [(100, 0, 320, 580)]),
+    ("na.init.fvs1", None, 410, [(100, 0, 410, 500)]),
+    ("mga.fina", None, 410, [(0, 0, 310, 560)]),
+    ("mga.isol", None, 420, [(100, 0, 320, 560)]),
+    ("sinha", 0x0D85, 500, [(50, 0, 450, 450)]),
+    ("sinaeli", 0x0DD0, 200, [(50, 0, 150, 450)]),
+    ("sinka", 0x0D9A, 500, [(50, 0, 450, 430)]),
+    ("sinya", 0x0DBA, 500, [(50, 0, 450, 440)]),
+    ("sinvirama", 0x0DCA, 0, [(-250, 500, -150, 600)]),
+    ("sinkombuva", 0x0DD9, 200, [(50, 0, 150, 450)]),
+    ("sinyansaya", None, 200, [(0, -100, 180, 300)]),
+]
+
+USE_FEA = """
+languagesystem DFLT dflt;
+languagesystem bali dflt;
+languagesystem mong dflt;
+languagesystem sinh dflt;
+@BASES = [dottedcircle ka ta ra sa a bisah tedung taling ra.pref ka.isol ka.init ka.medi ka.fina ka_tedung
+          ma na mga ma.isol ma.init ma.medi ma.fina na.init na.medi na.fina na.isol na.init.fvs1 mga.fina mga.isol
+          sinha sinaeli sinka sinya sinkombuva sinyansaya];
+@MARKS = [cecek surang rerekan ulu suku adeg ra.repha ka.sub ta.sub sa.sub ulu_cecek sinvirama];
+table GDEF {
+    GlyphClassDef @BASES, , @MARKS, ;
+} GDEF;
+# A nested lookup that adds a glyph: the next record's sequence index then names the new glyph.
+lookup ADDCECEK { sub ta by ta cecek; } ADDCECEK;
+lookup CECEKTOULU { sub cecek by ulu; } CECEKTOULU;
+feature ccmp { script bali; sub ta' lookup ADDCECEK bisah' lookup CECEKTOULU; } ccmp;
+feature rphf { script bali; sub ra adeg by ra.repha; } rphf;
+feature pref { script bali; sub adeg ra by ra.pref; } pref;
+feature blwf {
+    script bali; sub adeg ka by ka.sub; sub adeg ta by ta.sub; sub adeg sa by sa.sub;
+    script sinh; sub sinvirama zwj sinya by sinyansaya;
+} blwf;
+feature isol { script bali; sub ka by ka.isol; script mong; sub [ma na mga] by [ma.isol na.isol mga.isol]; } isol;
+feature init { script bali; sub ka by ka.init; script mong; sub na fvs1 by na.init.fvs1; sub [ma na] by [ma.init na.init]; } init;
+feature medi { script bali; sub ka by ka.medi; script mong; sub [ma na] by [ma.medi na.medi]; } medi;
+feature fina { script bali; sub ka by ka.fina; script mong; sub [ma na mga] by [ma.fina na.fina mga.fina]; } fina;
+feature pres { script bali; sub ka.isol tedung by ka_tedung; } pres;
+feature abvs { script bali; sub ulu cecek by ulu_cecek; } abvs;
+markClass [cecek surang rerekan ulu ra.repha ulu_cecek sinvirama] <anchor 0 0> @TOP;
+markClass [suku adeg ka.sub ta.sub sa.sub] <anchor 0 0> @BOTTOM;
+feature mark {
+    pos base [ka ta ra sa a ka.isol ka.init ka.medi ka.fina sinka sinha] <anchor 250 450> mark @TOP <anchor 250 0> mark @BOTTOM;
+} mark;
+feature mkmk { pos mark [ulu] <anchor -220 680> mark @TOP; } mkmk;
+feature kern { pos ka tedung -10; } kern;
+"""
+
+USE_SAMPLES = [
+    ("ltr", "bali", "ᬭ᭄ᬓ ᬭ᭄ᬓᬶ ᬓ᭄ᬭ ᬓᬾ ᬓᭀ ᬓ᭄ᬲᬾ ᬓᬸᬂ"),
+    ("ltr", "bali", "ᬓ ᬓᬓ ᬓᬓᬓ ᬓᬵ ᬾ ᭄ᬓ ᬓᬶᬂᬃ ᬓ‌ᬶ ᬓ͏ᬶᬸ"),
+    ("ltr", "bali", "ᬭ᭄ᬓ᭄ᬭᭀᬄ ᬅ᬴ ᬓ᬴᭄ᬢ ᬓ‍᭄ᬢ ᬭ᭄ ᬢᬄ"),
+    ("ltr", "mong", "ᠮᠨᠭ ᠨ᠋ᠮ ᠨ ᠮᠮ ᠮ ᠨ ᠨ᠋"),
+    ("ltr", "sinh", "අැ ක්‍ය කෙ ක්‍යෙ ක්ය"),
+]
+
+
+def build_complex(family, glyphs, fea, uvs=None):
+    """A small font for one of the complex shapers: boxes for outlines, the features from fea."""
+    names = [g[0] for g in glyphs]
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(names)
+    fb.setupCharacterMap({cp: name for name, cp, _, _ in glyphs if cp is not None}, uvs=uvs)
+    fb.setupGlyf({name: boxes_ttf(boxes, 1) for name, _, _, boxes in glyphs})
+    fb.setupHorizontalMetrics({name: (adv, 0) for name, _, adv, _ in glyphs})
+    fb.setupHorizontalHeader(ascent=900, descent=-300, lineGap=0)
+    ps = "PdfNetStackTest" + family.replace(" ", "") + "-Regular"
+    fb.setupNameTable({"familyName": "PdfNetStack Test " + family, "styleName": "Regular", "psName": ps})
+    fb.setupOS2(sTypoAscender=900, sTypoDescender=-300, usWinAscent=950, usWinDescent=350, sxHeight=450, sCapHeight=650, fsType=0)
+    fb.setupPost()
+    font = fb.font
+    addOpenTypeFeaturesFromString(font, fea)
+    return font
+
+
 def shaping_reference(font_bytes, name, samples):
     import uharfbuzz as hb
 
@@ -448,7 +806,7 @@ def shaping_reference(font_bytes, name, samples):
         buf = hb.Buffer()
         buf.add_codepoints([ord(c) for c in text])
         buf.direction = direction
-        buf.script = script
+        buf.script = {"lao ": "Laoo"}.get(script, script)
         hb.shape(font, buf, {})
         glyphs = [[i.codepoint, i.cluster, p.x_advance, p.x_offset, p.y_offset] for i, p in zip(buf.glyph_infos, buf.glyph_positions)]
         if direction == "rtl":
@@ -715,6 +1073,17 @@ def main():
 
     save(build_indic(), "Test-Indic.ttf")
     shaping_reference((OUT / "Test-Indic.ttf").read_bytes(), "Test-Indic.ttf", INDIC_SAMPLES)
+
+    complex_fonts = [
+        ("Test-Thai.ttf", "Thai", THAI_GLYPHS, THAI_FEA, THAI_SAMPLES, None),
+        ("Test-Khmer.ttf", "Khmer", KHMER_GLYPHS, KHMER_FEA, KHMER_SAMPLES, None),
+        ("Test-Myanmar.ttf", "Myanmar", MYANMAR_GLYPHS, MYANMAR_FEA, MYANMAR_SAMPLES, [(0x1031, 0xFE00, "e.vs1")]),
+        ("Test-Hangul.ttf", "Hangul", HANGUL_GLYPHS, HANGUL_FEA, HANGUL_SAMPLES, None),
+        ("Test-Use.ttf", "USE", USE_GLYPHS, USE_FEA, USE_SAMPLES, None),
+    ]
+    for name, family, glyphs, fea, samples, uvs in complex_fonts:
+        save(build_complex(family, glyphs, fea, uvs), name)
+        shaping_reference((OUT / name).read_bytes(), name, samples)
 
 
 if __name__ == "__main__":

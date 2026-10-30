@@ -8,9 +8,11 @@ namespace PdfNetStack.Tests;
 /// <summary>
 /// The shaper against HarfBuzz, glyph by glyph: ids, clusters, advances and offsets in font
 /// units. The synthetic fixtures always run, with HarfBuzz's output recorded by
-/// tools/make_font_fixtures.py (Arabic; Devanagari, Bengali and Latin normalization) and
+/// tools/make_font_fixtures.py (Arabic; Devanagari, Bengali and Latin normalization; Thai and
+/// Lao, Khmer, Myanmar, Hangul and the Universal Shaping Engine) and
 /// tools/make_variable_font_fixtures.py (instances of a variable font). Local fonts run when PDFNETSTACK_HB_REFERENCE names a file written by
-/// tools/harfbuzz_reference.py; they are not ours to commit.
+/// tools/harfbuzz_reference.py; they are not ours to commit. Each run prints how many samples
+/// of each script match.
 /// </summary>
 [TestClass]
 public sealed class HarfBuzzComparisonTests
@@ -27,6 +29,18 @@ public sealed class HarfBuzzComparisonTests
     {
         string dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts");
         Compare(File.ReadLines(Path.Combine(dir, "Test-Indic.shaping.jsonl")), name => Path.Combine(dir, name));
+    }
+
+    [TestMethod]
+    [DataRow("Test-Thai")]
+    [DataRow("Test-Khmer")]
+    [DataRow("Test-Myanmar")]
+    [DataRow("Test-Hangul")]
+    [DataRow("Test-Use")]
+    public void MatchesHarfBuzzOnTheComplexScriptFixtures(string fixture)
+    {
+        string dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Fonts");
+        Compare(File.ReadLines(Path.Combine(dir, fixture + ".shaping.jsonl")), name => Path.Combine(dir, name));
     }
 
     [TestMethod]
@@ -48,6 +62,7 @@ public sealed class HarfBuzzComparisonTests
     {
         var fonts = new Dictionary<string, PdfOpenTypeFont>();
         var failures = new List<string>();
+        var perScript = new SortedDictionary<string, (int Cases, int Matches)>(StringComparer.Ordinal);
         int cases = 0;
         foreach (string line in lines)
         {
@@ -84,10 +99,14 @@ public sealed class HarfBuzzComparisonTests
             string expected = string.Join(" ", root.GetProperty("glyphs").EnumerateArray()
                 .Select(g => $"{g[0].GetInt32()}@{g[1].GetInt32()}+{g[2].GetInt32()}<{g[3].GetInt32()},{g[4].GetInt32()}>"));
             cases++;
+            perScript.TryGetValue(script, out (int Cases, int Matches) count);
+            perScript[script] = (count.Cases + 1, count.Matches + (actual == expected ? 1 : 0));
             if (actual != expected) failures.Add($"{Path.GetFileName(font)} \"{text}\"\n  harfbuzz {expected}\n  ours     {actual}");
         }
 
+        string summary = string.Join(", ", perScript.Select(p => $"{p.Key.Trim()} {p.Value.Matches}/{p.Value.Cases}"));
+        Console.WriteLine($"HarfBuzz matches by script: {summary}");
         Assert.IsGreaterThan(0, cases);
-        Assert.IsEmpty(failures, $"{failures.Count} of {cases} differ:\n" + string.Join("\n", failures.Take(40)));
+        Assert.IsEmpty(failures, $"{failures.Count} of {cases} differ ({summary}):\n" + string.Join("\n", failures.Take(60)));
     }
 }
