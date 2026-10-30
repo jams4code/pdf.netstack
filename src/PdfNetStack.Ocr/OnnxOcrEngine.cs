@@ -35,7 +35,8 @@ public sealed class OnnxOcrEngineOptions
 /// </summary>
 /// <example>
 /// <code>
-/// using var engine = OnnxOcrEngine.Load("models", new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
+/// // The models from the PdfNetStack.Ocr.Models package, or OnnxOcrEngine.Load("models", ...) for a folder of your own.
+/// using var engine = OnnxOcrEngine.Load(new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
 /// var report = new PdfOcr(engine).MakeSearchable(document);
 /// </code>
 /// </example>
@@ -47,11 +48,18 @@ public sealed class OnnxOcrEngine : IOcrEngine
     /// <summary>The line orientation model's file name.</summary>
     public const string OrientationModel = "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx";
 
+    /// <summary>
+    /// The folder, under the application's base directory, that the <c>PdfNetStack.Ocr.Models</c>
+    /// package copies the models to on build and publish.
+    /// </summary>
+    public const string PackagedModelFolder = "pdfnetstack-ocr-models";
+
     private const int LineHeight = 48;
     private const int MaxLineWidth = 3200;
     private const int BatchSize = 8;
 
-    // RapidOCR v3.10.0 model table: the files and their SHA-256, as published on modelscope.cn.
+    // RapidOCR v3.10.0 model table: the files and their SHA-256, as published on modelscope.cn. The
+    // same pins are in tools/fetch_ocr_models.py and the models package project; a test keeps them in step.
     private static readonly Dictionary<string, string> Pins = new(StringComparer.Ordinal)
     {
         [DetectionModel] = "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
@@ -96,6 +104,28 @@ public sealed class OnnxOcrEngine : IOcrEngine
 
     /// <summary>The model files and their SHA-256 hashes, for download scripts and audits.</summary>
     public static IReadOnlyDictionary<string, string> ModelHashes => Pins;
+
+    /// <summary>
+    /// Loads the models the <c>PdfNetStack.Ocr.Models</c> package puts next to the application, in
+    /// <see cref="PackagedModelFolder"/> under <see cref="AppContext.BaseDirectory"/>.
+    /// </summary>
+    /// <param name="options">Languages and tuning; defaults when null.</param>
+    /// <exception cref="FileNotFoundException">The models are not there: the application does not reference the package.</exception>
+    /// <exception cref="InvalidDataException">A model file does not match its pinned hash.</exception>
+    public static OnnxOcrEngine Load(OnnxOcrEngineOptions? options = null) => LoadPackaged(AppContext.BaseDirectory, options);
+
+    /// <summary>Loads the packaged models from <see cref="PackagedModelFolder"/> under <paramref name="baseDirectory"/>.</summary>
+    internal static OnnxOcrEngine LoadPackaged(string baseDirectory, OnnxOcrEngineOptions? options)
+    {
+        string folder = Path.Combine(baseDirectory, PackagedModelFolder);
+        string detection = Path.Combine(folder, DetectionModel);
+        if (!File.Exists(detection))
+        {
+            throw new FileNotFoundException($"The OCR models are not in {folder}. Reference the PdfNetStack.Ocr.Models package from the application, or load them from a folder of your own.", detection);
+        }
+
+        return Load(folder, options);
+    }
 
     /// <summary>Loads the models from a folder.</summary>
     /// <param name="modelDirectory">The folder holding the .onnx files (see <see cref="ModelHashes"/>).</param>

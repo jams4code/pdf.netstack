@@ -44,6 +44,19 @@ jobs:
           dotnet publish src/PdfNetStack.Cli -c Release -f net10.0 -r linux-x64 -p:NativeAot=true -o aot
           ./aot/PdfNetStack.Tool --help
 
+      # The OCR models package packs the model files, which are never committed. Packing fails if
+      # one is missing or does not match its pinned SHA-256.
+      - name: Cache the OCR models
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        with:
+          path: src/PdfNetStack.Ocr.Models/models
+          key: ocr-models-${{ hashFiles('tools/fetch_ocr_models.py') }}
+
+      - name: Fetch the OCR models
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
+
       - name: Pack
         if: matrix.os == 'ubuntu-latest'
         run: dotnet pack PdfNetStack.sln -c Release --no-build -o artifacts

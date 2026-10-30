@@ -334,13 +334,24 @@
   web address), styled with `PdfFieldOptions` (standard font, size, colors, border, tooltip, read
   only, required, alignment, multiline, password, length limit, comb, editable, multiple
   selection). Every new field comes with its appearance and the print flag.
-- New project `PdfNetStack.Ocr` (not on NuGet yet): `PdfOcr.MakeSearchable` finds each page's
+- New package `PdfNetStack.Ocr`: `PdfOcr.MakeSearchable` finds each page's
   scan, turns it upright, reads it and lays the words over it as invisible text; `Recognize`
   reports without changing the document. `OnnxOcrEngine` runs the PP-OCRv5 mobile models
   (PaddleOCR, Apache-2.0) on ONNX Runtime for Latin and Arabic script, with DB box detection, line
   orientation, CTC decoding, word boxes and right to left ordering in managed code, and model files
   checked against pinned SHA-256 hashes (`tools/fetch_ocr_models.py`). ONNX Runtime's telemetry is
   turned off before the first model loads. `IOcrEngine` plugs in any other engine.
+- New package `PdfNetStack.Ocr.Models` (Apache-2.0 models, versioned on its own from 1.0.0): the
+  four PP-OCRv5 model files with their license and notices, copied next to the application on build
+  and publish; `OnnxOcrEngine.Load()` without a folder loads them from there. The files are never
+  committed: CI and the release workflow fetch them, and packing fails when one is missing or does
+  not match its pin. The license check now also covers bundled files and keeps ONNX Runtime out of
+  every package but `PdfNetStack.Ocr`.
+- OCR reads scans stored as several images: strips or tiles side by side, or a text mask over a
+  background. The pieces are painted in drawing order into one gray canvas in page space, at the
+  finest piece resolution up to `MaxOcrDpi`, decoded one at a time, with image count, combined
+  pixels, canvas size and overlap capped before anything is decoded; word boxes map back to the
+  page through the canvas.
 - Text extraction: `PdfPage.ExtractText()` returns a page's text in reading order,
   `GetLetters()` each glyph with its text, bounds, baseline, font name, visible size and render
   mode, and `GetWords()` the words with their bounds. Glyphs are placed as the specification

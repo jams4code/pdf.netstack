@@ -78,7 +78,7 @@ public sealed record PdfOcrReport(IReadOnlyList<PdfOcrPage> Pages)
 /// </summary>
 /// <example>
 /// <code>
-/// using var engine = OnnxOcrEngine.Load("models");
+/// using var engine = OnnxOcrEngine.Load();
 /// PdfDocument doc = PdfDocument.Open("scan.pdf");
 /// PdfOcrReport report = new PdfOcr(engine).MakeSearchable(doc);
 /// doc.Save("scan-searchable.pdf");
@@ -88,6 +88,9 @@ public sealed class PdfOcr
 {
     // Share of a word box's height left out above and below the invisible text.
     private const double Inset = 0.12;
+
+    // Images on one page beyond this are not looked at: a scan has a few, or a few hundred strips.
+    private const int MaxPieces = 4096;
 
     private readonly IOcrEngine _engine;
     private readonly PdfOcrOptions _options;
@@ -128,7 +131,7 @@ public sealed class PdfOcr
             for (int k = 0; k < count; k++)
             {
                 int index = start + k;
-                (scans[k], PdfOcrPage? skipped) = Prepare(document.Pages[index], index);
+                (scans[k], PdfOcrPage? skipped) = Prepare(document.Pages[index], index, cancellationToken);
                 if (skipped is not null) results[index] = skipped;
             }
 
@@ -149,23 +152,36 @@ public sealed class PdfOcr
     /// <summary>A page's scan, upright and at OCR resolution, with the way back to page space.</summary>
     private sealed record Scan(int Index, OcrBitmap Bitmap, Func<PdfPoint, PdfPoint> ToPage);
 
-    private (Scan? Scan, PdfOcrPage? Skipped) Prepare(PdfPage page, int index)
+    private (Scan? Scan, PdfOcrPage? Skipped) Prepare(PdfPage page, int index, CancellationToken cancellationToken)
     {
         PdfOcrPage Skip(PdfOcrPageStatus status, string? reason) => new(index, status, reason, []);
         try
         {
             if (_options.SkipPagesWithText && TextFinder.HasText(page)) return (null, Skip(PdfOcrPageStatus.SkippedHasText, null));
 
-            // The scan: the image covering most of the crop box.
             PdfRectangle crop = page.CropBox;
             double pageArea = Math.Max(1e-9, crop.Width * crop.Height);
-            PdfPageImage? image = page.GetImages()
+            List<PdfPageImage> images = [.. page.GetImages().Where(i => Overlap(i.Bounds, crop) > 0)];
+            if (images.Count > MaxPieces) return (null, Skip(PdfOcrPageStatus.SkippedUnsupported, $"The page draws {images.Count} images, over the limit of {MaxPieces}."));
+
+            // A scan stored in pieces (strips, tiles, a text mask over a background) is put back together.
+            List<PdfPageImage> pieces = [.. images.Where(i => i.Width > 0 && i.Height > 0 && Mosaic.IsAxisAligned(i.Transform))];
+            if (pieces.Count > 1 && Covered(pieces, crop) / pageArea >= _options.MinimumCoverage) return Compose(index, pieces, crop, page.Rotation, cancellationToken);
+
+            // Otherwise the scan is the image covering most of the crop box.
+            PdfPageImage? image = images
                 .Select(i => (Image: i, Covered: Overlap(i.Bounds, crop) / pageArea))
                 .Where(c => c.Covered >= _options.MinimumCoverage)
                 .OrderByDescending(c => c.Covered)
                 .Select(c => c.Image)
                 .FirstOrDefault();
-            if (image is null) return (null, Skip(PdfOcrPageStatus.SkippedNoScan, null));
+            if (image is null)
+            {
+                return images.Count > 1 && Covered(images, crop) / pageArea >= _options.MinimumCoverage
+                    ? (null, Skip(PdfOcrPageStatus.SkippedUnsupported, "The scan is made of several images, not all upright or turned by quarter turns."))
+                    : (null, Skip(PdfOcrPageStatus.SkippedNoScan, null));
+            }
+
             if ((long)image.Width * image.Height > _options.MaxImagePixels) return (null, Skip(PdfOcrPageStatus.SkippedUnsupported, $"The scan has {image.Width} by {image.Height} pixels, over the limit."));
 
             PdfMatrix m = image.Transform;
@@ -179,6 +195,65 @@ public sealed class PdfOcr
             return (null, Skip(PdfOcrPageStatus.Failed, e.Message));
         }
     }
+
+    /// <summary>
+    /// A scan in pieces, painted in drawing order into one gray canvas in page space at the finest
+    /// resolution among them (no finer than <see cref="PdfOcrOptions.MaxOcrDpi"/>), then turned
+    /// upright by the page's /Rotate. Sizes are checked before anything is decoded, and one piece
+    /// is decoded at a time: memory is the canvas plus one piece.
+    /// </summary>
+    private (Scan? Scan, PdfOcrPage? Skipped) Compose(int index, List<PdfPageImage> pieces, PdfRectangle crop, int pageRotation, CancellationToken cancellationToken)
+    {
+        (Scan?, PdfOcrPage?) Skip(string reason) => (null, new PdfOcrPage(index, PdfOcrPageStatus.SkippedUnsupported, reason, []));
+        long samples = pieces.Sum(p => (long)p.Width * p.Height);
+        if (samples > _options.MaxImagePixels) return Skip($"The scan's {pieces.Count} images have {samples} pixels together, over the limit.");
+
+        PdfRectangle area = Clip(new PdfRectangle(pieces.Min(p => p.Bounds.Left), pieces.Min(p => p.Bounds.Bottom), pieces.Max(p => p.Bounds.Right), pieces.Max(p => p.Bounds.Top)), crop);
+        double dpi = Math.Min(_options.MaxOcrDpi, pieces.Max(p => Math.Max(p.HorizontalResolution, p.VerticalResolution)));
+        double columns = Math.Max(1, Math.Round(area.Width * dpi / 72)), rows = Math.Max(1, Math.Round(area.Height * dpi / 72));
+        if (columns * rows > _options.MaxImagePixels) return Skip($"Put together, the scan would have {(long)columns} by {(long)rows} pixels, over the limit.");
+        int width = (int)columns, height = (int)rows;
+
+        // Pieces drawn over each other many times would make painting cost many canvases.
+        if (pieces.Sum(p => Mosaic.Footprint(p.Bounds, area, width, height)) > 4L * width * height) return Skip("The scan's images overlap too much to be put together.");
+
+        var canvas = new byte[(long)width * height];
+        canvas.AsSpan().Fill(255);
+        foreach (PdfPageImage piece in pieces)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PdfBitmap? decoded = piece.Decode();
+            if (decoded is null) return Skip($"Images encoded with {piece.Encoding} are not decoded.");
+            Mosaic.Paint(canvas, width, height, area, OcrBitmap.FromPdfBitmap(decoded), piece.Transform, piece.IsMask);
+        }
+
+        // The page is shown turned clockwise by /Rotate; turning the canvas the same way shows it as read.
+        int turns = (((pageRotation / 90) % 4) + 4) % 4;
+        (byte[] upright, int uw, int uh) = ImageOps.Rotate(canvas, width, height, turns);
+        double scaleX = width / area.Width, scaleY = height / area.Height;
+        PdfPoint ToPage(PdfPoint p)
+        {
+            (double x, double y) = Unturn(p, turns, width, height);
+            return new PdfPoint(area.Left + (x / scaleX), area.Top - (y / scaleY));
+        }
+
+        return (new Scan(index, new OcrBitmap(uw, uh, upright), ToPage), null);
+    }
+
+    /// <summary>The area the images cover together inside the crop box.</summary>
+    private static double Covered(List<PdfPageImage> images, PdfRectangle crop) => Mosaic.UnionArea([.. images.Select(i => Clip(i.Bounds, crop))]);
+
+    private static PdfRectangle Clip(PdfRectangle a, PdfRectangle b) =>
+        new(Math.Max(a.Left, b.Left), Math.Max(a.Bottom, b.Bottom), Math.Min(a.Right, b.Right), Math.Min(a.Top, b.Top));
+
+    /// <summary>A point of an image turned clockwise by <paramref name="turns"/> quarters, back in the image before the turn.</summary>
+    private static (double X, double Y) Unturn(PdfPoint p, int turns, int width, int height) => turns switch
+    {
+        1 => (p.Y, height - p.X),
+        2 => (width - p.X, height - p.Y),
+        3 => (width - p.Y, p.X),
+        _ => (p.X, p.Y),
+    };
 
     private static double Overlap(PdfRectangle a, PdfRectangle b) =>
         Math.Max(0, Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left)) * Math.Max(0, Math.Min(a.Top, b.Top) - Math.Max(a.Bottom, b.Bottom));
@@ -212,13 +287,7 @@ public sealed class PdfOcr
         double fullWidth = bitmap.Width, fullHeight = bitmap.Height;
         PdfPoint ToPage(PdfPoint p)
         {
-            (double x, double y) = turns switch
-            {
-                1 => (p.Y, sh - p.X),
-                2 => (sw - p.X, sh - p.Y),
-                3 => (sw - p.Y, p.X),
-                _ => (p.X, p.Y),
-            };
+            (double x, double y) = Unturn(p, turns, sw, sh);
 
             // Image space is the unit square, its first row at the top (ISO 32000-1, 8.9.4).
             return m.Transform(new PdfPoint(x / scale / fullWidth, 1 - (y / scale / fullHeight)));

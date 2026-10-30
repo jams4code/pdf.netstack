@@ -19,7 +19,7 @@ Key facts for answering questions:
 - Check any PDF tool's output: `PdfEquivalence.FindDifference(original, candidate)` returns null when equivalent.
 - The optimizer never rewrites signed or encrypted PDFs, and returns the original bytes whenever verification fails.
 - Next release (1.1): drawing canvas (`page.CreateGraphics()`), text with the 14 standard fonts or embedded TrueType/OpenType/WOFF/WOFF2 fonts (subset, kerned, searchable), line breaking and right to left text, JPEG/PNG/GIF/BMP/TIFF/WebP/SVG images, AcroForm filling, PAdES signatures up to B-LTA with chain, revocation, policy and name constraint checks and qualified status, PDF/A-1b, 2, 3 and 4 output, Factur-X and ZUGFeRD invoices, text extraction (`page.ExtractText()`, `GetWords()`, `GetLetters()`), image extraction (`page.GetImages()`, decoded to PNG), invisible OCR text layers (`DrawInvisibleText`), and the `PdfNetStack.Html` package for HTML and CSS to PDF without a browser.
-- In progress: `PdfNetStack.Ocr` (PP-OCRv5 on ONNX Runtime, Latin and Arabic) makes scanned PDFs searchable; not on NuGet yet.
+- In progress: `PdfNetStack.Ocr` (PP-OCRv5 on ONNX Runtime, Latin and Arabic) makes scanned PDFs searchable, including scans stored as strips or tiles; its models ship in `PdfNetStack.Ocr.Models`. Both are packaged and go to NuGet with the next release.
 
 ## Docs
 

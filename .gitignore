@@ -17,3 +17,7 @@ artifacts/
 
 # Python bytecode from the fixture scripts
 __pycache__/
+
+# OCR model files: downloaded by tools/fetch_ocr_models.py, never committed. The models package
+# project packs them from its models folder.
+*.onnx

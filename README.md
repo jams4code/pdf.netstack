@@ -521,23 +521,28 @@ text reads in order too, and vertical writing reads its columns from right to le
 ### Making scans searchable (OCR)
 
 ```csharp
-using PdfNetStack.Ocr;   // src/PdfNetStack.Ocr; models: python tools/fetch_ocr_models.py models
+using PdfNetStack.Ocr;   // PdfNetStack.Ocr, models in PdfNetStack.Ocr.Models
 
-using var engine = OnnxOcrEngine.Load("models", new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
+using var engine = OnnxOcrEngine.Load(new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
 PdfDocument doc = PdfDocument.Open("scan.pdf");
 PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { Languages = ["latin", "arabic"] }).MakeSearchable(doc);
 doc.Save("scan-searchable.pdf");             // looks the same, now selects, copies and searches
 Console.WriteLine(report.Text);
 ```
 
-`PdfNetStack.Ocr` finds the image that is each page's scan, turns it upright from its placement and
-the page's `/Rotate`, reads it with the PP-OCRv5 mobile models (PaddleOCR, Apache-2.0) on ONNX
-Runtime, and lays every word over the scan with `DrawInvisibleText`. Latin and Arabic script
-(Arabic also covers Persian and Urdu), upside down lines turned by a line orientation model, word
-boxes in page space, pages that already have text left alone. Detection boxes, text decoding and
-right to left ordering are managed code: the native runtime only ever sees float tensors, never
-PDF bytes. Model files are checked against pinned SHA-256 hashes when loaded. `IOcrEngine` takes
-any other engine. The add-on is not on NuGet yet.
+`PdfNetStack.Ocr` finds each page's scan, turns it upright from its placement and the page's
+`/Rotate`, reads it with the PP-OCRv5 mobile models (PaddleOCR, Apache-2.0) on ONNX Runtime, and
+lays every word over the scan with `DrawInvisibleText`. A scan stored as several images (strips or
+tiles side by side, or a text mask over a background) is put back together in page space first,
+one piece at a time. Latin and Arabic script (Arabic also covers Persian and Urdu), upside down
+lines turned by a line orientation model, word boxes in page space, pages that already have text
+left alone. Detection boxes, text decoding and right to left ordering are managed code: the native
+runtime only ever sees float tensors, never PDF bytes. The models come in their own package,
+`PdfNetStack.Ocr.Models` (about 21 MB), which copies them next to the application where
+`OnnxOcrEngine.Load()` finds them; `Load("folder")` takes a folder of your own instead
+(`tools/fetch_ocr_models.py` downloads them). Model files are checked against pinned SHA-256
+hashes when loaded. `IOcrEngine` takes any other engine. Both packages are ready and ship to NuGet
+with the next release.
 
 ### HTML to PDF
 
@@ -723,7 +728,7 @@ in the [roadmap](docs/ROADMAP.md).
 | HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1, unreleased |
 | Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1, unreleased |
 | Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1, unreleased |
-| OCR | `PdfNetStack.Ocr` add-on: searchable scans, Latin and Arabic | Working, not on NuGet yet |
+| OCR | `PdfNetStack.Ocr` add-on and `PdfNetStack.Ocr.Models`: searchable scans, Latin and Arabic, scans in one image or several | 1.1, unreleased |
 
 ### Low level access
 
@@ -757,8 +762,9 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
   five CJK collections (such as the deprecated Hojo ones) give no CIDs, so their fonts use default
   widths. Text without a Unicode mapping reads as U+FFFD. At most 500,000 letters are read per
   page.
-- OCR reads pages whose scan is one image covering at least half the page, upright or turned by
-  quarter turns, and decodable; vector art is not rasterized. ONNX
+- OCR reads pages whose scan covers at least half the page and is decodable: one image, upright
+  or turned by quarter turns, or several images each upright or turned by quarter turns (strips,
+  tiles, a text mask over a background); vector art is not rasterized. ONNX
   Runtime's official builds send telemetry to Microsoft by default: the engine turns it off
   before loading a model, and on Linux and macOS `ORT_DISABLE_TELEMETRY=1` must also be set
   before the process starts for the runtime to send nothing at all. On .NET Framework the app must

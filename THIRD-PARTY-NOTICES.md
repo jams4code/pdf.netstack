@@ -289,13 +289,20 @@ Depends on ONNX Runtime (`Microsoft.ML.OnnxRuntime` and `Microsoft.ML.OnnxRuntim
 Copyright (c) Microsoft Corporation, MIT License). Its native binaries ship with the package's own
 `ThirdPartyNotices.txt`, listing permissively licensed components.
 
-The recognition models are not shipped. `tools/fetch_ocr_models.py` downloads the PP-OCRv5 mobile
-detection, text line orientation, Latin and Arabic recognition models, from PaddleOCR
-(https://github.com/PaddlePaddle/PaddleOCR, Copyright (c) PaddlePaddle Authors, Apache License
-2.0) as converted to ONNX by RapidOCR (https://github.com/RapidAI/RapidOCR, Apache License 2.0).
-Whoever redistributes the model files keeps that license and notice with them. The pre and post
-processing in `src/PdfNetStack.Ocr/Processing` is written from the published methods (DB text
-detection, CTC decoding); no PaddleOCR or RapidOCR code is copied.
+The recognition models are not in this package. The pre and post processing in
+`src/PdfNetStack.Ocr/Processing` is written from the published methods (DB text detection, CTC
+decoding); no PaddleOCR or RapidOCR code is copied.
+
+## PdfNetStack.Ocr.Models
+
+Redistributes, unmodified, the PP-OCRv5 mobile detection, text line orientation, Latin and Arabic
+recognition models from PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR, Copyright (c) 2016
+PaddlePaddle Authors, Apache License 2.0) as converted to ONNX by RapidOCR
+(https://github.com/RapidAI/RapidOCR, Copyright (c) 2021 RapidAI, Apache License 2.0), from
+ModelScope at revision v3.10.0. The package carries the license text (`LICENSE.txt`) and the
+notices (`NOTICE.txt`); whoever redistributes the model files keeps both with them. The files are
+not in this repository: `tools/fetch_ocr_models.py` downloads them and checks each against its
+pinned SHA-256. The package's build file is part of PdfNetStack, MIT License.
 
 ## Development only
 

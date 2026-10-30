@@ -1,16 +1,20 @@
 # Fails when a shipping project resolves a package that is not on the license allowlist.
 # The core library must stay dependency free on modern .NET; on .NET Standard 2.0 it may use only
-# Microsoft's span polyfill packages listed under coreNetStandardOnly.
+# Microsoft's span polyfill packages listed under coreNetStandardOnly. Packages under onlyIn may
+# ship with the named project and no other (ONNX Runtime with the OCR add-on). Data files a package
+# carries, the OCR models, must be listed under bundledFiles with their license.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $config = Get-Content (Join-Path $PSScriptRoot 'license-allowlist.json') -Raw | ConvertFrom-Json
 $allow = $config.packages
 $coreNetStandard = @($config.coreNetStandardOnly)
+$onlyIn = $config.onlyIn
 $projects = @(
     'src/PdfNetStack/PdfNetStack.csproj',
     'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
     'src/PdfNetStack.Html/PdfNetStack.Html.csproj',
-    'src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj'
+    'src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj',
+    'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj'
 )
 $buildOnly = @('Microsoft.NET.ILLink.Tasks')
 $failed = $false
@@ -31,10 +35,29 @@ foreach ($project in $projects) {
                     Write-Host "FAIL $project ($($f.framework)): $($pkg.id) $($pkg.resolvedVersion) is not on the license allowlist"
                     $failed = $true
                 }
+                elseif ($onlyIn.PSObject.Properties[$pkg.id] -and $onlyIn.($pkg.id) -ne $project) {
+                    Write-Host "FAIL $project ($($f.framework)): $($pkg.id) may ship only with $($onlyIn.($pkg.id))"
+                    $failed = $true
+                }
             }
         }
     }
 }
 
+# The model files the OCR models package packs.
+$modelsProject = [xml](Get-Content (Join-Path $root 'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj') -Raw)
+$models = @($modelsProject.Project.ItemGroup.OcrModel | Where-Object { $_ })
+if ($models.Count -eq 0) {
+    Write-Host 'FAIL src/PdfNetStack.Ocr.Models: no OcrModel items found'
+    $failed = $true
+}
+foreach ($model in $models) {
+    $name = Split-Path -Leaf $model.Include
+    if (-not $config.bundledFiles.PSObject.Properties[$name]) {
+        Write-Host "FAIL src/PdfNetStack.Ocr.Models: $name is not on the license allowlist"
+        $failed = $true
+    }
+}
+
 if ($failed) { exit 1 }
-Write-Host 'License check passed: every runtime package is on the allowlist.'
+Write-Host 'License check passed: every runtime package and bundled file is on the allowlist.'

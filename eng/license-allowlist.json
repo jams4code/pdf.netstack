@@ -12,6 +12,16 @@
     "System.Numerics.Vectors": "MIT",
     "System.Runtime.CompilerServices.Unsafe": "MIT"
   },
+  "onlyIn": {
+    "Microsoft.ML.OnnxRuntime": "src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj",
+    "Microsoft.ML.OnnxRuntime.Managed": "src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj"
+  },
+  "bundledFiles": {
+    "ch_PP-OCRv5_det_mobile.onnx": "Apache-2.0. PaddleOCR (Copyright (c) 2016 PaddlePaddle Authors), ONNX conversion by RapidOCR (Copyright (c) 2021 RapidAI). PdfNetStack.Ocr.Models only, with LICENSE.txt and NOTICE.txt.",
+    "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx": "Apache-2.0. As above.",
+    "latin_PP-OCRv5_rec_mobile.onnx": "Apache-2.0. As above.",
+    "arabic_PP-OCRv5_rec_mobile.onnx": "Apache-2.0. As above."
+  },
   "coreNetStandardOnly": [
     "System.Memory",
     "System.Buffers",

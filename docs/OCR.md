@@ -1,7 +1,9 @@
 # OCR add-on: design
 
-Status: proposal. `PdfNetStack.Ocr` is an optional package that makes scanned PDFs searchable with
-an invisible text layer (render mode 3) and returns text with word boxes. The core stays pure
+Status: built. Phases 0 and 1 and the multi-image part of phase 2 are done, and `PdfNetStack.Ocr`
+and `PdfNetStack.Ocr.Models` are ready for NuGet, not published yet (section 4 has the status and
+the publish steps). `PdfNetStack.Ocr` is an optional package that makes scanned PDFs searchable
+with an invisible text layer (render mode 3) and returns text with word boxes. The core stays pure
 managed, MIT, dependency free; native code and models live only in the add-on. External facts
 were checked on 2026-10-29 against the NuGet API, the GitHub API and the package contents.
 
@@ -143,16 +145,42 @@ public sealed record OcrWord(string Text, PdfPoint[] Quad, double Confidence, bo
 
 1. Walk the content (section 2), collecting image draws with their full CTM through nested
    forms. If the page already shows text and `SkipPagesWithText` is set, stop.
-2. One image covering most of the crop box: decode it. Several axis aligned images at one scale
-   (strips, MRC background plus JBIG2 text mask): composite into one gray canvas, stencil masks
-   painting black. Anything else (vector art, rotated pieces): use `Rasterizer` if set, else
-   report `SkippedUnsupported`. The core does not grow a renderer for this.
+2. Several axis aligned images that cover the crop box together (strips, tiles, MRC background
+   plus JBIG2 text mask): composite into one gray canvas in page space, stencil masks painting
+   black (next section). Otherwise the one image covering most of the crop box: decode it.
+   Anything else (vector art, rotated pieces): use `Rasterizer` if set, else report
+   `SkippedUnsupported`. The core does not grow a renderer for this.
 3. Check `Width * Height` against `MaxImagePixels` before decoding to gray. Above `MaxOcrDpi`,
    box filter down and keep the scale.
 4. Rotate pixels upright from `/Rotate` and the image matrix (multiples of 90 in practice), then
    run the engine. Its line classifier fixes 180 degree lines; 90 degree page errors wait for
    phase 3 (try both, keep the higher confidence).
 5. Map boxes to page space and write the text layer.
+
+### Scans in several images
+
+Some scanners and PDF writers store a page as horizontal strips of a few dozen to a few hundred
+rows, as tiles, or as a background with a 1 bit text mask over it (mixed raster content). Such a
+page is put back together before recognition (`Processing/Mosaic.cs`):
+
+- Pieces are the page's images that overlap the crop box and land upright or turned by quarter
+  turns (mirrored or not), so their bounds are exactly what they cover. When there are two or
+  more and their union covers `MinimumCoverage` of the crop box (overlaps counted once, by a sweep
+  over their edges), they are composed; otherwise the single image path above applies. If only
+  pieces turned by other angles would cover enough, the page is `SkippedUnsupported`.
+- The canvas covers the pieces' union bounds clipped to the crop box, in page space, at the finest
+  piece resolution and no finer than `MaxOcrDpi`. Pieces are painted in drawing order: a canvas
+  pixel whose center falls inside a piece takes the piece's pixel under it, so pieces that meet
+  edge to edge leave no seam and a scan cut into strips comes back pixel for pixel. A piece finer
+  than the canvas is box filtered down to it first. A stencil mask only darkens.
+- The canvas is then turned by the page's `/Rotate`. A word corner maps back through that turn
+  to canvas pixel (x, y), then to page point (left + x / sx, top - y / sy), sx and sy being the
+  canvas pixels per point.
+- Bounds, all checked before anything is decoded: at most 4,096 images per page; the pieces'
+  pixels together and the canvas each at most `MaxImagePixels`; the pieces' footprints on the
+  canvas together at most four canvases, so an image drawn over itself many times cannot multiply
+  the work. One piece is decoded at a time and dropped once painted: peak memory is the canvas
+  plus one piece and its gray copy. Cancellation is checked between pieces.
 
 ### Coordinate mapping
 
@@ -201,30 +229,62 @@ memory does not grow with the scan. Buffers come from `ArrayPool`, as in the cor
   refinement depth are capped; decoders check cancellation per row.
 - Form recursion and operator counts are capped. Model files are SHA-256 checked before ORT
   loads them; the library never downloads anything. A page failure is reported as `Failed`.
+- Scans in several images: image count, combined pixels, canvas size and painting work are capped
+  before decoding (previous section).
 
 ### Packaging
 
-`PdfNetStack.Ocr` targets netstandard2.0, net8.0 and net10.0 and references
-`Microsoft.ML.OnnxRuntime` (MIT; its `ThirdPartyNotices.txt` needs review). Models ship in
-`PdfNetStack.Ocr.Models` (det, cls, latin and arabic rec: about 22 MB, Apache-2.0 with NOTICE) so
-users can pin or replace them. Add both to `eng/license-allowlist.json` and the project to
-`eng/check-licenses.ps1`. No cloud resources, so no cost.
+Two packages, so users can pin or replace the models, and the core packages stay free of ONNX:
+
+- `PdfNetStack.Ocr` targets netstandard2.0, net8.0 and net10.0 and references
+  `Microsoft.ML.OnnxRuntime` (MIT; its native binaries carry `ThirdPartyNotices.txt`, all
+  permissive). It depends on exactly the core version it was built with, since it uses core
+  internals. About 145 KB.
+- `PdfNetStack.Ocr.Models` (`src/PdfNetStack.Ocr.Models`) holds no code: the four model files
+  under `models/`, `LICENSE.txt` (Apache-2.0) and `NOTICE.txt` (PaddleOCR and RapidOCR), and
+  `build/PdfNetStack.Ocr.Models.targets` (also under `buildTransitive/`), which copies the models
+  into a `pdfnetstack-ocr-models` folder of the build and publish output, outside a single file
+  bundle. `OnnxOcrEngine.Load()` reads them from there; `Load(folder)` still takes any folder.
+  License expression `Apache-2.0 AND MIT` (the build file is MIT). 21.8 MB of models, a 20.1 MB
+  package. It is versioned on its own (`PackageVersion` in the project, 1.0.0) and changes only
+  with the model files, so a library release does not push the same models again.
+- The models are never committed (`*.onnx` is ignored). CI and the release workflow run
+  `python3 tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models` before packing, and the
+  project's `VerifyOcrModels` target fails the pack when a file is missing or its SHA-256 differs
+  from the pin. The pins live in three places (`OnnxOcrEngine`, the models project, the fetch
+  script); `OcrTests.PinsTheSameModelsEverywhere` keeps them equal.
+- `eng/check-licenses.ps1` checks both projects; `eng/license-allowlist.json` lists ONNX Runtime
+  under `onlyIn` (it may ship with `PdfNetStack.Ocr` and nothing else) and the four model files
+  under `bundledFiles` with their license.
+
+No cloud resources, so no cost.
 
 ## 4. Plan
 
-Status: JBIG2 decoding (phase 2's largest item) is done in the core. Phase 1 is done in `src/PdfNetStack.Ocr` (not packaged yet: the models are fetched by
-`tools/fetch_ocr_models.py` until the models package is settled), with integration tests that run
-when `PDFNETSTACK_OCR_MODELS` names the model folder. Before that, in phase 0, the content walker, image placement (public as `PdfPage.GetImages()`), raw
-samples with color spaces and Decode arrays, JPEG pixel decoding, inline images, the CCITT
-Group 3 and 4 decoder, the glyphless font and invisible text (public as
-`PdfGraphics.DrawInvisibleText`) are done. Phase 0 is complete; `InternalsVisibleTo` comes with the
-add-on project.
+Status: phase 0 is complete: the content walker, image placement (public as
+`PdfPage.GetImages()`), raw samples with color spaces and Decode arrays, JPEG pixel decoding,
+inline images, the CCITT Group 3 and 4 decoder, the glyphless font and invisible text (public as
+`PdfGraphics.DrawInvisibleText`). Phase 1 is done in `src/PdfNetStack.Ocr`, with the models
+package in `src/PdfNetStack.Ocr.Models`. In phase 2, JBIG2 decoding is done in the core and
+multi-image compositing in the add-on. Integration tests run when `PDFNETSTACK_OCR_MODELS` names
+the model folder, or when the models were fetched into the models project (the test project
+imports its build file, as an application would).
+
+Publishing (owner, later): the release workflow already packs both packages on a version tag.
+1. Make sure the nuget.org trusted publishing policy (or the `NUGET_API_KEY` secret) belongs to
+   the account that will own the two new IDs, `PdfNetStack.Ocr` and `PdfNetStack.Ocr.Models`.
+2. Move the CHANGELOG `Unreleased` section under the new version heading.
+3. Tag and push: `git tag v1.1.0 && git push origin v1.1.0`. The workflow fetches and checks the
+   models, packs every package and pushes them; `PdfNetStack.Ocr.Models` 1.0.0 goes up once and
+   later releases skip it until its `PackageVersion` changes.
+4. To check locally first: `python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models`,
+   then `dotnet pack PdfNetStack.sln -c Release -o artifacts`.
 
 | Phase | Work | Estimate |
 |---|---|---|
 | 0 Core prerequisites (MIT, no deps) | Content walker and an internal image placement API; raw sample to gray with color spaces and Decode arrays; JPEG pixel decode on top of `JpegReader`; CCITT G3/G4 decoder; `GlyphlessFont` and `DrawInvisibleText`; InternalsVisibleTo | 17 to 24 days |
 | 1 Add-on MVP | `IOcrEngine`, `OnnxOcrEngine` (DB boxes, cls, CTC, word split, Arabic reversal), model package with hashes, `MakeSearchable` for single image pages, Latin and Arabic, report | 8 to 12 days |
-| 2 Coverage | JBIG2 decoder (generic, symbol, text, refinement; halftone last); multi-image compositing; inline images | 13 to 20 days |
+| 2 Coverage | JBIG2 decoder (generic, symbol, text, refinement; halftone last), done; multi-image compositing, done; inline images | 13 to 20 days |
 | 3 Extras | JPX through CoreJ2K; 90 degree page orientation; `IPageRasterizer` hook; CLI `ocr` command; optional Tesseract adapter | 7 to 10 days |
 
 ### Tests
@@ -236,7 +296,12 @@ No real customer PDFs.
   Arabic) at 200, 300 and 600 DPI with noise, blur and up to 2 degrees of skew, encoded as 1 bit
   Flate, CCITT G4 (Pillow with libtiff), JPEG gray and RGB, and JBIG2 generic and symbol mode
   (jbig2enc, Apache-2.0, run offline). Ground truth text sits next to each file. Only rendered
-  pixels are committed, never fonts.
+  pixels are committed, never fonts. Built so far: one page, set by `PdfNetStack.Html` and
+  rasterized at 200 DPI, plus the same page cut into strips and tiles, every strip edge and tile
+  edge running through a line of text.
+- Pieces: the strips and tiles put back together must give the engine the page pixel for pixel;
+  word boxes from strips, tiles meeting inside a word, strips under a page rotation and a stencil
+  mask over a background must map back to the same page points; the limits are each tested.
 - Decoders: CCITT and JBIG2 bit exact against the generator's bitmap; JPEG within 1 per sample of
   libjpeg (Pillow) on `Fixtures/Jpeg`; hand built raw cases (Indexed, Decode `[1 0]`, 16 bpc,
   stencil masks).
@@ -256,6 +321,6 @@ No real customer PDFs.
   preview. Word boxes come from CTC timing and are approximate, worse for joined Arabic letters.
 - RTL extraction order differs between viewers: PDFium in tests, others by hand before release.
 - ORT: no osx-x64 or x86 in 1.31.1, musl not verified, 17 to 45 MB of natives per runtime.
-- JBIG2 is the largest job and common in scanner output; until phase 2 those scans are skipped.
+- JBIG2 is the largest job and common in scanner output; it is now decoded in the core.
 - ORT floating point differs across CPUs, so OCR output is not byte reproducible, unlike the rest
   of PdfNetStack. Mixed vector and image pages need a user supplied rasterizer.

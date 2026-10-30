@@ -66,6 +66,9 @@ your own audits.
 1. The page is skipped when it already shows text, so OCR never runs twice over a page.
 2. The scan is the image that covers at least half of the page. It is decoded, scaled down to
    at most 400 DPI by default, and turned upright from its placement and the page's `/Rotate`.
+   A scan stored as several images, such as strips or tiles side by side or a text mask over a
+   background, is put back together first: the pieces are painted one at a time into one gray
+   image of the page, and the words found map back through it.
 3. The detector finds the lines, the orientation model turns upside down lines, and the
    recognizer reads each line. Box detection, text decoding and right to left ordering are
    managed code: the native runtime only ever sees float tensors, never PDF bytes.
@@ -145,14 +148,15 @@ itself, so its native runtime is copied next to the application.
 
 ## Limits
 
-- A page is read when its scan is one image covering at least half of the page, upright or turned
-  by quarter turns. Pages whose scan is made of several images are on the
-  [roadmap](/roadmap/).
+- A page is read when its scan covers at least half of the page: one image, upright or turned by
+  quarter turns, or several images that together cover it, each upright or turned by quarter
+  turns.
 - The scan must decode to pixels: raw samples, JPEG, JPEG 2000, CCITT fax or JBIG2, in a color
   space [image extraction](/guides/extract-images/) supports.
 - Vector art is not rasterized; only the scan image is read.
 - Latin and Arabic script only.
-- Not on NuGet yet. A models package, then `PdfNetStack.Ocr` on NuGet, are on the roadmap.
+- Not on NuGet yet. `PdfNetStack.Ocr` and its models package `PdfNetStack.Ocr.Models` are
+  ready and go up with the next release.
 
 ## Related
 

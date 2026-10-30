@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A data package: the four PP-OCRv5 model files and a build file that copies them next to the
+    application, where OnnxOcrEngine.Load() finds them. No assembly ships; the project builds an
+    empty one only because the SDK needs something to build.
+
+    The models are never committed. Before packing, fetch them into the models folder:
+        python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
+    Packing fails when a file is missing or does not match its pin below.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IncludeSymbols>false</IncludeSymbols>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <!-- NU5128: no lib folder, on purpose. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <PackageId>PdfNetStack.Ocr.Models</PackageId>
+    <!-- Versioned on its own: a new version only when the model files change, so a library release
+         does not push the same 21 MB again (the release skips versions already on NuGet). -->
+    <PackageVersion>1.0.0</PackageVersion>
+    <!-- The models are Apache-2.0 (LICENSE.txt and NOTICE.txt in the package); the build file is MIT. -->
+    <PackageLicenseExpression>Apache-2.0 AND MIT</PackageLicenseExpression>
+    <Title>PdfNetStack.Ocr.Models: PP-OCRv5 models for PdfNetStack.Ocr</Title>
+    <Description>The PP-OCRv5 mobile models PdfNetStack.Ocr runs: text detection, line orientation, Latin and Arabic recognition, in ONNX format. Copied next to the application on build and publish, where OnnxOcrEngine.Load() finds them; each file is checked against its pinned SHA-256 when loaded. Models by PaddleOCR, converted to ONNX by RapidOCR, both Apache-2.0.</Description>
+    <PackageTags>pdf;ocr;paddleocr;pp-ocrv5;onnx;models;arabic;jadev</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- RapidOCR v3.10.0 model table. The same pins are in OnnxOcrEngine and tools/fetch_ocr_models.py; a test keeps the three in step. -->
+    <OcrModel Include="models/ch_PP-OCRv5_det_mobile.onnx" Sha256="4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae" />
+    <OcrModel Include="models/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Sha256="54379ae5174d026780215fc748a7f31910dee36818e63d49e17dc598ecc82df7" />
+    <OcrModel Include="models/latin_PP-OCRv5_rec_mobile.onnx" Sha256="b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a" />
+    <OcrModel Include="models/arabic_PP-OCRv5_rec_mobile.onnx" Sha256="c1192e632d0baa9146ae5b756a0e635e3dc63c1733737ebfd1629e87144e9295" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="@(OcrModel)" Pack="true" PackagePath="models/" />
+    <None Include="build/PdfNetStack.Ocr.Models.targets" Pack="true" PackagePath="build/;buildTransitive/" />
+    <None Include="LICENSE.txt;NOTICE.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!-- Every model must be there and match its pin before anything is packed. -->
+  <Target Name="VerifyOcrModels" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('%(OcrModel.FullPath)')" Text="OCR model %(OcrModel.Filename)%(OcrModel.Extension) is missing. Run: python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models" />
+    <GetFileHash Files="@(OcrModel)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_OcrModelHash" />
+    </GetFileHash>
+    <Error Condition="'%(_OcrModelHash.FileHash)' != '%(_OcrModelHash.Sha256)'" Text="OCR model %(_OcrModelHash.Filename)%(_OcrModelHash.Extension) has SHA-256 %(_OcrModelHash.FileHash), not the pinned %(_OcrModelHash.Sha256)." />
+  </Target>
+
+</Project>

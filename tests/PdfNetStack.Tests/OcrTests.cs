@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 using PdfNetStack.Objects;
@@ -22,17 +23,34 @@ public sealed class OcrTests
     /// </summary>
     private static PdfImage MarkedScan(int turns = 0)
     {
+        (byte[] stored, int w, int h) = ImageOps.Rotate(MarkedPixels(), ScanWidth, ScanHeight, turns);
+        return PdfImage.Load(Imaging.PngWriter.Write(w, h, 1, stored));
+    }
+
+    /// <summary>The marked scan's pixels: white, the block at 10 to 30 across and down.</summary>
+    private static byte[] MarkedPixels()
+    {
         var pixels = new byte[ScanWidth * ScanHeight];
         pixels.AsSpan().Fill(255);
         for (int y = 10; y < 30; y++) pixels.AsSpan((y * ScanWidth) + 10, 20).Clear();
-        (byte[] stored, int w, int h) = ImageOps.Rotate(pixels, ScanWidth, ScanHeight, turns);
-        return PdfImage.Load(Imaging.PngWriter.Write(w, h, 1, stored));
+        return pixels;
+    }
+
+    /// <summary>A rectangle of the marked scan as an image of its own, as a scanner writing strips or tiles stores it.</summary>
+    private static PdfImage MarkedPiece(int x, int y, int width, int height)
+    {
+        byte[] pixels = MarkedPixels();
+        var piece = new byte[width * height];
+        for (int row = 0; row < height; row++) Array.Copy(pixels, ((y + row) * ScanWidth) + x, piece, row * width, width);
+        return PdfImage.Load(Imaging.PngWriter.Write(width, height, 1, piece));
     }
 
     /// <summary>Finds the black block, says whether it is where the top left is, and reads it as one word.</summary>
     private sealed class BlockEngine : IOcrEngine
     {
         public List<(int Width, int Height, bool BlockTopLeft, string Language)> Calls { get; } = [];
+
+        public List<OcrBitmap> Images { get; } = [];
 
         public double Confidence { get; set; } = 0.99;
 
@@ -50,7 +68,12 @@ public sealed class OcrTests
                 }
             }
 
-            lock (Calls) Calls.Add((image.Width, image.Height, minX < image.Width / 2 && minY < image.Height / 2, request.Language));
+            lock (Calls)
+            {
+                Calls.Add((image.Width, image.Height, minX < image.Width / 2 && minY < image.Height / 2, request.Language));
+                Images.Add(image);
+            }
+
             if (maxX < 0) return new OcrImageResult([]);
             PdfPoint[] quad = [new(minX, minY), new(maxX, minY), new(maxX, maxY), new(minX, maxY)];
             string text = Text(request.Language);
@@ -290,12 +313,328 @@ public sealed class OcrTests
         Assert.IsEmpty(doubtful.Pages[0].Lines);
     }
 
-    /// <summary>The models, if <c>PDFNETSTACK_OCR_MODELS</c> names their folder; the tests that need them are inconclusive without.</summary>
+    private static string Fixture(params string[] parts) => Path.Combine([AppContext.BaseDirectory, "Fixtures", "Ocr", .. parts]);
+
+    // The fixture page and its pieces are 200 dpi scans: 0.36 points a pixel.
+    private const double FixturePoint = 72.0 / 200;
+
+    /// <summary>
+    /// Adds a page with the fixture scan: whole, as strips stacked top to bottom (drawn bottom
+    /// first, as some writers do), or as tiles in rows and columns.
+    /// </summary>
+    private static void AddFixturePage(PdfDocument d, string? pieces)
+    {
+        PdfImage whole = PdfImage.Load(Fixture("page.png"));
+        double width = whole.PixelWidth * FixturePoint, height = whole.PixelHeight * FixturePoint;
+        using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(width, height)).CreateGraphics();
+        if (pieces is null)
+        {
+            g.DrawImage(whole, 0, 0, width, height);
+            return;
+        }
+
+        var placed = new List<(PdfImage Image, double X, double Y)>();
+        if (pieces == "strips")
+        {
+            double top = 0;
+            foreach (string file in Directory.GetFiles(Fixture("strips"), "*.png").OrderBy(f => f, StringComparer.Ordinal))
+            {
+                PdfImage strip = PdfImage.Load(file);
+                placed.Add((strip, 0, top));
+                top += strip.PixelHeight * FixturePoint;
+            }
+
+            placed.Reverse();
+        }
+        else
+        {
+            double top = 0;
+            for (int row = 0; File.Exists(Fixture("tiles", $"tile-{row}-0.png")); row++)
+            {
+                double left = 0, rowHeight = 0;
+                for (int column = 0; File.Exists(Fixture("tiles", $"tile-{row}-{column}.png")); column++)
+                {
+                    PdfImage tile = PdfImage.Load(Fixture("tiles", $"tile-{row}-{column}.png"));
+                    placed.Add((tile, left, top));
+                    left += tile.PixelWidth * FixturePoint;
+                    rowHeight = tile.PixelHeight * FixturePoint;
+                }
+
+                top += rowHeight;
+            }
+        }
+
+        Assert.IsGreaterThan(1, placed.Count);
+        foreach ((PdfImage image, double x, double y) in placed) g.DrawImage(image, x, y, image.PixelWidth * FixturePoint, image.PixelHeight * FixturePoint);
+    }
+
+    [TestMethod]
+    public void PutsAScanStoredInPiecesBackTogether()
+    {
+        PdfDocument doc = Scanned(d =>
+        {
+            AddFixturePage(d, null);
+            AddFixturePage(d, "strips");
+            AddFixturePage(d, "tiles");
+        });
+        Assert.HasCount(5, doc.Pages[1].GetImages());
+
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { MaxDegreeOfParallelism = 1 }).Recognize(doc);
+        Assert.IsTrue(report.Pages.All(p => p.Status == PdfOcrPageStatus.Done), string.Join(", ", report.Pages.Select(p => p.Status + " " + p.Reason)));
+
+        // The engine sees the strips and the tiles as the one image they were cut from, pixel for pixel.
+        Assert.HasCount(3, engine.Images);
+        OcrBitmap whole = engine.Images[0];
+        Assert.AreEqual(1166, whole.Width);
+        Assert.AreEqual(1654, whole.Height);
+        foreach (OcrBitmap composed in engine.Images.Skip(1))
+        {
+            Assert.AreEqual(whole.Width, composed.Width);
+            Assert.AreEqual(whole.Height, composed.Height);
+            Assert.IsTrue(whole.Pixels.AsSpan().SequenceEqual(composed.Pixels), "the pieces put together are the page");
+        }
+
+        // And what it finds maps back to the same place on every page.
+        PdfPoint expected = Center(report.Pages[0].Lines[0].Quad);
+        foreach (PdfOcrPage page in report.Pages.Skip(1))
+        {
+            PdfPoint center = Center(page.Lines[0].Quad);
+            Assert.AreEqual(expected.X, center.X, 1e-6);
+            Assert.AreEqual(expected.Y, center.Y, 1e-6);
+        }
+    }
+
+    [TestMethod]
+    public void MapsWordsFoundInPiecesBackToThePage()
+    {
+        PdfDocument doc = Scanned(d =>
+        {
+            // Three strips, the first cut through the block, away from the corner of a larger page.
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(300, 400)).CreateGraphics())
+            {
+                foreach ((int top, int rows) in new[] { (0, 25), (25, 75), (100, 200) }) g.DrawImage(MarkedPiece(0, top, ScanWidth, rows), 50, 40 + top, ScanWidth, rows);
+            }
+
+            // Four tiles meeting inside the block.
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics())
+            {
+                foreach ((int x, int y, int w, int h) in new[] { (0, 0, 20, 20), (20, 0, 180, 20), (0, 20, 20, 280), (20, 20, 180, 280) }) g.DrawImage(MarkedPiece(x, y, w, h), x, y, w, h);
+            }
+
+            // The strips drawn turned on a landscape page, and the page shown turned back.
+            PdfPage page = d.Pages.Add(PdfRectangle.FromSize(ScanHeight, ScanWidth));
+            using (PdfGraphics g = page.CreateGraphics())
+            {
+                g.TranslateTransform(ScanHeight, 0);
+                g.RotateTransform(90);
+                foreach ((int top, int rows) in new[] { (0, 25), (25, 75), (100, 200) }) g.DrawImage(MarkedPiece(0, top, ScanWidth, rows), 0, top, ScanWidth, rows);
+            }
+
+            page.Rotate(270);
+        });
+
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { MaxDegreeOfParallelism = 1 }).MakeSearchable(doc);
+        Assert.IsTrue(report.Pages.All(p => p.Status == PdfOcrPageStatus.Done), string.Join(", ", report.Pages.Select(p => p.Status + " " + p.Reason)));
+        Assert.IsTrue(engine.Calls.All(c => c.BlockTopLeft && c.Width == ScanWidth && c.Height == ScanHeight), string.Join(", ", engine.Calls));
+
+        // The block's center, in page space (y up, before /Rotate).
+        (double X, double Y)[] expected = [(70, 340), (20, ScanHeight - 20), (ScanHeight - 20, ScanWidth - 20)];
+        for (int i = 0; i < expected.Length; i++)
+        {
+            PdfPoint center = Center(report.Pages[i].Lines[0].Words[0].Quad);
+            Assert.AreEqual(expected[i].X, center.X, 0.5, $"page {i}");
+            Assert.AreEqual(expected[i].Y, center.Y, 0.5, $"page {i}");
+        }
+
+        StringAssert.Contains(Content(PdfDocument.Open(doc.ToArray(Unoptimized)), 0), "3 Tr");
+    }
+
+    [TestMethod]
+    public void PaintsATextMaskOverItsBackground()
+    {
+        // A light gray background, and over it a stencil mask at twice the resolution that paints the
+        // block (samples 0 paint, ISO 32000-1, 8.9.6.2), as mixed raster content scans store text.
+        var background = new byte[ScanWidth * ScanHeight];
+        background.AsSpan().Fill(230);
+        const int MaskWidth = 2 * ScanWidth, MaskHeight = 2 * ScanHeight, Stride = MaskWidth / 8;
+        var mask = new byte[Stride * MaskHeight];
+        mask.AsSpan().Fill(0xFF);
+        for (int y = 20; y < 60; y++)
+        {
+            for (int x = 20; x < 60; x++) mask[(y * Stride) + (x / 8)] &= (byte)~(0x80 >> (x % 8));
+        }
+
+        PdfDocument doc = Scanned(d =>
+        {
+            PdfPage page = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight));
+            var image = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(ScanWidth),
+                ["Height"] = PdfNumber.FromInteger(ScanHeight),
+                ["ColorSpace"] = new PdfName("DeviceGray"),
+                ["BitsPerComponent"] = PdfNumber.FromInteger(8),
+            };
+            var stencil = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(MaskWidth),
+                ["Height"] = PdfNumber.FromInteger(MaskHeight),
+                ["ImageMask"] = PdfBoolean.True,
+            };
+            page.Dictionary.Set("Resources", new PdfDictionary
+            {
+                ["XObject"] = new PdfDictionary
+                {
+                    ["B"] = d.AddObject(new PdfStream(image, background)),
+                    ["M"] = d.AddObject(new PdfStream(stencil, mask)),
+                },
+            });
+            page.Dictionary.Set("Contents", d.AddObject(PdfStream.FromData("q 200 0 0 300 0 0 cm /B Do Q q 0 g 200 0 0 300 0 0 cm /M Do Q"u8)));
+        });
+
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine).Recognize(doc);
+        Assert.AreEqual(PdfOcrPageStatus.Done, report.Pages[0].Status, report.Pages[0].Reason);
+
+        // At the mask's resolution; the mask darkens where it paints and leaves the background elsewhere.
+        OcrBitmap seen = engine.Images[0];
+        Assert.AreEqual(MaskWidth, seen.Width);
+        Assert.AreEqual(MaskHeight, seen.Height);
+        Assert.AreEqual(0, seen.Pixels[(40 * MaskWidth) + 40]);
+        Assert.AreEqual(230, seen.Pixels[(300 * MaskWidth) + 200]);
+        PdfPoint center = Center(report.Pages[0].Lines[0].Quad);
+        Assert.AreEqual(20, center.X, 0.5);
+        Assert.AreEqual(ScanHeight - 20, center.Y, 0.5);
+    }
+
+    [TestMethod]
+    public void LeavesPiecesItCannotPutTogetherAlone()
+    {
+        PdfImage strip = MarkedPiece(0, 0, ScanWidth, 100);
+        PdfDocument doc = Scanned(d =>
+        {
+            // One image drawn ten times over the page: painting would cost ten canvases.
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics())
+            {
+                for (int i = 0; i < 10; i++) g.DrawImage(strip, 0, 0, ScanWidth, ScanHeight);
+            }
+
+            // Two pieces that only cover enough of the page together, one of them turned 10 degrees.
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics())
+            {
+                g.DrawImage(strip, 0, 0, ScanWidth, 100);
+                g.RotateAtTransform(10, 100, 220);
+                g.DrawImage(strip, 0, 170, ScanWidth, 100);
+            }
+
+            // More images than any scan is made of.
+            PdfPage many = d.Pages.Add(PdfRectangle.FromSize(100, 100));
+            var dot = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(1),
+                ["Height"] = PdfNumber.FromInteger(1),
+                ["ColorSpace"] = new PdfName("DeviceGray"),
+                ["BitsPerComponent"] = PdfNumber.FromInteger(8),
+            };
+            many.Dictionary.Set("Resources", new PdfDictionary { ["XObject"] = new PdfDictionary { ["I"] = d.AddObject(new PdfStream(dot, new byte[] { 0 })) } });
+            var content = new StringBuilder();
+            for (int i = 0; i < 4097; i++) content.Append($"q 1 0 0 1 {i % 64} {i / 64} cm /I Do Q ");
+            many.Dictionary.Set("Contents", d.AddObject(PdfStream.FromData(Encoding.ASCII.GetBytes(content.ToString()))));
+        });
+
+        PdfOcrReport report = new PdfOcr(new BlockEngine()).Recognize(doc);
+        Assert.IsTrue(report.Pages.All(p => p.Status == PdfOcrPageStatus.SkippedUnsupported), string.Join(", ", report.Pages.Select(p => p.Status)));
+        StringAssert.Contains(report.Pages[0].Reason, "overlap");
+        StringAssert.Contains(report.Pages[1].Reason, "quarter turns");
+        StringAssert.Contains(report.Pages[2].Reason, "4097 images");
+
+        // A piece whose matrix overflows to infinity is left out; the strips beside it are still read.
+        PdfDocument overflow = Scanned(d =>
+        {
+            PdfPage page = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight));
+            using (PdfGraphics g = page.CreateGraphics())
+            {
+                foreach ((int top, int rows) in new[] { (0, 100), (100, 200) }) g.DrawImage(MarkedPiece(0, top, ScanWidth, rows), 0, top, ScanWidth, rows);
+            }
+
+            string huge = "1" + new string('0', 200);
+            var dot = new PdfDictionary
+            {
+                ["Type"] = new PdfName("XObject"),
+                ["Subtype"] = new PdfName("Image"),
+                ["Width"] = PdfNumber.FromInteger(1),
+                ["Height"] = PdfNumber.FromInteger(1),
+                ["ColorSpace"] = new PdfName("DeviceGray"),
+                ["BitsPerComponent"] = PdfNumber.FromInteger(8),
+            };
+            var resources = (PdfDictionary)d.Resolve(page.Dictionary["Resources"])!;
+            ((PdfDictionary)d.Resolve(resources["XObject"])!).Set("Huge", d.AddObject(new PdfStream(dot, new byte[] { 0 })));
+            page.Dictionary.Set("Contents", new PdfArray
+            {
+                page.Dictionary["Contents"]!,
+                d.AddObject(PdfStream.FromData(Encoding.ASCII.GetBytes($"q {huge} 0 0 1 0 0 cm {huge} 0 0 1 0 0 cm 1 0 0 300 0 0 cm /Huge Do Q"))),
+            });
+        });
+        Assert.HasCount(3, overflow.Pages[0].GetImages());
+        PdfOcrPage read = new PdfOcr(new BlockEngine()).Recognize(overflow).Pages[0];
+        Assert.AreEqual(PdfOcrPageStatus.Done, read.Status, read.Reason);
+        Assert.AreEqual(20, Center(read.Lines[0].Quad).X, 0.5);
+
+        // Pieces whose canvas, gaps included, is over the pixel limit, though their own pixels are not.
+        PdfDocument apart = Scanned(d =>
+        {
+            using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics();
+            g.DrawImage(MarkedPiece(0, 0, 10, 10), 0, 0, 50, 50);
+            g.DrawImage(MarkedPiece(0, 0, 10, 10), 150, 250, 50, 50);
+        });
+        PdfOcrReport limited = new PdfOcr(new BlockEngine(), new PdfOcrOptions { MinimumCoverage = 0.05, MaxImagePixels = 1000 }).Recognize(apart);
+        Assert.AreEqual(PdfOcrPageStatus.SkippedUnsupported, limited.Pages[0].Status);
+        StringAssert.Contains(limited.Pages[0].Reason, "Put together");
+        PdfOcrReport allowed = new PdfOcr(new BlockEngine(), new PdfOcrOptions { MinimumCoverage = 0.05 }).Recognize(apart);
+        Assert.AreEqual(PdfOcrPageStatus.Done, allowed.Pages[0].Status, allowed.Pages[0].Reason);
+    }
+
+    [TestMethod]
+    public void MeasuresWhatPiecesCover()
+    {
+        // Overlaps count once; a piece inside another adds nothing; empty rectangles add nothing.
+        PdfRectangle[] pieces = [new(0, 0, 10, 10), new(5, 5, 15, 15), new(1, 1, 2, 2), new(20, 20, 20, 30)];
+        Assert.AreEqual(175, Mosaic.UnionArea(pieces), 1e-9);
+        Assert.AreEqual(0, Mosaic.UnionArea([]));
+
+        // Tiles edge to edge, each listed twice, and strips across them all.
+        List<PdfRectangle> grid = [.. Enumerable.Range(0, 2500).Select(i => new PdfRectangle(i % 50, i / 50, (i % 50) + 1, (i / 50) + 1))];
+        grid.AddRange([.. grid]);
+        grid.AddRange(Enumerable.Range(0, 10).Select(i => new PdfRectangle(-10, 60 + i, 60, 61 + i)));
+        Assert.AreEqual(2500 + 700, Mosaic.UnionArea(grid), 1e-6);
+
+        Assert.IsTrue(Mosaic.IsAxisAligned(new PdfMatrix(200, 0, 0, 300, 10, 20)));
+        Assert.IsTrue(Mosaic.IsAxisAligned(new PdfMatrix(0, 200, -300, 0, 0, 0)), "a quarter turn");
+        Assert.IsTrue(Mosaic.IsAxisAligned(new PdfMatrix(-200, 0, 0, 300, 0, 0)), "mirrored");
+        Assert.IsFalse(Mosaic.IsAxisAligned(PdfMatrix.Multiply(PdfMatrix.CreateScale(200, 300), PdfMatrix.CreateRotation(30))));
+        Assert.IsFalse(Mosaic.IsAxisAligned(new PdfMatrix(200, 0, 400, 0, 0, 0)), "flat");
+    }
+
+    /// <summary>
+    /// The models: the folder <c>PDFNETSTACK_OCR_MODELS</c> names, else the ones the models package's
+    /// build file copied next to the tests (when they were fetched into its models folder). The tests
+    /// that need them are inconclusive without.
+    /// </summary>
     private static string Models()
     {
         string? folder = Environment.GetEnvironmentVariable("PDFNETSTACK_OCR_MODELS");
-        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) Assert.Inconclusive("Set PDFNETSTACK_OCR_MODELS to a folder with the PP-OCRv5 models (tools/fetch_ocr_models.py).");
-        return folder!;
+        if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder)) return folder!;
+        string packaged = Path.Combine(AppContext.BaseDirectory, OnnxOcrEngine.PackagedModelFolder);
+        if (File.Exists(Path.Combine(packaged, OnnxOcrEngine.DetectionModel))) return packaged;
+        Assert.Inconclusive("Set PDFNETSTACK_OCR_MODELS to a folder with the PP-OCRv5 models, or fetch them into src/PdfNetStack.Ocr.Models/models (tools/fetch_ocr_models.py).");
+        return "";
     }
 
     private static readonly string[] Expected =
@@ -351,5 +690,82 @@ public sealed class OcrTests
         (byte[] turned, int w, int h) = ImageOps.Rotate(upright.Pixels, upright.Width, upright.Height, 2);
         string[] lines = [.. engine.Recognize(new OcrBitmap(w, h, turned), new OcrRequest(), default).Lines.Select(l => l.Text)];
         foreach (string line in Expected) CollectionAssert.Contains(lines, line, string.Join(" | ", lines));
+    }
+
+    [TestMethod]
+    public void ReadsAScanStoredInPiecesWithTheModels()
+    {
+        string models = Models();
+        string[] languages = ["latin", "arabic"];
+        using OnnxOcrEngine engine = OnnxOcrEngine.Load(models, new OnnxOcrEngineOptions { Languages = languages });
+        PdfDocument doc = Scanned(d =>
+        {
+            AddFixturePage(d, "strips");
+            AddFixturePage(d, "tiles");
+        });
+
+        // Strip and tile edges run through the lines of text, which still read whole.
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { Languages = languages }).MakeSearchable(doc);
+        PdfDocument saved = PdfDocument.Open(doc.ToArray());
+        foreach (PdfOcrPage page in report.Pages)
+        {
+            Assert.AreEqual(PdfOcrPageStatus.Done, page.Status, page.Reason);
+            string[] lines = [.. page.Lines.Select(l => l.Text)];
+            foreach (string line in Expected.Append(Arabic)) CollectionAssert.Contains(lines, line, string.Join(" | ", lines));
+            Assert.IsGreaterThan(500, Center(page.Lines.Single(l => l.Text == Expected[0]).Quad).Y, "the heading is at the top of the page");
+
+            string text = saved.Pages[page.Index].ExtractText();
+            foreach (string line in Expected.Append(Arabic)) StringAssert.Contains(text, line);
+        }
+    }
+
+    [TestMethod]
+    public void LoadsTheModelsThePackagePutsNextToTheApplication()
+    {
+        // Without the package the error says what to add.
+        string empty = Path.Combine(Path.GetTempPath(), "pdfnetstack-ocr-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(empty);
+        try
+        {
+            var missing = Assert.ThrowsExactly<FileNotFoundException>(() => OnnxOcrEngine.LoadPackaged(empty, null));
+            StringAssert.Contains(missing.Message, "PdfNetStack.Ocr.Models");
+        }
+        finally
+        {
+            Directory.Delete(empty, true);
+        }
+
+        // With it, the parameterless overload finds them under the base directory.
+        if (!File.Exists(Path.Combine(AppContext.BaseDirectory, OnnxOcrEngine.PackagedModelFolder, OnnxOcrEngine.DetectionModel)))
+        {
+            Assert.Inconclusive("The models were not fetched into src/PdfNetStack.Ocr.Models/models, so the build did not copy them here.");
+        }
+
+        using OnnxOcrEngine engine = OnnxOcrEngine.Load(new OnnxOcrEngineOptions { Languages = ["latin", "arabic"] });
+        PdfImage page = PdfImage.Load(Fixture("page.png"));
+        OcrBitmap bitmap = OcrBitmap.FromPdfBitmap(Scanned(d =>
+        {
+            using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(420, 595)).CreateGraphics();
+            g.DrawImage(page, 0, 0, 420, 595);
+        }).Pages[0].GetImages()[0].Decode()!);
+        string[] lines = [.. engine.Recognize(bitmap, new OcrRequest(), default).Lines.Select(l => l.Text)];
+        CollectionAssert.Contains(lines, Expected[0], string.Join(" | ", lines));
+    }
+
+    [TestMethod]
+    public void PinsTheSameModelsEverywhere()
+    {
+        // The engine checks the hashes on load, the models package on pack, the fetch script on download.
+        string root = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(root, "PdfNetStack.sln"))) root = Path.GetDirectoryName(root) ?? throw new AssertFailedException("The repository root is not above the test output.");
+        string project = File.ReadAllText(Path.Combine(root, "src", "PdfNetStack.Ocr.Models", "PdfNetStack.Ocr.Models.csproj"));
+        string script = File.ReadAllText(Path.Combine(root, "tools", "fetch_ocr_models.py"));
+        static List<KeyValuePair<string, string>> Pins(string text, string pattern) =>
+            [.. Regex.Matches(text, pattern).Cast<Match>().Select(m => new KeyValuePair<string, string>(m.Groups[1].Value, m.Groups[2].Value))];
+        List<KeyValuePair<string, string>> packed = Pins(project, @"<OcrModel Include=""models/([^""]+)"" Sha256=""([0-9a-f]{64})""");
+        List<KeyValuePair<string, string>> fetched = Pins(script, @"""[a-z]+/([^""]+\.onnx)"": ""([0-9a-f]{64})""");
+        Assert.HasCount(4, packed);
+        CollectionAssert.AreEquivalent(OnnxOcrEngine.ModelHashes.ToList(), packed);
+        CollectionAssert.AreEquivalent(OnnxOcrEngine.ModelHashes.ToList(), fetched);
     }
 }

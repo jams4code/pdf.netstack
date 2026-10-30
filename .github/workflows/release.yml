@@ -1,6 +1,8 @@
 name: Release
 
 # Push a tag such as v1.0.0 (or v1.1.0-preview.1) to publish every package in the solution to NuGet.
+# PdfNetStack.Ocr.Models keeps its own version (set in its project) and changes only with the model
+# files; a release whose models version is already on NuGet skips it.
 #
 # Authentication, in order of preference:
 # - Trusted publishing: a policy on nuget.org for this repository, this workflow file and the
@@ -115,6 +117,11 @@ jobs:
       - name: License check
         shell: pwsh
         run: ./eng/check-licenses.ps1
+
+      # The models package packs the OCR model files, never committed: fetched here and checked
+      # against their pinned SHA-256 again when packed.
+      - name: Fetch the OCR models
+        run: python3 tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
 
       - name: Pack
         run: dotnet pack PdfNetStack.sln -c Release --no-build -o artifacts -p:Version=${VERSION}

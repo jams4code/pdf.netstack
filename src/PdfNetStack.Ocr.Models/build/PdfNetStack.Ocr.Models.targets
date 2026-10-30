@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    PdfNetStack.Ocr.Models: copies the PP-OCRv5 models into the pdfnetstack-ocr-models folder of the
+    build and publish output, where OnnxOcrEngine.Load() looks for them. They stay files beside the
+    application, outside a single file bundle, so ONNX Runtime can read them.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../models/*.onnx"
+          Link="pdfnetstack-ocr-models/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

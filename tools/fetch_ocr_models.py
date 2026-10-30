@@ -7,6 +7,10 @@ v3.10.0, and the same ones OnnxOcrEngine checks on load.
     python tools/fetch_ocr_models.py [folder]          (default: ./ocr-models)
 
 Then point the engine (and the integration tests, through PDFNETSTACK_OCR_MODELS) at the folder.
+To pack PdfNetStack.Ocr.Models, fetch into its models folder; the build then also copies the
+models next to the tests:
+
+    python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
 """
 
 import hashlib

@@ -9,10 +9,8 @@
     <NoWarn Condition="'$(TargetFramework)' == 'netstandard2.0'">$(NoWarn);CS1685</NoWarn>
     <PackageId>PdfNetStack.Ocr</PackageId>
     <Title>PdfNetStack.Ocr: make scanned PDFs searchable</Title>
-    <Description>OCR for PdfNetStack: finds the scan on each page, recognizes Latin and Arabic text with PP-OCRv5 models on ONNX Runtime, and adds an invisible text layer so the PDF can be searched and copied. Managed pre and post processing; PDF bytes never reach native code. MIT licensed. By Jamal Abdelkhalek, JADEV.</Description>
+    <Description>OCR for PdfNetStack: finds the scan on each page, recognizes Latin and Arabic text with PP-OCRv5 models on ONNX Runtime, and adds an invisible text layer so the PDF can be searched and copied. Managed pre and post processing; PDF bytes never reach native code. The models ship separately in PdfNetStack.Ocr.Models. MIT licensed. By Jamal Abdelkhalek, JADEV.</Description>
     <PackageTags>pdf;ocr;searchable-pdf;scanned-pdf;paddleocr;onnx;arabic;jadev</PackageTags>
-    <!-- Not published until the models have a package of their own; tools/fetch_ocr_models.py gets them meanwhile. -->
-    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

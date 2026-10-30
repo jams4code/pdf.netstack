@@ -1,0 +1,26 @@
+PdfNetStack.Ocr.Models
+
+This package redistributes four PP-OCRv5 mobile models in ONNX format, unmodified:
+
+  models/ch_PP-OCRv5_det_mobile.onnx                     text detection
+  models/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx  text line orientation
+  models/latin_PP-OCRv5_rec_mobile.onnx                  Latin script recognition
+  models/arabic_PP-OCRv5_rec_mobile.onnx                 Arabic script recognition
+
+PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR)
+  Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.
+  The models were trained and published by the PaddleOCR project.
+  Licensed under the Apache License, Version 2.0 (LICENSE.txt in this package).
+
+RapidOCR (https://github.com/RapidAI/RapidOCR)
+  Copyright (c) 2021 RapidOCR Authors, RapidAI. All rights reserved.
+  The ONNX conversions are RapidOCR's, as published on ModelScope at
+  https://www.modelscope.cn/models/RapidAI/RapidOCR (revision v3.10.0, onnx/PP-OCRv5).
+  Licensed under the Apache License, Version 2.0 (LICENSE.txt in this package).
+
+The SHA-256 of each file is pinned in PdfNetStack.Ocr (OnnxOcrEngine.ModelHashes), checked when
+the package is built and again when the models are loaded.
+
+build/PdfNetStack.Ocr.Models.targets is part of PdfNetStack
+(https://github.com/jams4code/pdf.netstack), Copyright (c) 2026 Jamal Abdelkhalek and PdfNetStack
+contributors, MIT License.
