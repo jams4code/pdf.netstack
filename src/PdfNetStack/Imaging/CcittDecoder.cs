@@ -124,8 +124,10 @@ internal static class CcittDecoder
         output.AsSpan().Fill(white);
 
         var bits = new BitReader(data);
-        var reference = new int[columns + 2];
-        var coding = new int[columns + 2];
+        // A row holds at most MaxChanges(columns) changes; the reference row also needs room for the
+        // two sentinels ReadRow2D writes after its last change.
+        var reference = new int[MaxChanges(columns) + 2];
+        var coding = new int[MaxChanges(columns) + 2];
         int referenceCount = 0, decoded = 0;
         for (int row = 0; row < rows; row++)
         {
@@ -221,7 +223,7 @@ internal static class CcittDecoder
                     int first = ReadRun(ref bits, color == 0), second = first < 0 ? -1 : ReadRun(ref bits, color != 0);
                     if (second < 0 || (strict && !Ordered(a0, start + (long)first, start + (long)first + second, columns))) return -1;
                     int a1 = Math.Min(columns, start + first), a2 = Math.Min(columns, a1 + second);
-                    if (count + 2 > coding.Length) return -1;
+                    if (count + 2 > MaxChanges(columns)) return -1;
                     coding[count++] = a1;
                     coding[count++] = a2;
                     a0 = a2;
@@ -231,7 +233,7 @@ internal static class CcittDecoder
                 case >= -3 and <= 3:
                 {
                     int a1 = b1 + mode;
-                    if (a1 < Math.Max(a0, 0) || a1 > columns || count + 1 > coding.Length || (strict && a1 <= a0)) return -1;
+                    if (a1 < Math.Max(a0, 0) || a1 > columns || count + 1 > MaxChanges(columns) || (strict && a1 <= a0)) return -1;
                     coding[count++] = a1;
                     a0 = a1;
                     color ^= 1;
@@ -253,6 +255,13 @@ internal static class CcittDecoder
     /// a0 and a2 strictly right of a1, except that a2 may equal a1 at the right edge, where the
     /// row ends with the first run.
     /// </summary>
+    /// <summary>
+    /// The most changes a row may record: one at every pixel boundary, plus room for a horizontal
+    /// mode that ends on the right edge before that change is dropped. Damaged data that keeps
+    /// adding changes without moving right stops here, so the row never outgrows its buffers.
+    /// </summary>
+    private static int MaxChanges(int columns) => columns + 2;
+
     private static bool Ordered(int a0, long a1, long a2, int columns) =>
         a2 <= columns && a1 > a0 && (a2 > a1 || a2 == columns);
 

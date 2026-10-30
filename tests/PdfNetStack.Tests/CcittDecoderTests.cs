@@ -127,6 +127,24 @@ public sealed class CcittDecoderTests
     }
 
     [TestMethod]
+    public void ChangesThatDoNotMoveRightStayWithinTheRowBuffers()
+    {
+        // Group 4, 8 columns: nine VL3 codes each record a change at column 5 without moving right
+        // (allowed when decoding leniently), then V0 ends the row at the edge. The next row then
+        // has a reference row as full as a row can be, and its two sentinels must still fit.
+        string bits = string.Concat(Enumerable.Repeat("0000010", 9)) + "1" + new string('1', 16);
+        var data = new byte[(bits.Length + 7) / 8];
+        for (int i = 0; i < bits.Length; i++)
+        {
+            if (bits[i] == '1') data[i / 8] |= (byte)(0x80 >> (i % 8));
+        }
+
+        byte[] output = CcittDecoder.Decode(data, new CcittParameters { K = -1, Columns = 8, Rows = 3 }, 3);
+        Assert.HasCount(3, output);
+        Assert.IsNull(CcittDecoder.DecodeExact(data, new CcittParameters { K = -1, Columns = 8, Rows = 3 }, 3));
+    }
+
+    [TestMethod]
     public void SurvivesHostileData()
     {
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => CcittDecoder.Decode([0], new CcittParameters { Columns = 0, Rows = 1 }, 1));
