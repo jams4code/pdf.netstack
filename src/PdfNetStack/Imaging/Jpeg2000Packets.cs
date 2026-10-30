@@ -1,8 +1,15 @@
 namespace PdfNetStack.Imaging;
 
-/// <summary>A codeword segment of a code-block: passes coded without termination between them.</summary>
+/// <summary>
+/// A codeword segment of a code-block: passes coded without termination between them. Its bytes
+/// stay in the tile data, one piece per packet that carries some.
+/// </summary>
 internal sealed class Jpeg2000Segment
 {
+    private byte[] _source = [];
+    private int _offset;
+    private List<(byte[] Source, int Offset, int Length)>? _more;
+
     public Jpeg2000Segment(int firstPass, int maxPasses)
     {
         FirstPass = firstPass;
@@ -15,17 +22,42 @@ internal sealed class Jpeg2000Segment
 
     public int Passes { get; set; }
 
-    private byte[] _data = [];
-
-    public byte[] Data => _data;
-
     public int Length { get; private set; }
 
     public void Append(byte[] source, int offset, int count)
     {
-        if (Length + count > _data.Length) Array.Resize(ref _data, Math.Max(Length + count, Math.Max(16, _data.Length * 2)));
-        Buffer.BlockCopy(source, offset, _data, Length, count);
+        if (count == 0) return;
+        if (Length == 0)
+        {
+            _source = source;
+            _offset = offset;
+        }
+        else
+        {
+            (_more ??= []).Add((source, offset, count));
+        }
+
         Length += count;
+    }
+
+    /// <summary>Copies the segment's bytes, in order, to <paramref name="destination"/>.</summary>
+    public void CopyTo(byte[] destination)
+    {
+        if (Length == 0) return;
+        int first = Length, at = 0;
+        if (_more is not null)
+        {
+            foreach ((_, _, int length) in _more) first -= length;
+        }
+
+        Buffer.BlockCopy(_source, _offset, destination, 0, first);
+        at += first;
+        if (_more is null) return;
+        foreach ((byte[] source, int offset, int length) in _more)
+        {
+            Buffer.BlockCopy(source, offset, destination, at, length);
+            at += length;
+        }
     }
 }
 
@@ -191,7 +223,7 @@ internal sealed class Jpeg2000HeaderBits
     }
 }
 
-/// <summary>A subband of one resolution (T.800 B.5) and where its coefficients go in the tile buffer.</summary>
+/// <summary>A subband of one resolution (T.800 B.5).</summary>
 internal sealed class Jpeg2000Band
 {
     /// <summary>0 LL, 1 HL, 2 LH, 3 HH.</summary>
@@ -210,10 +242,6 @@ internal sealed class Jpeg2000Band
 
     /// <summary>The quantization step size (E-3), 1 for reversible coding.</summary>
     public float Step { get; init; }
-
-    public int OffsetX { get; init; }
-
-    public int OffsetY { get; init; }
 }
 
 /// <summary>The code-blocks of one subband inside one precinct, with their tag trees.</summary>
@@ -298,6 +326,7 @@ internal sealed class Jpeg2000Packets
     private readonly Jpeg2000HeaderBits _bits = new();
     private readonly List<(Jpeg2000Segment Segment, int Length)> _pending = [];
     private readonly byte[] _body;
+    private readonly int _bodyEnd;
     private readonly byte[]? _headers;
     private readonly bool _sop;
     private readonly bool _eph;
@@ -309,17 +338,20 @@ internal sealed class Jpeg2000Packets
     private long _blocks;
     private readonly long _blockLimit;
 
-    public Jpeg2000Packets(Jpeg2000TileComponent[] components, byte[] body, byte[]? headers, int layers, bool sop, bool eph, long blockLimit)
+    /// <param name="body">Holds the tile's data from <paramref name="bodyStart"/> to <paramref name="bodyEnd"/>.</param>
+    public Jpeg2000Packets(Jpeg2000TileComponent[] components, byte[] body, int bodyStart, int bodyEnd, byte[]? headers, int layers, bool sop, bool eph, long blockLimit)
     {
         Components = components;
         _body = body;
+        _bodyPos = bodyStart;
+        _bodyEnd = bodyEnd;
         _headers = headers;
         _layers = layers;
         _sop = sop;
         _eph = eph;
 
         // Every packet costs a byte or more, so iterations beyond a multiple of the data are hostile.
-        _workLimit = (64L * (body.Length + (headers?.Length ?? 0))) + 65536;
+        _workLimit = (64L * (bodyEnd - bodyStart + (headers?.Length ?? 0))) + 65536;
         _blockLimit = blockLimit;
     }
 
@@ -460,10 +492,11 @@ internal sealed class Jpeg2000Packets
         Jpeg2000PrecinctBand[] precinct = res.Precincts[k] ??= MakePrecinct(tc, res, k);
 
         // SOP may precede each packet in the tile data (A.8.1).
-        if (_sop && _bodyPos + 6 <= _body.Length && _body[_bodyPos] == 0xFF && _body[_bodyPos + 1] == 0x91) _bodyPos += 6;
+        if (_sop && _bodyPos + 6 <= _bodyEnd && _body[_bodyPos] == 0xFF && _body[_bodyPos + 1] == 0x91) _bodyPos += 6;
 
         byte[] source = _headers ?? _body;
-        _bits.Start(source, _headers is null ? _bodyPos : _headerPos, source.Length);
+        int sourceEnd = _headers?.Length ?? _bodyEnd;
+        _bits.Start(source, _headers is null ? _bodyPos : _headerPos, sourceEnd);
         _pending.Clear();
         if (_bits.Read() != 0)
         {
@@ -477,13 +510,13 @@ internal sealed class Jpeg2000Packets
         int pos = _bits.Position;
 
         // EPH ends the header when the coding style says it is used (A.8.2).
-        if (_eph && pos + 2 <= source.Length && source[pos] == 0xFF && source[pos + 1] == 0x92) pos += 2;
+        if (_eph && pos + 2 <= sourceEnd && source[pos] == 0xFF && source[pos + 1] == 0x92) pos += 2;
         if (_headers is null) _bodyPos = pos;
         else _headerPos = pos;
 
         foreach ((Jpeg2000Segment segment, int length) in _pending)
         {
-            int take = Math.Min(length, _body.Length - _bodyPos);
+            int take = Math.Min(length, _bodyEnd - _bodyPos);
             segment.Append(_body, _bodyPos, take);
             _bodyPos += take;
             if (take < length) throw new Jpeg2000EndOfDataException();

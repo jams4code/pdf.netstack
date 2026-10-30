@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace PdfNetStack.Imaging;
 
 /// <summary>
@@ -26,8 +28,11 @@ internal static class Jbig2Generic
         Jbig2ArithmeticDecoder decoder, byte[] contexts, long width, long height, int template, bool typical, Jbig2Bitmap? skip, int[] at, Jbig2Budget budget)
     {
         Jbig2Bitmap b = Jbig2Bitmap.Create(width, height, budget);
-        int w = b.Width;
+        int w = b.Width, stride = b.Stride;
+        byte[] d = b.Data;
         int ltp = 0;
+        int pairs = template == 0 ? 4 : 1;
+        var atRows = new int[pairs];
         for (int y = 0; y < b.Height; y++)
         {
             if (typical)
@@ -40,27 +45,31 @@ internal static class Jbig2Generic
                 }
             }
 
+            // Rows are read through their offsets, -1 for a row outside the bitmap, which reads as 0.
+            int row = y * stride, up1 = Row(y - 1, b), up2 = Row(y - 2, b);
+            for (int k = 0; k < pairs; k++) atRows[k] = Row((long)y + at[(2 * k) + 1], b);
+
             // The pixel order follows each template's rows, so each row of the template slides by one bit per pixel.
             switch (template)
             {
                 case 0:
                 {
-                    int line1 = b.Get(1, y - 2) | (b.Get(0, y - 2) << 1);
-                    int line2 = b.Get(2, y - 1) | (b.Get(1, y - 1) << 1) | (b.Get(0, y - 1) << 2);
+                    int line1 = Pixel(d, up2, 1, w) | (Pixel(d, up2, 0, w) << 1);
+                    int line2 = Pixel(d, up1, 2, w) | (Pixel(d, up1, 1, w) << 1) | (Pixel(d, up1, 0, w) << 2);
                     int line3 = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int bit = 0;
                         if (skip is null || skip.Get(x, y) == 0)
                         {
-                            int cx = line3 | (b.Get(x + at[0], y + at[1]) << 4) | (line2 << 5) | (b.Get(x + at[2], y + at[3]) << 10)
-                                | (b.Get(x + at[4], y + at[5]) << 11) | (line1 << 12) | (b.Get(x + at[6], y + at[7]) << 15);
+                            int cx = line3 | (Pixel(d, atRows[0], x + at[0], w) << 4) | (line2 << 5) | (Pixel(d, atRows[1], x + at[2], w) << 10)
+                                | (Pixel(d, atRows[2], x + at[4], w) << 11) | (line1 << 12) | (Pixel(d, atRows[3], x + at[6], w) << 15);
                             bit = decoder.Decode(contexts, cx);
-                            if (bit != 0) b.Set(x, y, 1);
+                            if (bit != 0) d[row + (x >> 3)] |= (byte)(0x80 >> (x & 7));
                         }
 
-                        line1 = ((line1 << 1) | b.Get(x + 2, y - 2)) & 0x07;
-                        line2 = ((line2 << 1) | b.Get(x + 3, y - 1)) & 0x1F;
+                        line1 = ((line1 << 1) | Pixel(d, up2, x + 2, w)) & 0x07;
+                        line2 = ((line2 << 1) | Pixel(d, up1, x + 3, w)) & 0x1F;
                         line3 = ((line3 << 1) | bit) & 0x0F;
                     }
 
@@ -69,21 +78,21 @@ internal static class Jbig2Generic
 
                 case 1:
                 {
-                    int line1 = b.Get(2, y - 2) | (b.Get(1, y - 2) << 1) | (b.Get(0, y - 2) << 2);
-                    int line2 = b.Get(2, y - 1) | (b.Get(1, y - 1) << 1) | (b.Get(0, y - 1) << 2);
+                    int line1 = Pixel(d, up2, 2, w) | (Pixel(d, up2, 1, w) << 1) | (Pixel(d, up2, 0, w) << 2);
+                    int line2 = Pixel(d, up1, 2, w) | (Pixel(d, up1, 1, w) << 1) | (Pixel(d, up1, 0, w) << 2);
                     int line3 = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int bit = 0;
                         if (skip is null || skip.Get(x, y) == 0)
                         {
-                            int cx = line3 | (b.Get(x + at[0], y + at[1]) << 3) | (line2 << 4) | (line1 << 9);
+                            int cx = line3 | (Pixel(d, atRows[0], x + at[0], w) << 3) | (line2 << 4) | (line1 << 9);
                             bit = decoder.Decode(contexts, cx);
-                            if (bit != 0) b.Set(x, y, 1);
+                            if (bit != 0) d[row + (x >> 3)] |= (byte)(0x80 >> (x & 7));
                         }
 
-                        line1 = ((line1 << 1) | b.Get(x + 3, y - 2)) & 0x0F;
-                        line2 = ((line2 << 1) | b.Get(x + 3, y - 1)) & 0x1F;
+                        line1 = ((line1 << 1) | Pixel(d, up2, x + 3, w)) & 0x0F;
+                        line2 = ((line2 << 1) | Pixel(d, up1, x + 3, w)) & 0x1F;
                         line3 = ((line3 << 1) | bit) & 0x07;
                     }
 
@@ -92,21 +101,21 @@ internal static class Jbig2Generic
 
                 case 2:
                 {
-                    int line1 = b.Get(1, y - 2) | (b.Get(0, y - 2) << 1);
-                    int line2 = b.Get(1, y - 1) | (b.Get(0, y - 1) << 1);
+                    int line1 = Pixel(d, up2, 1, w) | (Pixel(d, up2, 0, w) << 1);
+                    int line2 = Pixel(d, up1, 1, w) | (Pixel(d, up1, 0, w) << 1);
                     int line3 = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int bit = 0;
                         if (skip is null || skip.Get(x, y) == 0)
                         {
-                            int cx = line3 | (b.Get(x + at[0], y + at[1]) << 2) | (line2 << 3) | (line1 << 7);
+                            int cx = line3 | (Pixel(d, atRows[0], x + at[0], w) << 2) | (line2 << 3) | (line1 << 7);
                             bit = decoder.Decode(contexts, cx);
-                            if (bit != 0) b.Set(x, y, 1);
+                            if (bit != 0) d[row + (x >> 3)] |= (byte)(0x80 >> (x & 7));
                         }
 
-                        line1 = ((line1 << 1) | b.Get(x + 2, y - 2)) & 0x07;
-                        line2 = ((line2 << 1) | b.Get(x + 2, y - 1)) & 0x0F;
+                        line1 = ((line1 << 1) | Pixel(d, up2, x + 2, w)) & 0x07;
+                        line2 = ((line2 << 1) | Pixel(d, up1, x + 2, w)) & 0x0F;
                         line3 = ((line3 << 1) | bit) & 0x03;
                     }
 
@@ -115,19 +124,19 @@ internal static class Jbig2Generic
 
                 default:
                 {
-                    int line1 = b.Get(1, y - 1) | (b.Get(0, y - 1) << 1);
+                    int line1 = Pixel(d, up1, 1, w) | (Pixel(d, up1, 0, w) << 1);
                     int line2 = 0;
                     for (int x = 0; x < w; x++)
                     {
                         int bit = 0;
                         if (skip is null || skip.Get(x, y) == 0)
                         {
-                            int cx = line2 | (b.Get(x + at[0], y + at[1]) << 4) | (line1 << 5);
+                            int cx = line2 | (Pixel(d, atRows[0], x + at[0], w) << 4) | (line1 << 5);
                             bit = decoder.Decode(contexts, cx);
-                            if (bit != 0) b.Set(x, y, 1);
+                            if (bit != 0) d[row + (x >> 3)] |= (byte)(0x80 >> (x & 7));
                         }
 
-                        line1 = ((line1 << 1) | b.Get(x + 2, y - 1)) & 0x1F;
+                        line1 = ((line1 << 1) | Pixel(d, up1, x + 2, w)) & 0x1F;
                         line2 = ((line2 << 1) | bit) & 0x0F;
                     }
 
@@ -138,6 +147,14 @@ internal static class Jbig2Generic
 
         return b;
     }
+
+    /// <summary>Where row <paramref name="y"/> starts in the bitmap's data, or -1 outside it.</summary>
+    private static int Row(long y, Jbig2Bitmap b) => y >= 0 && y < b.Height ? (int)y * b.Stride : -1;
+
+    /// <summary>The pixel in column <paramref name="x"/> of the row at <paramref name="row"/>, 0 outside the bitmap (6.2.5.2).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int Pixel(byte[] data, int row, int x, int width) =>
+        row >= 0 && (uint)x < (uint)width ? (data[row + (x >> 3)] >> (7 - (x & 7))) & 1 : 0;
 
     /// <summary>
     /// 6.3.5: decodes a bitmap as a refinement of <paramref name="reference"/>, whose pixel
@@ -214,7 +231,7 @@ internal static class Jbig2Generic
             for (int i = 0; i < count; i += 2)
             {
                 int from = Math.Max(0, coding[i]), to = i + 1 < count ? Math.Min(columns, coding[i + 1]) : columns;
-                for (int x = from; x < to; x++) b.Set(x, y, 1);
+                if (from < to) b.SetRun(y, from, to);
             }
 
             (reference, coding) = (coding, reference);

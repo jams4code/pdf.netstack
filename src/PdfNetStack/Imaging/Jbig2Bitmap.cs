@@ -66,6 +66,13 @@ internal sealed class Jbig2Bitmap
 
     public void Fill(int value) => Data.AsSpan().Fill(value != 0 ? (byte)0xFF : (byte)0);
 
+    /// <summary>Sets the pixels of row <paramref name="y"/> from column <paramref name="from"/> up to <paramref name="to"/>, inside the bitmap, to 1.</summary>
+    public void SetRun(int y, int from, int to)
+    {
+        int first = from >> 3, last = (to - 1) >> 3, row = y * Stride;
+        for (int b = first; b <= last; b++) Data[row + b] |= (byte)Mask(b, from, to);
+    }
+
     /// <summary>Row <paramref name="to"/> becomes a copy of row <paramref name="from"/>, or 0 when that is above the bitmap.</summary>
     public void CopyRow(int from, int to)
     {
@@ -78,14 +85,8 @@ internal sealed class Jbig2Bitmap
     public Jbig2Bitmap Columns(int x, int width, Jbig2Budget budget)
     {
         Jbig2Bitmap result = Create(width, Height, budget);
-        for (int y = 0; y < Height; y++)
-        {
-            for (int i = 0; i < width; i++)
-            {
-                if (Get(x + i, y) != 0) result.Set(i, y, 1);
-            }
-        }
-
+        long right = Math.Min(width, (long)Width - x);
+        if (right > 0 && Height > 0) result.Draw(this, -(long)x, 0, Replace, Math.Max(0, -(long)x), 0, right, Height);
         return result;
     }
 
@@ -93,28 +94,88 @@ internal sealed class Jbig2Bitmap
     /// Draws <paramref name="source"/> with its top left at (<paramref name="x"/>, <paramref name="y"/>),
     /// combined by OR, AND, XOR, XNOR or REPLACE (T.88, 7.4.1.5 and 6.4.5). Parts outside are dropped.
     /// </summary>
-    public void Compose(Jbig2Bitmap source, long x, long y, int op, Jbig2Budget budget)
+    public void Compose(Jbig2Bitmap source, long x, long y, int op, Jbig2Budget budget) => Compose(source, x, y, op, budget, 0, 0, Width, Height);
+
+    /// <summary>
+    /// Like <see cref="Compose(Jbig2Bitmap, long, long, int, Jbig2Budget)"/>, drawing only inside the
+    /// rectangle from (<paramref name="clipLeft"/>, <paramref name="clipTop"/>) to
+    /// (<paramref name="clipRight"/>, <paramref name="clipBottom"/>).
+    /// </summary>
+    public void Compose(Jbig2Bitmap source, long x, long y, int op, Jbig2Budget budget, long clipLeft, long clipTop, long clipRight, long clipBottom)
     {
-        long left = Math.Max(0, x), top = Math.Max(0, y);
-        long right = Math.Min(Width, x + source.Width), bottom = Math.Min(Height, y + source.Height);
+        long left = Math.Max(Math.Max(0, clipLeft), x), top = Math.Max(Math.Max(0, clipTop), y);
+        long right = Math.Min(Math.Min(Width, clipRight), x + source.Width), bottom = Math.Min(Math.Min(Height, clipBottom), y + source.Height);
         if (left >= right || top >= bottom) return;
         budget.Spend((right - left) * (bottom - top));
+        Draw(source, x, y, op, left, top, right, bottom);
+    }
+
+    /// <summary>Sets the rectangle from (<paramref name="left"/>, <paramref name="top"/>) to (<paramref name="right"/>, <paramref name="bottom"/>), cut to the bitmap, to <paramref name="value"/>.</summary>
+    public void Fill(long left, long top, long right, long bottom, int value, Jbig2Budget budget)
+    {
+        left = Math.Max(0, left);
+        top = Math.Max(0, top);
+        right = Math.Min(Width, right);
+        bottom = Math.Min(Height, bottom);
+        if (left >= right || top >= bottom) return;
+        budget.Spend((right - left) * (bottom - top));
+        int first = (int)(left >> 3), last = (int)((right - 1) >> 3);
+        for (int y = (int)top; y < bottom; y++)
+        {
+            for (int b = first, at = (y * Stride) + first; b <= last; b++, at++)
+            {
+                int mask = Mask(b, left, right);
+                Data[at] = (byte)(value != 0 ? Data[at] | mask : Data[at] & ~mask);
+            }
+        }
+    }
+
+    /// <summary>The bits of byte <paramref name="b"/> of a row that fall in the columns from <paramref name="left"/> to <paramref name="right"/>.</summary>
+    private static int Mask(int b, long left, long right)
+    {
+        int mask = 0xFF;
+        if (b == left >> 3) mask &= 0xFF >> (int)(left & 7);
+        if (b == (right - 1) >> 3) mask &= (0xFF << (7 - (int)((right - 1) & 7))) & 0xFF;
+        return mask;
+    }
+
+    /// <summary>
+    /// Combines the source into the columns from <paramref name="left"/> to <paramref name="right"/>
+    /// and the rows from <paramref name="top"/> to <paramref name="bottom"/>, which lie inside both
+    /// bitmaps, a byte at a time: the source bits are shifted into the target's alignment, and the
+    /// operator applies under a mask of the columns drawn.
+    /// </summary>
+    private void Draw(Jbig2Bitmap source, long x, long y, int op, long left, long top, long right, long bottom)
+    {
+        int first = (int)(left >> 3), last = (int)((right - 1) >> 3);
+
+        // Target byte b holds columns 8b to 8b + 7, which show source columns from 8b - x: every
+        // target byte takes the same bit offset into a pair of source bytes.
+        long start = (8L * first) - x;
+        int shift = 8 - (int)(start & 7);
+        int firstSource = (int)(start >> 3);
+        byte[] target = Data, bits = source.Data;
+        int sourceStride = source.Stride;
         for (int ty = (int)top; ty < bottom; ty++)
         {
-            int sy = (int)(ty - y);
-            for (int tx = (int)left; tx < right; tx++)
+            int row = ty * Stride, sourceRow = (int)(ty - y) * sourceStride;
+            int s = firstSource;
+            for (int b = first; b <= last; b++, s++)
             {
-                int s = source.Get((int)(tx - x), sy);
-                int d = Get(tx, ty);
-                int v = op switch
+                // Source bytes outside the row read as 0; the mask keeps them out of the result.
+                int high = s >= 0 && s < sourceStride ? bits[sourceRow + s] : 0;
+                int low = s + 1 >= 0 && s + 1 < sourceStride ? bits[sourceRow + s + 1] : 0;
+                int value = (((high << 8) | low) >> shift) & 0xFF;
+                int mask = b == first || b == last ? Mask(b, left, right) : 0xFF;
+                int d = target[row + b];
+                target[row + b] = (byte)(op switch
                 {
-                    Or => d | s,
-                    And => d & s,
-                    Xor => d ^ s,
-                    Xnor => 1 ^ d ^ s,
-                    _ => s,
-                };
-                if (v != d) Set(tx, ty, v);
+                    Or => d | (value & mask),
+                    And => d & (value | ~mask),
+                    Xor => d ^ (value & mask),
+                    Xnor => d ^ (~value & mask),
+                    _ => (d & ~mask) | (value & mask),
+                });
             }
         }
     }

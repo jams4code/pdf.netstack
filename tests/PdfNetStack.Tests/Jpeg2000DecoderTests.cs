@@ -376,6 +376,144 @@ public sealed class Jpeg2000DecoderTests
         Assert.ThrowsExactly<PdfFormatException>(() => ThroughPdf([1, 2, 3], 61, 45, new PdfName("DeviceRGB")));
     }
 
+    /// <summary>
+    /// Decoded a few rows at a time, every fixture gives the samples of the decode in one band:
+    /// each band's window of rows reaches far enough for every lifting step, at every resolution,
+    /// whatever the parity of the tile, the image origin or the band's first row.
+    /// </summary>
+    [TestMethod]
+    [DataRow("gray-53.jp2")]
+    [DataRow("gray-97.j2k")]
+    [DataRow("gray-1res.jp2")]
+    [DataRow("gray-3res.jp2")]
+    [DataRow("gray16-53.jp2")]
+    [DataRow("gray-signed.j2k")]
+    [DataRow("gray-roi.j2k")]
+    [DataRow("rgb-97.jp2")]
+    [DataRow("rgb-97-tiles.jp2")]
+    [DataRow("rgb-offset.jp2")]
+    [DataRow("rgb-rpcl.jp2")]
+    [DataRow("sub-rpcl.j2k")]
+    [DataRow("sub-cprl.j2k")]
+    [DataRow("style-allstyles.j2k")]
+    [DataRow("palette.jp2")]
+    public void BandsOfRowsGiveTheSameSamples(string file)
+    {
+        byte[] data = File.ReadAllBytes(Fixture(file));
+        Jpeg2000Image whole = Jpeg2000Decoder.Decode(data, Limit);
+        (Raster? once, _) = Jpeg2000Decoder.DecodeForPdf(data, null, Limit);
+        foreach (int rows in new[] { 1, 2, 3, 5, 8 })
+        {
+            Jpeg2000Image banded = Jpeg2000Decoder.Decode(data, Limit, bandRows: rows);
+            for (int c = 0; c < whole.Channels.Count; c++) CollectionAssert.AreEqual(whole.Channels[c].Samples, banded.Channels[c].Samples, $"{file}, {rows} rows, channel {c}");
+
+            (Raster? raster, _) = Jpeg2000Decoder.DecodeForPdf(data, null, Limit, rows);
+            CollectionAssert.AreEqual(once!.Samples, raster!.Samples, $"{file}, {rows} rows, raster");
+        }
+    }
+
+    /// <summary>The raster written band by band is the one made from the planes, subsampled chroma and missing tiles included.</summary>
+    [TestMethod]
+    [DataRow("rgb-97-tiles.jp2", 0)]
+    [DataRow("rgb-offset.jp2", 0)]
+    [DataRow("gray16-53.jp2", 0)]
+    [DataRow("sub-pcrl.j2k", 0)]
+    [DataRow("rgb-lrcp.jp2", 3000)]
+    [DataRow("rgb-97-tiles.jp2", 700)]
+    public void RasterMatchesThePlanes(string file, int cut)
+    {
+        byte[] data = File.ReadAllBytes(Fixture(file));
+        if (cut > 0) data = data.AsSpan(0, Math.Min(data.Length, cut)).ToArray();
+        Jpeg2000Image planes = Jpeg2000Decoder.Decode(data, Limit);
+        (Raster? raster, ColorSpace? space) = Jpeg2000Decoder.DecodeForPdf(data, null, Limit, bandRows: 3);
+        Assert.IsNotNull(space);
+        CollectionAssert.AreEqual(planes.ToRaster(space.Components, scale: true).Samples, raster!.Samples, file);
+    }
+
+    /// <summary>An sYCC image (JP2 colour space 18) comes out as RGB by IEC 61966-2-1, sample by sample.</summary>
+    [TestMethod]
+    public void ConvertsSyccToRgb()
+    {
+        byte[] data = File.ReadAllBytes(Fixture("rgb-53.jp2"));
+        int colr = data.AsSpan().IndexOf("colr"u8.ToArray());
+        Assert.AreEqual(1, data[colr + 4], "an enumerated colour space");
+        data[colr + 10] = 18;
+        Jpeg2000Image planes = Jpeg2000Decoder.Decode(data, Limit);
+        Assert.AreEqual(18, planes.ColorSpace);
+        static int Byte(double v) => Math.Max(0, Math.Min(255, (int)Math.Round(v)));
+        foreach (int rows in new[] { 0, 4 })
+        {
+            (Raster? raster, ColorSpace? space) = Jpeg2000Decoder.DecodeForPdf(data, null, Limit, rows);
+            Assert.AreEqual(ColorSpace.Rgb, space);
+            for (int i = 0; i < 61 * 45; i++)
+            {
+                double y = planes.Channels[0].Samples[i], cb = planes.Channels[1].Samples[i] - 128, cr = planes.Channels[2].Samples[i] - 128;
+                Assert.AreEqual(Byte(y + (1.402 * cr)), raster!.Samples[3 * i]);
+                Assert.AreEqual(Byte(y - (0.344136 * cb) - (0.714136 * cr)), raster.Samples[(3 * i) + 1]);
+                Assert.AreEqual(Byte(y + (1.772 * cb)), raster.Samples[(3 * i) + 2]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A codestream of one tile that codes no coefficients: SIZ, a 5/3 COD with five levels and
+    /// one layer, QCD, then an empty packet, one byte, for each resolution and component.
+    /// </summary>
+    private static byte[] EmptyCodestream(int width, int height, int components)
+    {
+        var bytes = new List<byte> { 0xFF, 0x4F };
+        void U16(int v) => bytes.AddRange([(byte)(v >> 8), (byte)v]);
+        void U32(long v) => bytes.AddRange([(byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v]);
+
+        U16(0xFF51);
+        U16(38 + (3 * components));
+        U16(0);
+        foreach (long v in new long[] { width, height, 0, 0, width, height, 0, 0 }) U32(v);
+        U16(components);
+        for (int c = 0; c < components; c++) bytes.AddRange([7, 1, 1]);
+
+        U16(0xFF52);
+        U16(12);
+        bytes.AddRange([0, 0, 0, 1, (byte)(components >= 3 ? 1 : 0), 5, 4, 4, 0, 1]);
+
+        U16(0xFF5C);
+        U16(19);
+        bytes.AddRange([0x40, 8 << 3]);
+        for (int r = 0; r < 5; r++) bytes.AddRange([9 << 3, 9 << 3, 10 << 3]);
+
+        int packets = 6 * components;
+        U16(0xFF90);
+        U16(10);
+        U16(0);
+        U32(12 + 2 + packets);
+        bytes.AddRange([0, 1]);
+        U16(0xFF93);
+        bytes.AddRange(new byte[packets]);
+        U16(0xFFD9);
+        return [.. bytes];
+    }
+
+    /// <summary>
+    /// A colour image as one tile: its 32 bit planes alone would pass a 64 MB limit, while its
+    /// 8 bit raster fits under it with room for the bands of rows on the way.
+    /// </summary>
+    [TestMethod]
+    public void LargeColorImagesFitTheDecodeLimit()
+    {
+        const int width = 3000, height = 2400;
+        const long limit = 64L << 20;
+        byte[] data = EmptyCodestream(width, height, 3);
+        Assert.ThrowsExactly<Jpeg2000FormatException>(() => Jpeg2000Decoder.Decode(data, limit), "planes of 82 MB");
+
+        (Raster? raster, ColorSpace? space) = Jpeg2000Decoder.DecodeForPdf(data, null, limit);
+        Assert.AreEqual(ColorSpace.Rgb, space);
+        Assert.HasCount(width * height * 3, raster!.Samples);
+        Assert.IsTrue(Array.TrueForAll(raster.Samples, v => v == 128), "no coefficients: mid-grey");
+
+        // A limit under the raster and its bands of rows is still refused before anything is allocated.
+        Assert.ThrowsExactly<Jpeg2000FormatException>(() => Jpeg2000Decoder.DecodeForPdf(data, null, 30L << 20));
+    }
+
     [TestMethod]
     public void DecodesQuickly()
     {

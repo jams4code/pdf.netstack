@@ -21,8 +21,13 @@ Everything here is written from the standard; no code comes from OpenJPEG or oth
 
     pip install pillow numpy
     python tools/make_jpx_fixtures.py
+
+A large image for measuring memory and time, written where asked and never committed:
+
+    python tools/make_jpx_fixtures.py --large scan.jp2 4812x7541 [--lossy] [--tile 1024] [--gray]
 """
 
+import argparse
 import io
 import struct
 from pathlib import Path
@@ -901,7 +906,49 @@ def references() -> None:
         image.save(out / f"{path.stem}.png")
 
 
+def page(width: int, height: int, channels: int, seed: int = 21) -> np.ndarray:
+    """A scanned book page: paper with grain, lines of dark strokes, and a photograph-like plate."""
+    rng = np.random.default_rng(seed)
+    out = np.empty((height, width, channels), dtype=np.uint8)
+    x = np.arange(width, dtype=np.float32)
+    for top in range(0, height, 256):
+        rows = min(256, height - top)
+        y = np.arange(top, top + rows, dtype=np.float32)[:, None]
+        paper = 232 + 6 * np.sin(x / 211.0) + rng.normal(0, 4, (rows, width)).astype(np.float32)
+        ink = ((y.astype(np.int64) % 96) < 40) & (((x.astype(np.int64) * 7 + y.astype(np.int64) * 3) % 23) < 9)
+        plate = (y > height * 0.55) & (y < height * 0.85) & (x > width * 0.1) & (x < width * 0.9)
+        photo = 128 + 90 * np.sin(x / 37.0) * np.cos(y / 53.0)
+        for c in range(channels):
+            tint = paper - 8 * c
+            value = np.where(ink, 40 + 10 * c, tint)
+            value = np.where(plate, photo + 20 * np.sin((x + 40 * c) / 17.0), value)
+            out[top:top + rows, :, c] = np.clip(value, 0, 255).astype(np.uint8)
+    return out
+
+
+def large(path: str, size: str, lossy: bool, tile: int | None, grey: bool) -> None:
+    width, height = (int(v) for v in size.lower().split("x"))
+    pixels = page(width, height, 1 if grey else 3)
+    image = Image.fromarray(pixels[:, :, 0] if grey else pixels)
+    options = dict(num_resolutions=6, irreversible=lossy, mct=0 if grey else 1)
+    if lossy:
+        options.update(quality_mode="rates", quality_layers=[20])
+    if tile:
+        options["tile_size"] = (tile, tile)
+    image.save(path, "JPEG2000", **options)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--large", nargs=2, metavar=("PATH", "WIDTHxHEIGHT"), help="write one large image instead")
+    parser.add_argument("--lossy", action="store_true")
+    parser.add_argument("--tile", type=int)
+    parser.add_argument("--gray", action="store_true")
+    arguments = parser.parse_args()
+    if arguments.large:
+        large(arguments.large[0], arguments.large[1], arguments.lossy, arguments.tile, arguments.gray)
+        return
+
     OUT.mkdir(parents=True, exist_ok=True)
     pillow_fixtures()
     references()

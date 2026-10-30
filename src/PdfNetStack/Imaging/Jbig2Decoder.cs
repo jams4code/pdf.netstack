@@ -136,8 +136,11 @@ internal static class Jbig2Decoder
                     _segments[number] = SymbolDictionary(referred, data, start, end);
                     break;
                 case 4 or 6 or 7:
-                    Region(number, type == 4, TextRegion(referred, data, start, end));
+                {
+                    (Jbig2Bitmap? bitmap, long x, long y, int op) = TextRegion(referred, data, start, end, type == 4 ? null : Bitmap);
+                    if (bitmap is not null) Region(number, type == 4, (bitmap, x, y, op));
                     break;
+                }
                 case 16:
                     _segments[number] = new Segment { Patterns = Jbig2Halftone.DecodePatterns(data, start, end, budget) };
                     break;
@@ -351,8 +354,12 @@ internal static class Jbig2Decoder
             };
         }
 
-        /// <summary>7.4.3: a text region segment.</summary>
-        private (Jbig2Bitmap, long, long, int) TextRegion(long[] referred, byte[] data, int start, int end)
+        /// <summary>
+        /// 7.4.3: a text region segment. An immediate region whose drawing on <paramref name="page"/>
+        /// comes to the same as drawing its symbols there is drawn straight onto it, with no bitmap
+        /// of its own, and the bitmap returned is null.
+        /// </summary>
+        private (Jbig2Bitmap?, long, long, int) TextRegion(long[] referred, byte[] data, int start, int end, Jbig2Bitmap? page)
         {
             (long w, long h, long x, long y, int op) = RegionInfo(data, start, end);
             int at = start + 17;
@@ -442,7 +449,16 @@ internal static class Jbig2Decoder
                 };
             }
 
-            return (Jbig2Text.DecodeRegion(p, new Jbig2Symbols(symbols), coding, budget), x, y, op);
+            // OR of a white region drawn with OR, AND of a black region drawn with AND, and REPLACE
+            // of the region's area give the page the same pixels symbol by symbol as through a
+            // bitmap of the region.
+            bool direct = page is not null && (op == Jbig2Bitmap.Replace
+                || (op == Jbig2Bitmap.Or && p.DefaultPixel == 0 && p.Operator == Jbig2Bitmap.Or)
+                || (op == Jbig2Bitmap.And && p.DefaultPixel == 1 && p.Operator == Jbig2Bitmap.And));
+            if (!direct) return (Jbig2Text.DecodeRegion(p, new Jbig2Symbols(symbols), coding, budget), x, y, op);
+            if (op == Jbig2Bitmap.Replace) page!.Fill(x, y, x + w, y + h, p.DefaultPixel, budget);
+            Jbig2Text.Draw(p, new Jbig2Symbols(symbols), coding, budget, page!, x, y);
+            return (null, x, y, op);
         }
 
         /// <summary>7.4.3.1.7: the symbol ID code lengths, themselves run length coded with a table of 35 run codes.</summary>

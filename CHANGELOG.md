@@ -46,6 +46,28 @@
   the new `PdfQualification.Indeterminate`. Timestamps get `PdfTimestampInfo.QualifiedTimestamp`
   from TSA/QTST services. `tools/PdfNetStack.TrustedListCheck` reads and verifies the live EU
   lists for a manual check; the tests generate every list and PKI.
+- JPEG 2000 images decode tile by tile, a band of rows at a time, straight into 8 bit pixels.
+  Only a window of rows per resolution and a few rows of code-blocks per subband are held in
+  32 bits, so the decode limit has to cover the pixels and those rows instead of 32 bit planes
+  of the whole image: a 600 dpi color page (4812 by 7541, one tile) now decodes within the
+  default 256 MiB, peaking near 190 MB where it needed about 1 GB. Tiled images reuse one tile's
+  buffers. The samples are unchanged, bit for bit.
+- JPEG 2000 decoding is faster with unchanged output: tier-1 keeps each stripe column's state in
+  one word and skips columns with nothing to code, the MQ decoder renormalizes a byte at a time,
+  rows are lifted with their low and high-pass halves apart and columns several at a time, and
+  the color transform and level shift run in one pass. A 6 megapixel lossy RGB image decodes in
+  about 60% of the time it took; lossless images gain less, being bound by the arithmetic decoder.
+- JBIG2 regions combine with the page a byte at a time instead of a pixel at a time, and an
+  immediate text region that draws onto the page the same way symbol by symbol (OR onto a white
+  region, AND onto a black one, or REPLACE) is drawn straight onto it with no bitmap of its own.
+  MMR runs fill bytes, and generic regions read their context rows by offset. A synthetic 600 dpi
+  text page decodes about four times faster.
+- `PdfPageImage.Decode` maps one component images of 8 bits or less (bilevel scans, gray,
+  indexed) through a table of each sample value's pixel instead of converting every pixel, and
+  returns a JPEG 2000 image's 8 bit gray or RGB pixels without copying them. With the JBIG2
+  changes, a synthetic 600 dpi text page comes out of `Decode` four to five times faster.
+- `tools/make_jpx_fixtures.py --large` writes a large synthetic page for measuring memory and
+  time; it is not committed.
 - HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
   across an unbounded number of pages. Computed lengths are now clamped to a million px either
   way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000

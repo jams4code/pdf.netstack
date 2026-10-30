@@ -517,7 +517,10 @@ with the matrix that places it. `Decode` gives 8 bit gray or RGB pixels for raw 
 bits, JPEGs (decoded as libjpeg does), JPEG 2000 (JP2 files and raw codestreams; lossless bit
 exact and lossy within one step of OpenJPEG), CCITT fax (Group 3 and 4, bit exact with libtiff)
 and JBIG2, through DeviceGray, RGB and CMYK, Cal and ICC based
-spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied.
+spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied. An
+image's pixels must fit the document's decode limit (`maxDecodedStreamBytes`, 256 MiB by
+default). JPEG 2000 is decoded a band of rows at a time straight into 8 bit pixels, so a 600 dpi
+color page of 4812 by 7541 pixels takes about 190 MB at peak, its 109 MB of pixels included.
 
 ### Extracting text
 

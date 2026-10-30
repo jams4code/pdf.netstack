@@ -161,7 +161,11 @@ internal static class ImageSamples
 
         if (jpx is null || space is null) return null;
         if ((long)jpx.Width * jpx.Height * (space.IsGray ? 1 : 3) > Math.Min(doc.DecodeLimit, Compat.MaxArrayLength)) throw new PdfFormatException("Image exceeds the decode limit.");
-        return Convert(jpx.Samples, jpx.Width, jpx.Height, 8, (long)jpx.Width * jpx.Channels, space, DecodeArray(doc, dict, space, 8, mask), mask);
+        double[] decode = DecodeArray(doc, dict, space, 8, mask);
+
+        // 8 bit gray or RGB read as stored is the decoder's raster itself, with no copy.
+        if (!mask && (space == ColorSpace.Gray || space == ColorSpace.Rgb) && decode.Select((d, i) => d == i % 2).All(same => same)) return jpx;
+        return Convert(jpx.Samples, jpx.Width, jpx.Height, 8, (long)jpx.Width * jpx.Channels, space, decode, mask);
     }
 
     /// <summary>The decode parameters of the last filter, the image codec.</summary>
@@ -244,6 +248,12 @@ internal static class ImageSamples
             }
         }
 
+        if (tables is not null && n == 1)
+        {
+            ConvertByValue(data, width, height, bpc, rowBytes, space, tables[0], mask, output, channels);
+            return new Raster(width, height, channels, output);
+        }
+
         Span<double> components = stackalloc double[Math.Max(n, 1)];
         Span<byte> rgb = stackalloc byte[3];
         for (int y = 0; y < height; y++)
@@ -300,6 +310,54 @@ internal static class ImageSamples
     }
 
     private static int Byte(byte[] data, long at) => at < data.Length ? data[at] : 0;
+
+    /// <summary>
+    /// One component of 8 bits or less, such as a bilevel scan: a sample value gives the same
+    /// pixel wherever it appears, so each value's pixel is worked out once and looked up.
+    /// </summary>
+    private static void ConvertByValue(byte[] data, int width, int height, int bpc, long rowBytes, ColorSpace space, double[] table, bool mask, byte[] output, int channels)
+    {
+        int values = 1 << bpc;
+        var pixels = new byte[values * channels];
+        Span<double> component = stackalloc double[1];
+        Span<byte> rgb = stackalloc byte[3];
+        for (int v = 0; v < values; v++)
+        {
+            component[0] = table[v];
+            if (mask)
+            {
+                // Sample value 0 paints (ISO 32000-1, 8.9.6.2); Decode [1 0] swaps that.
+                pixels[v] = component[0] < 0.5 ? (byte)0 : (byte)255;
+                continue;
+            }
+
+            space.ToRgb(component, rgb);
+            for (int c = 0; c < channels; c++) pixels[(v * channels) + c] = rgb[c];
+        }
+
+        long o = 0;
+        for (int y = 0; y < height; y++)
+        {
+            long row = y * rowBytes;
+            if (bpc == 1 && channels == 1)
+            {
+                // Eight pixels a byte.
+                for (int x = 0; x < width; x += 8)
+                {
+                    int bits = Byte(data, row + (x >> 3));
+                    for (int k = 0, count = Math.Min(8, width - x); k < count; k++) output[o++] = pixels[(bits >> (7 - k)) & 1];
+                }
+
+                continue;
+            }
+
+            for (int x = 0; x < width; x++)
+            {
+                int v = Sample(data, row, x, bpc);
+                for (int c = 0; c < channels; c++) output[o++] = pixels[(v * channels) + c];
+            }
+        }
+    }
 }
 
 /// <summary>A color space as far as reading image samples needs it: component count, default Decode and conversion.</summary>

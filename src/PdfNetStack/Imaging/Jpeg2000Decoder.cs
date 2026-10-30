@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace PdfNetStack.Imaging;
 
 /// <summary>One decoded channel at its own resolution, with its place on the reference grid.</summary>
@@ -19,7 +21,13 @@ internal sealed class Jpeg2000Channel
     /// <summary>True for an opacity channel by the JP2 channel definition box.</summary>
     public bool Opacity { get; init; }
 
-    /// <summary>Samples, rows top to bottom; signed channels hold negative values.</summary>
+    /// <summary>The codestream component the channel comes from.</summary>
+    public int Component { get; init; }
+
+    /// <summary>The JP2 palette column the component's values index, or null for the values themselves.</summary>
+    public int[]? Lookup { get; init; }
+
+    /// <summary>Samples, rows top to bottom; signed channels hold negative values. Empty until decoded.</summary>
     public int[] Samples { get; init; } = [];
 }
 
@@ -50,25 +58,86 @@ internal sealed class Jpeg2000Image
         long size = (long)Width * Height * channels;
         if (size > Compat.MaxArrayLength) throw new Jpeg2000FormatException("The image is too large.");
         var output = new byte[size];
-        var columns = new int[Width];
         for (int c = 0; c < channels; c++)
         {
-            Jpeg2000Channel ch = Channels[c];
-            int max = (1 << ch.Depth) - 1, offset = ch.Signed ? 1 << (ch.Depth - 1) : 0;
-            var table = new byte[max + 1];
-            for (int v = 0; v <= max; v++) table[v] = scale ? (byte)(((v * 255L) + (max >> 1)) / max) : (byte)Math.Min(v, 255);
-
-            int cx0 = Ceil(X0, ch.Dx), cy0 = Ceil(Y0, ch.Dy);
-            for (int x = 0; x < Width; x++) columns[x] = Compat.Clamp(((X0 + x) / ch.Dx) - cx0, 0, ch.Width - 1);
-            for (int y = 0; y < Height; y++)
-            {
-                int row = Compat.Clamp(((Y0 + y) / ch.Dy) - cy0, 0, ch.Height - 1) * ch.Width;
-                long o = ((long)y * Width * channels) + c;
-                for (int x = 0; x < Width; x++, o += channels) output[o] = table[Compat.Clamp(ch.Samples[row + columns[x]] + offset, 0, max)];
-            }
+            var target = new Jpeg2000RasterChannel(this, Channels[c], c, scale);
+            target.Write(output, Width, channels, 0, 0, Channels[c].Width, Channels[c].Height, Channels[c].Samples);
         }
 
         return new Raster(Width, Height, channels, output);
+    }
+}
+
+/// <summary>
+/// Where one channel's samples land in an interleaved 8 bit raster: the image position of each
+/// sample column and row, and the table from sample values to bytes.
+/// </summary>
+internal sealed class Jpeg2000RasterChannel
+{
+    private readonly int[] _columns;
+    private readonly int[] _rows;
+    private readonly byte[] _table;
+    private readonly int _offset;
+    private readonly int _channel;
+
+    /// <param name="channel">The channel's description; its depth and sign set the table.</param>
+    /// <param name="index">The channel's place in each pixel.</param>
+    public Jpeg2000RasterChannel(Jpeg2000Image image, Jpeg2000Channel channel, int index, bool scale)
+        : this(image, channel, index, scale, channel.Depth, channel.Signed)
+    {
+    }
+
+    public Jpeg2000RasterChannel(Jpeg2000Image image, Jpeg2000Channel channel, int index, bool scale, int depth, bool signed)
+    {
+        _channel = index;
+        int max = (1 << depth) - 1;
+        _offset = signed ? 1 << (depth - 1) : 0;
+        _table = new byte[max + 1];
+        for (int v = 0; v <= max; v++) _table[v] = scale ? (byte)(((v * 255L) + (max >> 1)) / max) : (byte)Math.Min(v, 255);
+
+        // Pixel x of the image area shows sample column ((X0 + x) / dx) - ceil(X0 / dx), kept inside the channel.
+        int cx0 = Ceil(image.X0, channel.Dx), cy0 = Ceil(image.Y0, channel.Dy);
+        _columns = new int[image.Width];
+        _rows = new int[image.Height];
+        for (int x = 0; x < image.Width; x++) _columns[x] = Compat.Clamp(((image.X0 + x) / channel.Dx) - cx0, 0, channel.Width - 1);
+        for (int y = 0; y < image.Height; y++) _rows[y] = Compat.Clamp(((image.Y0 + y) / channel.Dy) - cy0, 0, channel.Height - 1);
+    }
+
+    /// <summary>The byte for a sample value.</summary>
+    public byte Map(int value) => _table[Compat.Clamp(value + _offset, 0, _table.Length - 1)];
+
+    /// <summary>
+    /// Writes the pixels that show samples of the block at column <paramref name="x"/>, row
+    /// <paramref name="y"/>, <paramref name="width"/> by <paramref name="rows"/>, rows packed in
+    /// <paramref name="values"/>.
+    /// </summary>
+    public void Write(byte[] output, int imageWidth, int channels, int x, int y, int width, int rows, int[] values)
+    {
+        int xa = LowerBound(_columns, x), xb = LowerBound(_columns, x + width);
+        int ya = LowerBound(_rows, y), yb = LowerBound(_rows, y + rows);
+        int[] columns = _columns;
+        byte[] table = _table;
+        int top = table.Length - 1, offset = _offset;
+        for (int py = ya; py < yb; py++)
+        {
+            int from = ((_rows[py] - y) * width) - x;
+            long o = ((((long)py * imageWidth) + xa) * channels) + _channel;
+            for (int px = xa; px < xb; px++, o += channels) output[o] = table[Compat.Clamp(values[from + columns[px]] + offset, 0, top)];
+        }
+    }
+
+    /// <summary>The first index whose value is at least <paramref name="value"/>; the values never decrease.</summary>
+    private static int LowerBound(int[] values, int value)
+    {
+        int low = 0, high = values.Length;
+        while (low < high)
+        {
+            int mid = (low + high) >>> 1;
+            if (values[mid] < value) low = mid + 1;
+            else high = mid;
+        }
+
+        return low;
     }
 
     private static int Ceil(int a, int b) => (int)(((long)a + b - 1) / b);
@@ -78,53 +147,51 @@ internal sealed class Jpeg2000Image
 /// Decodes JPEG 2000 (ITU-T T.800, part 1): JP2 files and raw codestreams. Tier-2 packet
 /// decoding in every progression order with precincts, layers, PPM, PPT, SOP and EPH; tier-1
 /// EBCOT with all code-block styles; scalar and reversible dequantization with ROI shifts; the
-/// 5/3 and 9/7 inverse wavelets; RCT and ICT; DC level shift. Every size, count and the total
-/// work are bounded by the caller's limits, and malformed data throws
-/// <see cref="Jpeg2000FormatException"/>.
+/// 5/3 and 9/7 inverse wavelets; RCT and ICT; DC level shift. Tiles are reconstructed a band of
+/// rows at a time, so the working memory beyond the output is a few rows of the widest tile.
+/// Every size, count and the total work are bounded by the caller's limits, and malformed data
+/// throws <see cref="Jpeg2000FormatException"/>.
 /// </summary>
 internal static class Jpeg2000Decoder
 {
-    /// <summary>Decodes a JP2 file or codestream.</summary>
+    // Samples per component a band of rows aims at: a tile this size or smaller is done at once.
+    private const int BandSamples = 1 << 18;
+
+    /// <summary>Decodes a JP2 file or codestream into planes of samples.</summary>
     /// <param name="byteLimit">Ceiling for the decoder's buffers.</param>
     /// <param name="maxPixels">Ceiling for the image area.</param>
     /// <param name="applyPalette">False keeps palette indexes, for a PDF Indexed color space.</param>
+    /// <param name="bandRows">Rows reconstructed together, or 0 to choose by width.</param>
     /// <exception cref="Jpeg2000FormatException">The data is damaged, too large or unsupported.</exception>
-    public static Jpeg2000Image Decode(ReadOnlySpan<byte> data, long byteLimit, long maxPixels = ImageSamples.MaxPixels, bool applyPalette = true)
+    public static Jpeg2000Image Decode(ReadOnlySpan<byte> data, long byteLimit, long maxPixels = ImageSamples.MaxPixels, bool applyPalette = true, int bandRows = 0)
     {
         byte[] bytes = data.ToArray();
-        try
+        return Guarded(() =>
         {
-            Jp2Header? header = null;
-            int start = 0, end = bytes.Length;
-            if (bytes.Length >= 12 && bytes[3] == 12 && bytes[4] == 0x6A && bytes[5] == 0x50 && bytes[6] == 0x20 && bytes[7] == 0x20)
-            {
-                header = ReadBoxes(bytes, out start, out end);
-            }
-
-            Jpeg2000Codestream stream = Jpeg2000Codestream.Read(bytes, start, end, maxPixels);
-            int[][] planes = DecodeTiles(stream, byteLimit);
-            return Assemble(stream, planes, header, applyPalette);
-        }
-        catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException or OverflowException)
-        {
-            // Defensive: a bound missed above surfaces as a format error, never as a crash.
-            throw new Jpeg2000FormatException("The JPEG 2000 data is malformed.", e);
-        }
+            (Jpeg2000Codestream stream, Jp2Header? header) = Open(bytes, maxPixels);
+            return Assemble(stream, Planes(stream, byteLimit, bandRows), header, applyPalette);
+        });
     }
 
     /// <summary>
     /// Decodes for a PDF image (ISO 32000-1, 7.4.9): the dictionary's color space wins and keeps
     /// palette indexes for Indexed; without one the JP2 header decides, then the channel count.
     /// Returns 8 bit samples in the space's component count, or a null raster when nothing fits.
+    /// The samples go straight from each band of rows into the raster.
     /// </summary>
+    /// <param name="bandRows">Rows reconstructed together, or 0 to choose by width.</param>
     /// <exception cref="Jpeg2000FormatException">The data is damaged, too large or unsupported.</exception>
-    public static (Raster? Raster, ColorSpace? Space) DecodeForPdf(byte[] data, ColorSpace? space, long byteLimit)
+    public static (Raster? Raster, ColorSpace? Space) DecodeForPdf(byte[] data, ColorSpace? space, long byteLimit, int bandRows = 0) =>
+        Guarded(() => Pdf(data, space, byteLimit, bandRows));
+
+    private static (Raster? Raster, ColorSpace? Space) Pdf(byte[] data, ColorSpace? space, long byteLimit, int bandRows)
     {
-        bool indexed = space?.IsIndexed == true;
-        Jpeg2000Image image = Decode(data, byteLimit, ImageSamples.MaxPixels, applyPalette: !indexed);
+        bool keepIndexes = space?.IsIndexed == true, indexed = keepIndexes;
+        (Jpeg2000Codestream stream, Jp2Header? header) = Open(data, ImageSamples.MaxPixels);
+        Jpeg2000Image image = Assemble(stream, null, header, applyPalette: !indexed);
         int colors = image.Channels.Count(c => !c.Opacity);
         List<Jpeg2000Channel> ordered = [.. image.Channels.Where(c => !c.Opacity), .. image.Channels.Where(c => c.Opacity)];
-        var colorFirst = new Jpeg2000Image { X0 = image.X0, Y0 = image.Y0, Width = image.Width, Height = image.Height, Channels = ordered, ColorSpace = image.ColorSpace };
+        bool sycc = false;
 
         if (space is null || space.Components > ordered.Count)
         {
@@ -137,86 +204,174 @@ internal static class Jpeg2000Decoder
             };
             if (space is null || space.Components > colors) space = colors switch { 1 or 2 => ColorSpace.Gray, 3 => ColorSpace.Rgb, >= 4 => ColorSpace.Cmyk, _ => null };
             if (space is null) return (null, null);
-            if (image.ColorSpace == 18 && space == ColorSpace.Rgb) colorFirst = Sycc(colorFirst);
+            sycc = image.ColorSpace == 18 && space == ColorSpace.Rgb && SyccApplies(ordered);
             indexed = false;
         }
 
         if (indexed && ordered[0].Depth > 8) return (null, space);
-        return (colorFirst.ToRaster(space.Components, scale: !indexed), space);
+        var colorFirst = new Jpeg2000Image { X0 = image.X0, Y0 = image.Y0, Width = image.Width, Height = image.Height, Channels = ordered, ColorSpace = image.ColorSpace };
+
+        // sYCC pairs samples by index, which is a position only when the three components share a grid.
+        if (sycc && !ordered.Take(3).All(c => stream.Components[c.Component].Dx == stream.Components[ordered[0].Component].Dx
+            && stream.Components[c.Component].Dy == stream.Components[ordered[0].Component].Dy))
+        {
+            int[][] planes = Planes(stream, byteLimit, bandRows);
+            Jpeg2000Image decoded = Assemble(stream, planes, header, applyPalette: !keepIndexes);
+            List<Jpeg2000Channel> all = [.. decoded.Channels.Where(c => !c.Opacity), .. decoded.Channels.Where(c => c.Opacity)];
+            var whole = new Jpeg2000Image { X0 = image.X0, Y0 = image.Y0, Width = image.Width, Height = image.Height, Channels = all, ColorSpace = image.ColorSpace };
+            return (Sycc(whole).ToRaster(space.Components, scale: true), space);
+        }
+
+        int count = space.Components;
+        long outputBytes = (long)image.Width * image.Height * count;
+        if (outputBytes > Compat.MaxArrayLength) throw new Jpeg2000FormatException("The image is too large.");
+        if (ordered.Take(count).Any(c => c.Width <= 0 || c.Height <= 0)) throw new Jpeg2000FormatException("A channel has no samples.");
+        var sink = new RasterSink(colorFirst, count, scale: !indexed, sycc);
+        Decode(stream, sink, byteLimit, outputBytes, bandRows, sink.Allocate);
+        return (sink.Raster, space);
     }
 
-    /// <summary>The image's components, decoded tile by tile into planes at component resolution.</summary>
-    private static int[][] DecodeTiles(Jpeg2000Codestream stream, long byteLimit)
+    /// <summary>Runs a decode, turning a bound missed above into a format error rather than a crash.</summary>
+    private static TResult Guarded<TResult>(Func<TResult> decode)
+    {
+        try
+        {
+            return decode();
+        }
+        catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException or OverflowException)
+        {
+            throw new Jpeg2000FormatException("The JPEG 2000 data is malformed.", e);
+        }
+    }
+
+    private static (Jpeg2000Codestream Stream, Jp2Header? Header) Open(byte[] bytes, long maxPixels)
+    {
+        Jp2Header? header = null;
+        int start = 0, end = bytes.Length;
+        if (bytes.Length >= 12 && bytes[3] == 12 && bytes[4] == 0x6A && bytes[5] == 0x50 && bytes[6] == 0x20 && bytes[7] == 0x20)
+        {
+            header = ReadBoxes(bytes, out start, out end);
+        }
+
+        return (Jpeg2000Codestream.Read(bytes, start, end, maxPixels), header);
+    }
+
+    /// <summary>True when the first three channels are of one size, as the sYCC conversion needs.</summary>
+    private static bool SyccApplies(IReadOnlyList<Jpeg2000Channel> ch) =>
+        ch.Count >= 3 && ch[0].Width == ch[1].Width && ch[0].Width == ch[2].Width && ch[0].Height == ch[1].Height && ch[0].Height == ch[2].Height;
+
+    /// <summary>The image's components as planes at component resolution.</summary>
+    private static int[][] Planes(Jpeg2000Codestream stream, long byteLimit, int bandRows)
     {
         Jpeg2000Component[] components = stream.Components;
         int n = components.Length;
-
-        // Planes plus the largest tile's buffers must fit the limit before anything is allocated.
-        long planeBytes = 0, tileBytes = 0;
+        long planeBytes = 0;
         for (int c = 0; c < n; c++)
         {
-            long w = Ceil(stream.X1, components[c].Dx) - Ceil(stream.X0, components[c].Dx);
-            long h = Ceil(stream.Y1, components[c].Dy) - Ceil(stream.Y0, components[c].Dy);
+            long w = ComponentWidth(stream, c), h = ComponentHeight(stream, c);
             if (w * h > Compat.MaxArrayLength) throw new Jpeg2000FormatException("The image is too large.");
             planeBytes += w * h * 4;
-            tileBytes += Math.Min(w, ((long)stream.TileWidth / components[c].Dx) + 2) * Math.Min(h, ((long)stream.TileHeight / components[c].Dy) + 2) * 4;
         }
 
-        if (planeBytes + tileBytes > byteLimit) throw new Jpeg2000FormatException("The image exceeds the decode limit.");
-        var planes = new int[n][];
-        for (int c = 0; c < n; c++)
+        var sink = new PlaneSink(stream);
+        Decode(stream, sink, byteLimit, planeBytes, bandRows, sink.Allocate);
+        return sink.Planes;
+    }
+
+    private static int ComponentWidth(Jpeg2000Codestream stream, int c) => Ceil(stream.X1, stream.Components[c].Dx) - Ceil(stream.X0, stream.Components[c].Dx);
+
+    private static int ComponentHeight(Jpeg2000Codestream stream, int c) => Ceil(stream.Y1, stream.Components[c].Dy) - Ceil(stream.Y0, stream.Components[c].Dy);
+
+    /// <summary>Decodes every tile into the sink, within <paramref name="byteLimit"/> bytes with the sink's own.</summary>
+    /// <param name="sinkBytes">What the sink holds.</param>
+    /// <param name="allocate">Allocates the sink's buffers once the first check has passed.</param>
+    private static void Decode(Jpeg2000Codestream stream, ISink sink, long byteLimit, long sinkBytes, int bandRows, Action allocate)
+    {
+        long workingLimit = byteLimit - sinkBytes;
+
+        // The nominal tile under the main header's coding must fit before anything is allocated;
+        // each tile is checked again under its own coding.
+        Jpeg2000Coding main = stream.Main.Coding!;
+        long nominal = 0;
+        for (int c = 0; c < stream.Components.Length; c++)
         {
-            long w = Ceil(stream.X1, components[c].Dx) - Ceil(stream.X0, components[c].Dx);
-            long h = Ceil(stream.Y1, components[c].Dy) - Ceil(stream.Y0, components[c].Dy);
-            planes[c] = new int[w * h];
+            long w = Math.Min(ComponentWidth(stream, c), ((long)stream.TileWidth / stream.Components[c].Dx) + 2);
+            long h = Math.Min(ComponentHeight(stream, c), ((long)stream.TileHeight / stream.Components[c].Dy) + 2);
+            nominal += Jpeg2000Synthesis.WorkingBytes(w, h, BandHeight(w, h, bandRows), main.BlockHeight) + (8 * w * Math.Min(h, BandHeight(w, h, bandRows)));
         }
+
+        if (nominal > workingLimit) throw new Jpeg2000FormatException("The image exceeds the decode limit.");
+        allocate();
+        if (Array.Exists(stream.Tiles, t => t is null)) sink.Missing();
 
         var block = new Jpeg2000BlockDecoder();
+        var buffers = new Jpeg2000Buffers();
         long blockLimit = Math.Max(4096, byteLimit / 128);
         for (int t = 0; t < stream.Tiles.Length; t++)
         {
-            if (stream.Tiles[t] is Jpeg2000TileParts parts) DecodeTile(stream, t, parts, planes, block, blockLimit);
+            if (stream.Tiles[t] is Jpeg2000TileParts parts) DecodeTile(stream, t, parts, sink, block, buffers, blockLimit, workingLimit, bandRows);
         }
-
-        return planes;
     }
 
-    private static void DecodeTile(Jpeg2000Codestream stream, int t, Jpeg2000TileParts parts, int[][] planes, Jpeg2000BlockDecoder block, long blockLimit)
+    /// <summary>Rows reconstructed together for a tile-component <paramref name="width"/> by <paramref name="height"/>.</summary>
+    private static int BandHeight(long width, long height, int bandRows)
+    {
+        long rows = bandRows > 0 ? bandRows : Math.Max(16, BandSamples / Math.Max(1, width));
+        return (int)Math.Max(1, Math.Min(Math.Max(1, height), rows));
+    }
+
+    private static void DecodeTile(
+        Jpeg2000Codestream stream, int t, Jpeg2000TileParts parts, ISink sink, Jpeg2000BlockDecoder block, Jpeg2000Buffers buffers, long blockLimit, long workingLimit, int bandRows)
     {
         Jpeg2000Parameters main = stream.Main, tile = parts.Parameters;
         Jpeg2000Parameters general = tile.HasCod ? tile : main;
-        int p = t % stream.TilesAcross, q = t / stream.TilesAcross;
-        int tx0 = (int)Math.Max(stream.X0, stream.TileX0 + ((long)p * stream.TileWidth));
-        int ty0 = (int)Math.Max(stream.Y0, stream.TileY0 + ((long)q * stream.TileHeight));
-        int tx1 = (int)Math.Min(stream.X1, stream.TileX0 + ((long)(p + 1) * stream.TileWidth));
-        int ty1 = (int)Math.Min(stream.Y1, stream.TileY0 + ((long)(q + 1) * stream.TileHeight));
+        (int tx0, int ty0, int tx1, int ty1) = TileArea(stream, t);
 
         int n = stream.Components.Length;
         var tcs = new Jpeg2000TileComponent[n];
-        var quantizations = new Jpeg2000Quantization[n];
         int maxResolutions = 0;
         long precincts = 0;
         for (int c = 0; c < n; c++)
         {
             // Precedence (A.6): tile COC, tile COD, main COC, main COD; likewise for QCC and QCD.
             Jpeg2000Coding coding = tile.ComponentCoding[c] ?? tile.Coding ?? main.ComponentCoding[c] ?? main.Coding!;
-            quantizations[c] = tile.ComponentQuantization[c] ?? tile.Quantization ?? main.ComponentQuantization[c] ?? main.Quantization!;
+            Jpeg2000Quantization quantization = tile.ComponentQuantization[c] ?? tile.Quantization ?? main.ComponentQuantization[c] ?? main.Quantization!;
             int roi = tile.RoiShift[c] ?? main.RoiShift[c] ?? 0;
-            tcs[c] = BuildComponent(stream.Components[c], coding, quantizations[c], roi, (tx0, ty0, tx1, ty1));
+            tcs[c] = BuildComponent(stream.Components[c], coding, quantization, roi, (tx0, ty0, tx1, ty1));
             foreach (Jpeg2000Resolution res in tcs[c].Resolutions) precincts += res.NextLayer.Length;
             if (precincts > blockLimit) throw new Jpeg2000FormatException("A tile has too many precincts.");
             maxResolutions = Math.Max(maxResolutions, coding.Levels + 1);
         }
 
-        // The tile's data, and its packet headers when PPM or PPT carry them (A.7.4, A.7.5).
-        int total = 0;
-        foreach ((int _, int length) in parts.Bodies) total += length;
-        var body = new byte[total];
-        int at = 0;
-        foreach ((int offset, int length) in parts.Bodies)
+        // The rows of every component share one height per band, so components of one size line up for the color transform.
+        int widest = tcs.Max(tc => Math.Max(0, tc.Width)), tallest = tcs.Max(tc => Math.Max(0, tc.Height));
+        int rows = BandHeight(widest, tallest, bandRows);
+        long working = 0;
+        foreach (Jpeg2000TileComponent tc in tcs)
         {
-            Buffer.BlockCopy(stream.Data, offset, body, at, length);
-            at += length;
+            if (tc.Width > 0 && tc.Height > 0) working += Jpeg2000Synthesis.WorkingBytes(tc.Width, tc.Height, rows, tc.Coding.BlockHeight) + (8L * tc.Width * Math.Min(tc.Height, rows));
+        }
+
+        if (working > workingLimit) throw new Jpeg2000FormatException("The image exceeds the decode limit.");
+
+        // The tile's data, joined when it comes in several tile-parts, and its packet headers when
+        // PPM or PPT carry them (A.7.4, A.7.5).
+        byte[] body = stream.Data;
+        int bodyStart = 0, bodyEnd = 0;
+        if (parts.Bodies.Count == 1)
+        {
+            (bodyStart, bodyEnd) = (parts.Bodies[0].Offset, parts.Bodies[0].Offset + parts.Bodies[0].Length);
+        }
+        else
+        {
+            foreach ((int _, int length) in parts.Bodies) bodyEnd += length;
+            body = new byte[bodyEnd];
+            int at = 0;
+            foreach ((int offset, int length) in parts.Bodies)
+            {
+                Buffer.BlockCopy(stream.Data, offset, body, at, length);
+                at += length;
+            }
         }
 
         byte[]? headers = null;
@@ -225,7 +380,7 @@ internal static class Jpeg2000Decoder
 
         List<Jpeg2000Progression> progressions = tile.Progressions.Count > 0 ? tile.Progressions : main.Progressions;
         if (progressions.Count == 0) progressions = [new Jpeg2000Progression(0, 0, general.Layers, maxResolutions, n, general.Order)];
-        var packets = new Jpeg2000Packets(tcs, body, headers, general.Layers, general.Sop, general.Eph, blockLimit)
+        var packets = new Jpeg2000Packets(tcs, body, bodyStart, bodyEnd, headers, general.Layers, general.Sop, general.Eph, blockLimit)
         {
             ComponentDx = [.. stream.Components.Select(c => c.Dx)],
             ComponentDy = [.. stream.Components.Select(c => c.Dy)],
@@ -234,52 +389,93 @@ internal static class Jpeg2000Decoder
         };
         packets.Read(progressions);
 
-        // Tier-1, dequantization and the inverse wavelet per component; then MCT and level shift.
-        var integers = new int[n][];
-        var reals = new float[n][];
+        // Tier-1, dequantization and the inverse wavelet per component, band by band; then MCT and level shift.
+        var synthesis = new Jpeg2000Synthesis?[n];
         for (int c = 0; c < n; c++)
         {
-            Jpeg2000TileComponent tc = tcs[c];
-            if (tc.Width <= 0 || tc.Height <= 0) continue;
-            if (tc.Coding.Reversible) integers[c] = new int[(long)tc.Width * tc.Height];
-            else reals[c] = new float[(long)tc.Width * tc.Height];
-            Coefficients(tc, block, integers[c], reals[c]);
-            if (tc.Coding.Reversible) Jpeg2000Wavelet.Inverse(integers[c], tc);
-            else Jpeg2000Wavelet.Inverse(reals[c], tc);
+            if (tcs[c].Width > 0 && tcs[c].Height > 0) synthesis[c] = Jpeg2000Synthesis.Create(tcs[c], c, block, buffers);
         }
 
-        if (general.Mct && n >= 3) InverseColorTransform(tcs, integers, reals);
-
-        for (int c = 0; c < n; c++)
+        bool mct = general.Mct && n >= 3 && synthesis[0] is not null;
+        if (mct)
         {
-            Jpeg2000TileComponent tc = tcs[c];
-            if (tc.Width <= 0 || tc.Height <= 0) continue;
-            Jpeg2000Component comp = stream.Components[c];
-            int cx0 = Ceil(stream.X0, comp.Dx), cy0 = Ceil(stream.Y0, comp.Dy);
-            int planeWidth = Ceil(stream.X1, comp.Dx) - cx0;
-            int shift = comp.Signed ? 0 : 1 << (comp.Depth - 1);
-            int min = comp.Signed ? -(1 << (comp.Depth - 1)) : 0, max = comp.Signed ? (1 << (comp.Depth - 1)) - 1 : (1 << comp.Depth) - 1;
-            int[] plane = planes[c];
-            for (int y = 0; y < tc.Height; y++)
+            if (tcs[1].Width != tcs[0].Width || tcs[2].Width != tcs[0].Width || tcs[1].Height != tcs[0].Height || tcs[2].Height != tcs[0].Height)
             {
-                int from = y * tc.Width, to = ((tc.Y0 - cy0 + y) * planeWidth) + tc.X0 - cx0;
-                if (integers[c] is int[] ints)
-                {
-                    for (int x = 0; x < tc.Width; x++) plane[to + x] = Compat.Clamp(ints[from + x] + shift, min, max);
-                }
-                else
-                {
-                    float[] floats = reals[c];
+                throw new Jpeg2000FormatException("The color transform needs components of one size.");
+            }
 
-                    // Rounded half to even, as lrintf in OpenJPEG.
-                    for (int x = 0; x < tc.Width; x++)
-                    {
-                        double v = Math.Round((double)floats[from + x]);
-                        plane[to + x] = v >= max - shift ? max : v <= min - shift ? min : (int)v + shift;
-                    }
-                }
+            if (tcs[1].Coding.Reversible != tcs[0].Coding.Reversible || tcs[2].Coding.Reversible != tcs[0].Coding.Reversible)
+            {
+                throw new Jpeg2000FormatException("The color transform mixes reversible and irreversible components.");
             }
         }
+
+        var bands = new RowBand[n];
+        for (int c = 0; c < n; c++) bands[c].Values = synthesis[c] is null ? null : buffers.Get<int>(Jpeg2000Buffers.Key(c, 0, Jpeg2000Buffers.Shifted), (long)tcs[c].Width * Math.Min(tcs[c].Height, rows));
+        for (int y = 0; y < tallest; y += rows)
+        {
+            for (int c = 0; c < n; c++)
+            {
+                Jpeg2000TileComponent tc = tcs[c];
+                bands[c].Rows = 0;
+                if (synthesis[c] is null || y >= tc.Height) continue;
+                bands[c].Rows = Math.Min(rows, tc.Height - y);
+                synthesis[c]!.Rows(y, y + bands[c].Rows);
+            }
+
+            bool transform = mct && bands[0].Rows > 0;
+            for (int c = 0; c < n; c++)
+            {
+                if (bands[c].Rows == 0) continue;
+                Jpeg2000TileComponent tc = tcs[c];
+                Jpeg2000Component comp = stream.Components[c];
+                bands[c].X = tc.X0 - Ceil(stream.X0, comp.Dx);
+                bands[c].Y = tc.Y0 - Ceil(stream.Y0, comp.Dy) + y;
+                bands[c].Width = tc.Width;
+                if (!transform || c >= 3) LevelShift(synthesis[c]!, comp, tc.Width * bands[c].Rows, bands[c].Values!);
+            }
+
+            if (transform) InverseColorTransform(synthesis, stream.Components, bands, tcs[0].Width * bands[0].Rows);
+
+            sink.Write(bands);
+        }
+    }
+
+    /// <summary>The tile's area on the reference grid (B.3).</summary>
+    private static (int X0, int Y0, int X1, int Y1) TileArea(Jpeg2000Codestream stream, int t)
+    {
+        int p = t % stream.TilesAcross, q = t / stream.TilesAcross;
+        int tx0 = (int)Math.Max(stream.X0, stream.TileX0 + ((long)p * stream.TileWidth));
+        int ty0 = (int)Math.Max(stream.Y0, stream.TileY0 + ((long)q * stream.TileHeight));
+        int tx1 = (int)Math.Min(stream.X1, stream.TileX0 + ((long)(p + 1) * stream.TileWidth));
+        int ty1 = (int)Math.Min(stream.Y1, stream.TileY0 + ((long)(q + 1) * stream.TileHeight));
+        return (tx0, ty0, tx1, ty1);
+    }
+
+    /// <summary>The DC level shift (G.1.2) and the clamp to the component's range, rounding irreversible values.</summary>
+    private static void LevelShift(Jpeg2000Synthesis synthesis, Jpeg2000Component comp, int count, int[] plane)
+    {
+        (int shift, int min, int max) = Range(comp);
+        if (synthesis.Output is int[] ints)
+        {
+            for (int i = 0; i < count; i++) plane[i] = Compat.Clamp(ints[i] + shift, min, max);
+            return;
+        }
+
+        float[] floats = (float[])synthesis.Output;
+        for (int i = 0; i < count; i++) plane[i] = Shift(floats[i], shift, min, max);
+    }
+
+    /// <summary>The level shift and the component's range of samples.</summary>
+    private static (int Shift, int Min, int Max) Range(Jpeg2000Component comp) =>
+        comp.Signed ? (0, -(1 << (comp.Depth - 1)), (1 << (comp.Depth - 1)) - 1) : (1 << (comp.Depth - 1), 0, (1 << comp.Depth) - 1);
+
+    /// <summary>An irreversible value rounded half to even, as lrintf in OpenJPEG, shifted and clamped.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int Shift(float value, int shift, int min, int max)
+    {
+        double v = Math.Round((double)value);
+        return v >= max - shift ? max : v <= min - shift ? min : (int)v + shift;
     }
 
     private static byte[] Concatenate(IEnumerable<byte[]> chunks)
@@ -308,16 +504,15 @@ internal static class Jpeg2000Decoder
             Jpeg2000Band[] bands;
             if (r == 0)
             {
-                bands = [Band(comp, coding, quant, 0, 0, rx0, ry0, rx1, ry1, 0, 0)];
+                bands = [Band(comp, coding, quant, 0, 0, rx0, ry0, rx1, ry1)];
             }
             else
             {
-                int lw = CeilShift(rx1, 1) - CeilShift(rx0, 1), lh = CeilShift(ry1, 1) - CeilShift(ry0, 1);
                 bands =
                 [
-                    Band(comp, coding, quant, r, 1, rx0 >> 1, CeilShift(ry0, 1), rx1 >> 1, CeilShift(ry1, 1), lw, 0),
-                    Band(comp, coding, quant, r, 2, CeilShift(rx0, 1), ry0 >> 1, CeilShift(rx1, 1), ry1 >> 1, 0, lh),
-                    Band(comp, coding, quant, r, 3, rx0 >> 1, ry0 >> 1, rx1 >> 1, ry1 >> 1, lw, lh),
+                    Band(comp, coding, quant, r, 1, rx0 >> 1, CeilShift(ry0, 1), rx1 >> 1, CeilShift(ry1, 1)),
+                    Band(comp, coding, quant, r, 2, CeilShift(rx0, 1), ry0 >> 1, CeilShift(rx1, 1), ry1 >> 1),
+                    Band(comp, coding, quant, r, 3, rx0 >> 1, ry0 >> 1, rx1 >> 1, ry1 >> 1),
                 ];
             }
 
@@ -342,7 +537,7 @@ internal static class Jpeg2000Decoder
         return new Jpeg2000TileComponent { X0 = x0, Y0 = y0, X1 = x1, Y1 = y1, Coding = coding, RoiShift = roi, Resolutions = resolutions };
     }
 
-    private static Jpeg2000Band Band(Jpeg2000Component comp, Jpeg2000Coding coding, Jpeg2000Quantization quant, int r, int orientation, int x0, int y0, int x1, int y1, int offsetX, int offsetY)
+    private static Jpeg2000Band Band(Jpeg2000Component comp, Jpeg2000Coding coding, Jpeg2000Quantization quant, int r, int orientation, int x0, int y0, int x1, int y1)
     {
         int levels = coding.Levels;
         int index = r == 0 ? 0 : 1 + (3 * (r - 1)) + (orientation - 1);
@@ -361,102 +556,37 @@ internal static class Jpeg2000Decoder
             Y1 = Math.Max(y0, y1),
             Planes = quant.Guard + exponent - 1,
             Step = step,
-            OffsetX = offsetX,
-            OffsetY = offsetY,
         };
     }
 
-    /// <summary>Every code-block of a tile-component through tier-1 and dequantization into its buffer.</summary>
-    private static void Coefficients(Jpeg2000TileComponent tc, Jpeg2000BlockDecoder decoder, int[]? integers, float[]? reals)
+    /// <summary>The inverse RCT (G-2) or ICT (G-6) on the first three components' rows, then their level shift.</summary>
+    private static void InverseColorTransform(Jpeg2000Synthesis?[] synthesis, Jpeg2000Component[] components, RowBand[] bands, int count)
     {
-        int stride = tc.Width;
-        foreach (Jpeg2000Resolution res in tc.Resolutions)
+        (int s0, int min0, int max0) = Range(components[0]);
+        (int s1, int min1, int max1) = Range(components[1]);
+        (int s2, int min2, int max2) = Range(components[2]);
+        int[] r = bands[0].Values!, g = bands[1].Values!, b = bands[2].Values!;
+        if (synthesis[0]!.Output is int[] y0 && synthesis[1]!.Output is int[] y1 && synthesis[2]!.Output is int[] y2)
         {
-            foreach (Jpeg2000PrecinctBand[]? precinct in res.Precincts)
-            {
-                if (precinct is null) continue;
-                for (int b = 0; b < precinct.Length; b++)
-                {
-                    Jpeg2000Band band = res.Bands[b];
-                    foreach (Jpeg2000CodeBlock cb in precinct[b].Blocks)
-                    {
-                        if (cb.Segments is null) continue;
-                        int planes = band.Planes + tc.RoiShift - cb.ZeroPlanes;
-                        int[] data = decoder.Decode(cb, band.Orientation, tc.Coding.Style, planes);
-                        int w = cb.X1 - cb.X0, h = cb.Y1 - cb.Y0;
-                        if (tc.RoiShift > 0) Unshift(data, w * h, tc.RoiShift);
-                        int origin = ((band.OffsetY + cb.Y0 - band.Y0) * stride) + band.OffsetX + cb.X0 - band.X0;
-                        float half = band.Step / 2;
-                        for (int y = 0; y < h; y++)
-                        {
-                            int o = origin + (y * stride), i = y * w;
-                            if (integers is not null)
-                            {
-                                for (int x = 0; x < w; x++) integers[o + x] = data[i + x] / 2;
-                            }
-                            else
-                            {
-                                for (int x = 0; x < w; x++) reals![o + x] = data[i + x] * half;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// The maximum shift method (T.800 H.1): coefficients at or above 2^s are the region of
-    /// interest and are shifted back down; the rest is background. Values here are doubled.
-    /// </summary>
-    private static void Unshift(int[] data, int count, int shift)
-    {
-        if (shift >= 30)
-        {
-            Array.Clear(data, 0, count);
-            return;
-        }
-
-        int threshold = 1 << (shift + 1);
-        for (int i = 0; i < count; i++)
-        {
-            int v = data[i], magnitude = Math.Abs(v);
-            if (magnitude >= threshold) data[i] = v < 0 ? -(magnitude >> shift) : magnitude >> shift;
-        }
-    }
-
-    /// <summary>The inverse RCT (G-2) or ICT (G-6) on the first three components.</summary>
-    private static void InverseColorTransform(Jpeg2000TileComponent[] tcs, int[][] integers, float[][] reals)
-    {
-        int w = tcs[0].Width, h = tcs[0].Height;
-        if (w <= 0 || h <= 0) return;
-        if (tcs[1].Width != w || tcs[2].Width != w || tcs[1].Height != h || tcs[2].Height != h) throw new Jpeg2000FormatException("The color transform needs components of one size.");
-        int count = w * h;
-        if (integers[0] is not null && integers[1] is not null && integers[2] is not null)
-        {
-            int[] y0 = integers[0], y1 = integers[1], y2 = integers[2];
             for (int i = 0; i < count; i++)
             {
-                int g = y0[i] - ((y2[i] + y1[i]) >> 2);
-                y0[i] = y2[i] + g;
-                y2[i] = y1[i] + g;
-                y1[i] = g;
-            }
-        }
-        else if (reals[0] is not null && reals[1] is not null && reals[2] is not null)
-        {
-            float[] y0 = reals[0], y1 = reals[1], y2 = reals[2];
-            for (int i = 0; i < count; i++)
-            {
-                float y = y0[i], cb = y1[i], cr = y2[i];
-                y0[i] = y + (1.402f * cr);
-                y1[i] = y - (0.34413f * cb) - (0.71414f * cr);
-                y2[i] = y + (1.772f * cb);
+                int green = y0[i] - ((y2[i] + y1[i]) >> 2);
+                r[i] = Compat.Clamp(y2[i] + green + s0, min0, max0);
+                g[i] = Compat.Clamp(green + s1, min1, max1);
+                b[i] = Compat.Clamp(y1[i] + green + s2, min2, max2);
             }
         }
         else
         {
-            throw new Jpeg2000FormatException("The color transform mixes reversible and irreversible components.");
+            float[] f0 = (float[])synthesis[0]!.Output, f1 = (float[])synthesis[1]!.Output, f2 = (float[])synthesis[2]!.Output;
+            for (int i = 0; i < count; i++)
+            {
+                // Each value is rounded to a float, as stored between the steps before.
+                float y = f0[i], cb = f1[i], cr = f2[i];
+                r[i] = Shift((float)(y + (1.402f * cr)), s0, min0, max0);
+                g[i] = Shift((float)(y - (0.34413f * cb) - (0.71414f * cr)), s1, min1, max1);
+                b[i] = Shift((float)(y + (1.772f * cb)), s2, min2, max2);
+            }
         }
     }
 
@@ -468,24 +598,177 @@ internal static class Jpeg2000Decoder
     private static Jpeg2000Image Sycc(Jpeg2000Image image)
     {
         IReadOnlyList<Jpeg2000Channel> ch = image.Channels;
-        if (ch.Count < 3 || ch[0].Width != ch[1].Width || ch[0].Width != ch[2].Width || ch[0].Height != ch[1].Height || ch[0].Height != ch[2].Height) return image;
-        int depth = ch[0].Depth, max = (1 << depth) - 1, half = 1 << (depth - 1);
+        if (!SyccApplies(ch)) return image;
+        int depth = ch[0].Depth, max = (1 << depth) - 1;
         int count = ch[0].Samples.Length;
         var r = new int[count];
         var g = new int[count];
         var b = new int[count];
-        for (int i = 0; i < count; i++)
-        {
-            double y = ch[0].Samples[i], cb = ch[1].Samples[i] - half, cr = ch[2].Samples[i] - half;
-            r[i] = Compat.Clamp((int)Math.Round(y + (1.402 * cr)), 0, max);
-            g[i] = Compat.Clamp((int)Math.Round(y - (0.344136 * cb) - (0.714136 * cr)), 0, max);
-            b[i] = Compat.Clamp((int)Math.Round(y + (1.772 * cb)), 0, max);
-        }
+        for (int i = 0; i < count; i++) (r[i], g[i], b[i]) = SyccToRgb(ch[0].Samples[i], ch[1].Samples[i], ch[2].Samples[i], depth, max);
 
         Jpeg2000Channel Plane(Jpeg2000Channel like, int[] samples) =>
             new() { Width = like.Width, Height = like.Height, Dx = like.Dx, Dy = like.Dy, Depth = depth, Samples = samples };
         List<Jpeg2000Channel> channels = [Plane(ch[0], r), Plane(ch[0], g), Plane(ch[0], b), .. ch.Skip(3)];
         return new Jpeg2000Image { X0 = image.X0, Y0 = image.Y0, Width = image.Width, Height = image.Height, Channels = channels, ColorSpace = 16 };
+    }
+
+    private static (int R, int G, int B) SyccToRgb(int luma, int blue, int red, int depth, int max)
+    {
+        int half = 1 << (depth - 1);
+        double y = luma, cb = blue - half, cr = red - half;
+        return (Compat.Clamp((int)Math.Round(y + (1.402 * cr)), 0, max),
+            Compat.Clamp((int)Math.Round(y - (0.344136 * cb) - (0.714136 * cr)), 0, max),
+            Compat.Clamp((int)Math.Round(y + (1.772 * cb)), 0, max));
+    }
+
+    /// <summary>The rows of one component a band of a tile yields, at their place in the component's plane.</summary>
+    private struct RowBand
+    {
+        public int X;
+        public int Y;
+        public int Width;
+        public int Rows;
+        public int[]? Values;
+    }
+
+    /// <summary>Where decoded bands of rows go.</summary>
+    private interface ISink
+    {
+        /// <summary>One band of rows of a tile, per component; components without rows in it have none.</summary>
+        void Write(RowBand[] bands);
+
+        /// <summary>Before any tile: some tiles have no data, and their samples are 0.</summary>
+        void Missing();
+    }
+
+    /// <summary>Collects every component as a plane of samples.</summary>
+    private sealed class PlaneSink(Jpeg2000Codestream stream) : ISink
+    {
+        public int[][] Planes { get; private set; } = [];
+
+        public void Allocate()
+        {
+            Planes = new int[stream.Components.Length][];
+            for (int c = 0; c < Planes.Length; c++) Planes[c] = new int[(long)ComponentWidth(stream, c) * ComponentHeight(stream, c)];
+        }
+
+        public void Write(RowBand[] bands)
+        {
+            for (int c = 0; c < bands.Length; c++)
+            {
+                RowBand band = bands[c];
+                int planeWidth = ComponentWidth(stream, c);
+                for (int y = 0; y < band.Rows; y++) Array.Copy(band.Values!, y * band.Width, Planes[c], ((band.Y + y) * planeWidth) + band.X, band.Width);
+            }
+        }
+
+        public void Missing()
+        {
+            // The planes start at 0.
+        }
+    }
+
+    /// <summary>
+    /// Writes channels straight into an interleaved 8 bit raster, as <see cref="Jpeg2000Image.ToRaster"/>
+    /// would from the planes: through the JP2 palette, sYCC to RGB when asked, then the byte table.
+    /// </summary>
+    private sealed class RasterSink : ISink
+    {
+        private readonly Jpeg2000Image _image;
+        private readonly int _count;
+        private readonly bool _sycc;
+        private readonly Jpeg2000RasterChannel[] _targets;
+        private readonly int[][] _values;
+        private readonly int[][] _sources;
+
+        public RasterSink(Jpeg2000Image image, int count, bool scale, bool sycc)
+        {
+            _image = image;
+            _count = count;
+            _sycc = sycc;
+            _targets = new Jpeg2000RasterChannel[count];
+            _values = new int[count][];
+            _sources = new int[count][];
+            for (int c = 0; c < count; c++)
+            {
+                // sYCC output has the depth of the first channel and no sign.
+                Jpeg2000Channel channel = image.Channels[c];
+                _targets[c] = sycc && c < 3
+                    ? new Jpeg2000RasterChannel(image, channel, c, scale, image.Channels[0].Depth, signed: false)
+                    : new Jpeg2000RasterChannel(image, channel, c, scale);
+                _values[c] = [];
+            }
+        }
+
+        public Raster? Raster { get; private set; }
+
+        public void Allocate() => Raster = new Raster(_image.Width, _image.Height, _count, new byte[(long)_image.Width * _image.Height * _count]);
+
+        public void Write(RowBand[] bands)
+        {
+            byte[] output = Raster!.Samples;
+            for (int c = 0; c < _count; c++)
+            {
+                Jpeg2000Channel channel = _image.Channels[c];
+                RowBand band = bands[channel.Component];
+                if (band.Rows == 0) continue;
+                int size = band.Width * band.Rows;
+                if (channel.Lookup is null && !(_sycc && c < 3))
+                {
+                    _sources[c] = band.Values!;
+                    continue;
+                }
+
+                // A channel of its own: through the palette, or a copy the sYCC conversion may overwrite.
+                if (_values[c].Length < size) _values[c] = new int[size];
+                int[] values = _values[c];
+                if (channel.Lookup is int[] lookup)
+                {
+                    for (int i = 0; i < size; i++) values[i] = lookup[Compat.Clamp(band.Values![i], 0, lookup.Length - 1)];
+                }
+                else
+                {
+                    Array.Copy(band.Values!, values, size);
+                }
+
+                _sources[c] = values;
+            }
+
+            if (_sycc)
+            {
+                // The three channels share one grid here, so their bands line up sample for sample.
+                RowBand band = bands[_image.Channels[0].Component];
+                int depth = _image.Channels[0].Depth, max = (1 << depth) - 1;
+                int[] r = _values[0], g = _values[1], b = _values[2];
+                if (band.Rows > 0)
+                {
+                    for (int i = 0, size = band.Width * band.Rows; i < size; i++) (r[i], g[i], b[i]) = SyccToRgb(r[i], g[i], b[i], depth, max);
+                }
+            }
+
+            for (int c = 0; c < _count; c++)
+            {
+                RowBand band = bands[_image.Channels[c].Component];
+                if (band.Rows > 0) _targets[c].Write(output, _image.Width, _count, band.X, band.Y, band.Width, band.Rows, _sources[c]);
+            }
+        }
+
+        public void Missing()
+        {
+            // Every sample of every channel reads 0 there; the tiles that have data overwrite their pixels.
+            var zero = new byte[_count];
+            int[] values = new int[_count];
+            for (int c = 0; c < _count; c++) values[c] = _image.Channels[c].Lookup is int[] lookup ? lookup[0] : 0;
+            if (_sycc)
+            {
+                int depth = _image.Channels[0].Depth;
+                (values[0], values[1], values[2]) = SyccToRgb(values[0], values[1], values[2], depth, (1 << depth) - 1);
+            }
+
+            for (int c = 0; c < _count; c++) zero[c] = _targets[c].Map(values[c]);
+            byte[] output = Raster!.Samples;
+            for (int i = 0; i < output.Length; i += _count) zero.CopyTo(output, i);
+        }
     }
 
     /// <summary>The JP2 header's color specification, palette, component mapping and channel definitions.</summary>
@@ -635,8 +918,11 @@ internal static class Jpeg2000Decoder
         }
     }
 
-    /// <summary>The channels: components through the palette (I.5.3.4, I.5.3.5), ordered by cdef (I.5.3.6).</summary>
-    private static Jpeg2000Image Assemble(Jpeg2000Codestream stream, int[][] planes, Jp2Header? header, bool applyPalette)
+    /// <summary>
+    /// The channels: components through the palette (I.5.3.4, I.5.3.5), ordered by cdef (I.5.3.6).
+    /// Without planes the channels are described but hold no samples.
+    /// </summary>
+    private static Jpeg2000Image Assemble(Jpeg2000Codestream stream, int[][]? planes, Jp2Header? header, bool applyPalette)
     {
         var channels = new List<Jpeg2000Channel>();
         Jpeg2000Channel FromComponent(int c) => new()
@@ -647,14 +933,15 @@ internal static class Jpeg2000Decoder
             Dy = stream.Components[c].Dy,
             Depth = stream.Components[c].Depth,
             Signed = stream.Components[c].Signed,
-            Samples = planes[c],
+            Component = c,
+            Samples = planes?[c] ?? [],
         };
 
         if (applyPalette && header?.Palette is int[][] palette && header.Mapping is { Length: > 0 } mapping)
         {
             foreach ((int component, int type, int column) in mapping)
             {
-                if (component >= planes.Length) throw new Jpeg2000FormatException("The JP2 component mapping names a component that does not exist.");
+                if (component >= stream.Components.Length) throw new Jpeg2000FormatException("The JP2 component mapping names a component that does not exist.");
                 Jpeg2000Channel source = FromComponent(component);
                 if (type != 1)
                 {
@@ -664,7 +951,7 @@ internal static class Jpeg2000Decoder
 
                 if (column >= palette.Length) throw new Jpeg2000FormatException("The JP2 component mapping names a palette column that does not exist.");
                 int[] entries = palette[column];
-                var samples = new int[source.Samples.Length];
+                int[] samples = planes is null ? [] : new int[source.Samples.Length];
                 for (int i = 0; i < samples.Length; i++) samples[i] = entries[Compat.Clamp(source.Samples[i], 0, entries.Length - 1)];
                 channels.Add(new Jpeg2000Channel
                 {
@@ -674,13 +961,15 @@ internal static class Jpeg2000Decoder
                     Dy = source.Dy,
                     Depth = header.PaletteDepths[column],
                     Signed = header.PaletteSigned[column],
+                    Component = component,
+                    Lookup = entries,
                     Samples = samples,
                 });
             }
         }
         else
         {
-            for (int c = 0; c < planes.Length; c++) channels.Add(FromComponent(c));
+            for (int c = 0; c < stream.Components.Length; c++) channels.Add(FromComponent(c));
         }
 
         if (header?.Definitions is { Length: > 0 } definitions && definitions.All(d => d.Channel < channels.Count))
@@ -707,7 +996,7 @@ internal static class Jpeg2000Decoder
     }
 
     private static Jpeg2000Channel Opaque(Jpeg2000Channel c) =>
-        new() { Width = c.Width, Height = c.Height, Dx = c.Dx, Dy = c.Dy, Depth = c.Depth, Signed = c.Signed, Samples = c.Samples, Opacity = true };
+        new() { Width = c.Width, Height = c.Height, Dx = c.Dx, Dy = c.Dy, Depth = c.Depth, Signed = c.Signed, Component = c.Component, Lookup = c.Lookup, Samples = c.Samples, Opacity = true };
 
     private static long U32(byte[] data, int p) =>
         p + 4 <= data.Length ? ((long)data[p] << 24) | ((long)data[p + 1] << 16) | ((long)data[p + 2] << 8) | data[p + 3] : throw new Jpeg2000FormatException("A JP2 box is truncated.");

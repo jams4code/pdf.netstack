@@ -313,4 +313,87 @@ public sealed class Jbig2DecoderTests
         Assert.HasCount((width / 8) * height, packed);
         Assert.IsTrue(packed.All(b => b == 0), "The black default page is replaced by white regions.");
     }
+
+    private static Jbig2Bitmap Random(Random random, int width, int height)
+    {
+        Jbig2Bitmap bitmap = Jbig2Bitmap.Create(width, height, new Jbig2Budget(1L << 30));
+        random.NextBytes(bitmap.Data);
+        return bitmap;
+    }
+
+    /// <summary>
+    /// Composition a byte at a time draws what composition pixel by pixel draws: every operator,
+    /// every bit alignment, sources hanging off each edge, and padding bits in the source rows.
+    /// </summary>
+    [TestMethod]
+    public void ComposeMatchesPixelByPixel()
+    {
+        var random = new Random(3);
+        var budget = new Jbig2Budget(1L << 40);
+        for (int round = 0; round < 400; round++)
+        {
+            Jbig2Bitmap target = Random(random, random.Next(1, 70), random.Next(1, 12));
+            Jbig2Bitmap source = Random(random, random.Next(1, 70), random.Next(1, 12));
+            int x = random.Next(-source.Width - 3, target.Width + 3), y = random.Next(-source.Height - 2, target.Height + 2);
+            int op = round % 5;
+            var expected = new bool[target.Width * target.Height];
+            for (int ty = 0; ty < target.Height; ty++)
+            {
+                for (int tx = 0; tx < target.Width; tx++)
+                {
+                    int d = target.Get(tx, ty), sx = tx - x, sy = ty - y;
+                    bool inside = sx >= 0 && sx < source.Width && sy >= 0 && sy < source.Height;
+                    int s = inside ? source.Get(sx, sy) : 0;
+                    int v = !inside ? d : op switch { 0 => d | s, 1 => d & s, 2 => d ^ s, 3 => 1 ^ d ^ s, _ => s };
+                    expected[(ty * target.Width) + tx] = v != 0;
+                }
+            }
+
+            target.Compose(source, x, y, op, budget);
+            for (int i = 0; i < expected.Length; i++) Assert.AreEqual(expected[i], target.Get(i % target.Width, i / target.Width) != 0, $"round {round}, operator {op}, at ({x}, {y})");
+        }
+
+        // A symbol cut from a collective bitmap, at any offset.
+        Jbig2Bitmap collective = Random(random, 61, 7);
+        for (int at = 0; at < 61; at += 5)
+        {
+            Jbig2Bitmap symbol = collective.Columns(at, 13, budget);
+            for (int py = 0; py < 7; py++)
+            {
+                for (int px = 0; px < 13; px++) Assert.AreEqual(collective.Get(at + px, py), symbol.Get(px, py));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The text-arith page with its region's combination operator, its default pixel and the
+    /// page's default pixel changed: regions that combine with the page symbol by symbol are drawn
+    /// straight onto it, the others through a bitmap of their own, to the same result.
+    /// </summary>
+    [TestMethod]
+    [DataRow(4, 0, 1, "replace: the region over a black page")]
+    [DataRow(2, 0, 1, "xor: the region inverts a black page")]
+    [DataRow(1, 0, 1, "and: white around the symbols clears a black page")]
+    [DataRow(0, 1, 0, "or with a black region default: all black")]
+    [DataRow(3, 0, 0, "xnor: the region inverted on a white page")]
+    public void TextRegionsCombineWithThePage(int op, int regionDefault, int pageDefault, string what)
+    {
+        (bool[] reference, int width, int height) = Reference("text-arith");
+        byte[] data = File.ReadAllBytes(Fixture("text-arith.jb2"));
+
+        // Page information data at 11, its flags at 27; the text region's data at 42: the external
+        // operator at 58, SBDEFPIXEL in bit 1 of byte 59.
+        Assert.AreEqual(48, data[4]);
+        Assert.AreEqual(6, data[34]);
+        data[27] = (byte)((data[27] & ~0x04) | (pageDefault << 2));
+        data[58] = (byte)op;
+        data[59] = (byte)((data[59] & ~0x02) | (regionDefault << 1));
+        bool[] page = Unpack(Jbig2Decoder.Decode(data, Globals("text-arith"), width, height), width, height, blackBit: 1);
+        for (int i = 0; i < page.Length; i++)
+        {
+            bool region = regionDefault == 1 || reference[i], under = pageDefault == 1;
+            bool expected = op switch { 0 => under | region, 1 => under & region, 2 => under ^ region, 3 => !(under ^ region), _ => region };
+            Assert.AreEqual(expected, page[i], what);
+        }
+    }
 }

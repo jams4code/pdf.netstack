@@ -103,6 +103,17 @@ internal static class Jbig2Text
     {
         Jbig2Bitmap region = Jbig2Bitmap.Create(p.Width, p.Height, budget);
         if (p.DefaultPixel != 0) region.Fill(1);
+        Draw(p, symbols, c, budget, region, 0, 0);
+        return region;
+    }
+
+    /// <summary>
+    /// 6.4.5 drawing straight into <paramref name="target"/>, where the region's top left is at
+    /// (<paramref name="left"/>, <paramref name="top"/>): instances are cut to the region as they
+    /// would be in a bitmap of its own.
+    /// </summary>
+    public static void Draw(Jbig2TextParameters p, Jbig2Symbols symbols, Jbig2TextCoding c, Jbig2Budget budget, Jbig2Bitmap target, long left, long top)
+    {
         long strips = 1L << p.LogStrips;
         bool right = (p.Corner & 2) != 0, bottom = (p.Corner & 1) == 0;
 
@@ -148,13 +159,11 @@ internal static class Jbig2Text
                     y = bottom ? curS - ib.Height + 1 : curS;
                 }
 
-                region.Compose(ib, x, y, p.Operator, budget);
+                target.Compose(ib, left + x, top + y, p.Operator, budget, left, top, left + p.Width, top + p.Height);
                 if (!before) curS += size;
                 instances++;
             }
         }
-
-        return region;
     }
 
     private static long Checked(long value) =>
