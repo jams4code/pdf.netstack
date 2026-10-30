@@ -113,6 +113,41 @@
 - `tools/scan_bench.py` writes synthetic scans of each kind a scanner produces (1 bit under Flate
   and LZW, Group 3 fax, Group 4, JBIG2, gray and color JPEG 2000) and measures both optimizer
   profiles on them.
+- HTML conversion is 1.5 to 1.9 times faster with the same PDF, byte for byte. On the benchmark
+  samples (fastest of 125 conversions each, on a busy 8 core machine): a one page invoice went
+  from 46 to 31 ms, a one page report from 30 to 20 ms, a 21 page invoice with a 640 row table
+  from 465 to 244 ms, a 15 page report with lists, images, SVG charts and a grid from 110 to 68
+  ms, and a 52 page text from 316 to 193 ms. The first conversion in a new process is 1.1 to 1.8
+  times faster. What changed:
+  - `ConvertToPdf` saves without the optimizer's equivalence proof, which read both files back
+    and took about half the optimizer's time: the converter draws all the content itself. New
+    `PdfSaveOptions.VerifyOptimization` (default true) and `HtmlConverterOptions.SaveOptions`
+    (default null: as `PdfSaveOptions.Default` without the proof); set `SaveOptions` to
+    `PdfSaveOptions.Default` to keep the proof.
+  - Each page paints the parts of the document that reach it instead of walking all of it.
+  - Table cells are measured for the column widths and laid out from the same text, fonts,
+    shaping and break opportunities, and collapsed borders read each style once per table.
+  - Shaped runs are kept for the rest of the conversion (up to 256 characters a run and 256K
+    characters in all), so repeated labels and numbers shape once.
+  - OpenType lookups pass over glyphs their first coverage does not list, as HarfBuzz's set
+    digests do; each stage's lookups are worked out once per font. A hostile font's step budget
+    is spent more slowly as a result; output is otherwise the same.
+  - Installed fallback fonts are looked up only when a character needs them, so a document in
+    the generic families never scans the installed fonts: its first conversion in a process went
+    from 352 to 258 ms.
+  - Font subsets are made and compressed side by side when a document is saved.
+  - Less work per character in inline layout: the bidi algorithm is skipped for text below
+    U+0590 in a paragraph that is not right to left (every level is 0 there), fonts are chosen
+    once per run of one style, break opportunities need no sorting, and CSS keywords and colors
+    are read once per value. Attribute values without character references, such as data: URIs,
+    are copied whole.
+  - The optimizer's content analysis reads operators without a string each, and font program
+    merging reads each program once.
+  - Fixed: `ConvertFileToDocument` dropped `MaxPages` when it set the base address.
+- `tools/PdfNetStack.Benchmarks` has three larger HTML samples (a 21 page invoice, a 15 page
+  report with lists, images, SVG and a grid, a 52 page text); `quick`, `cold` and `samples` take
+  a sample name, `samples` also writes the PDFs and their page counts, and `quick` counts the
+  allocations of every thread.
 - HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
   across an unbounded number of pages. Computed lengths are now clamped to a million px either
   way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000

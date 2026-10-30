@@ -39,12 +39,20 @@ var options = new HtmlConverterOptions
     StyleSheet = "body { font-family: Inter, sans-serif }",
     Fonts = myFonts,                                   // a PdfFontCollection of your own
     UseSystemFonts = false,                            // same output on every machine
+    SaveOptions = new PdfSaveOptions { Compression = CompressionEffort.Balanced, VerifyOptimization = false },
 };
 HtmlConverter.ConvertToPdf(html, outputStream, options);
 ```
 
 `ConvertToDocument` returns a `PdfDocument`, so the result can be signed, encrypted, saved as
 PDF/A, merged or stamped with the rest of PdfNetStack before it is written.
+
+`ConvertToPdf` saves with `SaveOptions`. Without them it optimizes the file as
+`PdfDocument.Save` does but skips the optimizer's equivalence proof
+(`PdfSaveOptions.VerifyOptimization`), which reads both files back: the converter draws every
+page itself, and the bytes are the same whenever the proof would pass.
+`SaveOptions = PdfSaveOptions.Default` keeps the proof. `CompressionEffort.Balanced`, as above,
+saves faster for slightly larger files.
 
 ## Paged media
 
@@ -154,7 +162,9 @@ memory without bound. Raise `MaxPages` for documents that are genuinely that lon
 No fonts ship in the package. The engine uses `@font-face` (TrueType, OpenType, WOFF and
 WOFF2), fonts you pass in `Fonts`, and installed fonts. The generic families map to the standard PDF fonts,
 so a document that asks only for `serif`, `sans-serif` or `monospace` needs no embedded font.
-Installed fonts with wide coverage stand in for characters the chosen fonts lack.
+Installed fonts with wide coverage stand in for characters the chosen fonts lack; they are
+looked up only when a character needs them, so a document the chosen fonts cover never scans
+the installed fonts for fallbacks.
 
 Variable fonts draw at the instance the style asks for, as CSS Fonts 4 sets out: `font-weight`,
 `font-stretch` (or `font-width`) and `font-style` pick the weight, width, italic and slant,

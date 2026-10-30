@@ -384,7 +384,10 @@ internal sealed class OpenTypeFontResource : FontResource
 
     public override double Width(int glyph) => _font.GetAdvance(glyph);
 
-    public override void Finish()
+    public override void Finish() => Prepare()();
+
+    /// <summary>Subsets and compresses the font program and the ToUnicode CMap; the action writes the dictionaries.</summary>
+    public override Action Prepare()
     {
         OpenTypeFile file = _font.File;
         var glyphs = new SortedSet<int>(_cidToGlyph.Values);
@@ -403,6 +406,14 @@ internal sealed class OpenTypeFontResource : FontResource
         }
 
         string name = SubsetTag(keep) + "+" + _font.Name;
+        var stream = PdfStream.FromData(program);
+        var toUnicode = PdfStream.FromData(ToUnicode());
+        return () => Write(cff, program.Length, name, stream, toUnicode);
+    }
+
+    private void Write(bool cff, int length, string name, PdfStream stream, PdfStream toUnicode)
+    {
+        OpenTypeFile file = _font.File;
         Dictionary.Set("BaseFont", new PdfName(name));
 
         _cidFont.Set("Type", new PdfName("Font"));
@@ -437,11 +448,10 @@ internal sealed class OpenTypeFontResource : FontResource
         _descriptor.Set("StemV", PdfNumber.FromInteger(10 + 220 * Math.Max(0, _font.Weight - 50) / 900));
         _descriptor.Set(cff ? "FontFile3" : "FontFile2", _fontFile);
 
-        var stream = PdfStream.FromData(program);
         if (cff) stream.Dictionary.Set("Subtype", new PdfName("CIDFontType0C"));
-        else stream.Dictionary.Set("Length1", PdfNumber.FromInteger(program.Length));
+        else stream.Dictionary.Set("Length1", PdfNumber.FromInteger(length));
         Document.Objects[_fontFile.Number] = stream;
-        Document.Objects[_toUnicode.Number] = PdfStream.FromData(ToUnicode());
+        Document.Objects[_toUnicode.Number] = toUnicode;
     }
 
     /// <summary>The W array: runs of consecutive CIDs with their widths.</summary>

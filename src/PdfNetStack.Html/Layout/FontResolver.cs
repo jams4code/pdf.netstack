@@ -3,9 +3,17 @@ using PdfNetStack.Html.Css;
 
 namespace PdfNetStack.Html.Layout;
 
-/// <summary>The fonts for a style: the first available family, then fallbacks for characters it lacks.</summary>
-internal sealed record FontSet(PdfFont Primary, IReadOnlyList<PdfFont> Fallbacks)
+/// <summary>
+/// The fonts for a style: the first available family, the other families, then installed fonts
+/// for characters they all lack. The installed ones are found only when a character needs them,
+/// so a document whose text the named fonts cover never scans the installed fonts for them.
+/// </summary>
+internal sealed class FontSet(PdfFont primary, List<PdfFont> others, Func<List<PdfFont>> installed)
 {
+    private List<PdfFont>? _installed;
+
+    public PdfFont Primary { get; } = primary;
+
     /// <summary>
     /// The first font that can draw the character at <paramref name="index"/>, with its own glyph
     /// or after Unicode normalization, or the primary font.
@@ -13,12 +21,34 @@ internal sealed record FontSet(PdfFont Primary, IReadOnlyList<PdfFont> Fallbacks
     public PdfFont For(string text, int index)
     {
         if (Primary.Covers(text, index)) return Primary;
-        foreach (PdfFont f in Fallbacks)
+        foreach (PdfFont f in others)
+        {
+            if (f.Covers(text, index)) return f;
+        }
+
+        foreach (PdfFont f in Installed())
         {
             if (f.Covers(text, index)) return f;
         }
 
         return Primary;
+    }
+
+    // The installed fallbacks not already among the families, each once, in their order.
+    private List<PdfFont> Installed()
+    {
+        if (_installed is not null) return _installed;
+        var all = new List<PdfFont>(others.Count + 1) { Primary };
+        all.AddRange(others);
+        var added = new List<PdfFont>();
+        foreach (PdfFont f in installed())
+        {
+            if (all.Contains(f)) continue;
+            all.Add(f);
+            added.Add(f);
+        }
+
+        return _installed = added;
     }
 }
 
@@ -56,6 +86,7 @@ internal sealed class FontResolver
     private readonly PdfFontCollection? _fonts;
     private readonly bool _useSystemFonts;
     private readonly Dictionary<Request, FontSet> _cache = [];
+    private readonly Dictionary<FontValues, FontSet> _byValues = [];
 
     // Font sizes and font-variation-settings could otherwise ask for a new instance, and an
     // embedded font program, per distinct value.
@@ -77,6 +108,9 @@ internal sealed class FontResolver
         _fonts = fonts;
         _useSystemFonts = useSystemFonts;
     }
+
+    /// <summary>Runs shaped so far in this conversion, for every layout of it to share.</summary>
+    public ShapingCache Shaping { get; } = new();
 
     /// <summary>Loads @font-face rules; <paramref name="load"/> returns the bytes behind a URL. Faces that fail to load are skipped.</summary>
     public void AddFontFaces(IEnumerable<CssFontFaceRule> rules, Func<string, byte[]?>? load)
@@ -279,6 +313,20 @@ internal sealed class FontResolver
     /// </summary>
     public FontSet Resolve(ComputedStyle style)
     {
+        // Styles that share their font values share a font set: inherited values are the parent's
+        // own lists, so most elements of a document ask with lists already seen.
+        var values = new FontValues(style["font-family"], style["font-weight"], style["font-stretch"], style["font-style"], style["font-optical-sizing"], style["font-variation-settings"], style.FontSize);
+        if (_byValues.TryGetValue(values, out FontSet? known)) return known;
+        FontSet set = ResolveRequest(style);
+        _byValues[values] = set;
+        return set;
+    }
+
+    /// <summary>The computed values <see cref="Resolve"/> reads, compared by reference: the same lists give the same request.</summary>
+    private readonly record struct FontValues(List<CssValue> Family, List<CssValue> Weight, List<CssValue> Stretch, List<CssValue> Style, List<CssValue> OpticalSizing, List<CssValue> Variations, double Size);
+
+    private FontSet ResolveRequest(ComputedStyle style)
+    {
         double weight = style.Number("font-weight");
         if (!(weight is >= 1 and <= 1000)) weight = 400;
         List<CssValue> stretch = style["font-stretch"];
@@ -332,12 +380,8 @@ internal sealed class FontResolver
         // The default family is serif, as in browsers.
         PdfFont fallback = generic ?? Generic("serif", standardWeight, italic)!;
         if (!found.Contains(fallback)) found.Add(fallback);
-        foreach (PdfFont f in SystemFallbackFonts())
-        {
-            if (!found.Contains(f)) found.Add(f);
-        }
 
-        var set = new FontSet(found[0], found.Skip(1).ToList());
+        var set = new FontSet(found[0], found.Skip(1).ToList(), SystemFallbackFonts);
         _cache[request] = set;
         return set;
     }

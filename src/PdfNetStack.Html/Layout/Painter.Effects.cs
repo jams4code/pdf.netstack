@@ -436,7 +436,7 @@ internal sealed partial class Painter
         return [.. colors.Select((c, i) => new PdfGradientStop(Math.Max(0, Math.Min(1, positions[i]!.Value)), ToPdf(c, opacity)))];
     }
 
-    private static bool HasTransform(ComputedStyle s) => s["transform"] is { Count: > 0 } v && !(v.Count == 1 && v[0].IsIdent("none"));
+    internal static bool HasTransform(ComputedStyle s) => s["transform"] is { Count: > 0 } v && !(v.Count == 1 && v[0].IsIdent("none"));
 
     /// <summary>Applies transform around transform-origin (CSS Transforms 1, 6).</summary>
     private void Transform(BoxFragment f)

@@ -20,11 +20,40 @@ internal static class BoxMetrics
 
     public static Edges Borders(ComputedStyle s) => new(Border(s, "top"), Border(s, "right"), Border(s, "bottom"), Border(s, "left"));
 
+    /// <summary>The border-*-style property of a side.</summary>
+    public static string StyleProperty(string side) => side switch
+    {
+        "top" => "border-top-style",
+        "right" => "border-right-style",
+        "bottom" => "border-bottom-style",
+        "left" => "border-left-style",
+        _ => "border-" + side + "-style",
+    };
+
+    /// <summary>The border-*-color property of a side.</summary>
+    public static string ColorProperty(string side) => side switch
+    {
+        "top" => "border-top-color",
+        "right" => "border-right-color",
+        "bottom" => "border-bottom-color",
+        "left" => "border-left-color",
+        _ => "border-" + side + "-color",
+    };
+
+    private static string WidthProperty(string side) => side switch
+    {
+        "top" => "border-top-width",
+        "right" => "border-right-width",
+        "bottom" => "border-bottom-width",
+        "left" => "border-left-width",
+        _ => "border-" + side + "-width",
+    };
+
     /// <summary>A border width in px: 0 for no style, keywords as browsers draw them.</summary>
     public static double Border(ComputedStyle s, string side)
     {
-        if (s.Keyword("border-" + side + "-style") is "none" or "hidden" or "") return 0;
-        string property = "border-" + side + "-width";
+        if (s.Keyword(StyleProperty(side)) is "none" or "hidden" or "") return 0;
+        string property = WidthProperty(side);
         return s.Keyword(property) switch
         {
             "thin" => 1,
@@ -53,6 +82,10 @@ internal sealed partial class LayoutEngine
 {
     private readonly Dictionary<ComputedStyle, FontSet> _fonts = [];
     private readonly Dictionary<Box, (double Min, double Max)> _intrinsic = [];
+
+    // Inline content measured for its intrinsic widths, kept for laying it out: a table cell is
+    // measured for the column widths and then laid out in its column.
+    private readonly Dictionary<Box, InlineLayout> _measured = [];
 
     public LayoutEngine(FontResolver fonts) => Fonts = fonts;
 
@@ -135,7 +168,8 @@ internal sealed partial class LayoutEngine
 
         if (box.Children.Count > 0 && box.Children.All(c => c.IsInlineLevel))
         {
-            var inline = new InlineLayout(this, style, box, box.Children, contentWidth);
+            InlineLayout inline = (_measured.TryGetValue(box, out InlineLayout? measured) ? measured.AtWidth(contentWidth) : null)
+                ?? new InlineLayout(this, style, box, box.Children, contentWidth);
             if (!inline.IsEmpty)
             {
                 double lineTop = cursor + inner.Value;
@@ -498,7 +532,9 @@ internal sealed partial class LayoutEngine
         if (box is GridBox grid) return GridIntrinsic(grid);
         if (box.Children.All(c => c.IsInlineLevel))
         {
-            return new InlineLayout(this, box.Style, box, box.Children, double.MaxValue / 4, intrinsic: true).IntrinsicWidths();
+            var inline = new InlineLayout(this, box.Style, box, box.Children, double.MaxValue / 4, intrinsic: true);
+            _measured[box] = inline;
+            return inline.IntrinsicWidths();
         }
 
         double min = 0, max = 0;

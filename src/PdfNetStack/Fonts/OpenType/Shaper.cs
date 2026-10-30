@@ -25,7 +25,17 @@ internal sealed class ShapingTables(OpenTypeFile font)
     /// <summary>The GSUB features, the GSUB script chosen and the GPOS features, by the script tags searched.</summary>
     internal ConcurrentDictionary<string, (List<(string Tag, int[] Lookups)> Gsub, string? Script, List<(string Tag, int[] Lookups)> Gpos)> Features { get; } =
         new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The lookups of a fixed stage for a list of the font's features, in lookup order: every run
+    /// the font shapes asks again. Keyed by the stage and the list themselves, both kept for the
+    /// font's life, so the cache stays as small as the stages times the scripts shaped.
+    /// </summary>
+    internal ConcurrentDictionary<(IReadOnlyList<ShapingFeature> Stage, List<(string Tag, int[] Lookups)> Features), StageLookup[]> Stages { get; } = new();
 }
+
+/// <summary>A lookup a stage applies, with the masks and joiner handling of the features that list it.</summary>
+internal readonly record struct StageLookup(int Index, uint Mask, bool AutoZwj, bool AutoZwnj, bool PerSyllable);
 
 /// <summary>What happened to a glyph during shaping, and what kind of character it came from.</summary>
 [Flags]
@@ -228,7 +238,7 @@ internal sealed partial class Shaper
             var g = new GlyphInfo
             {
                 Cluster = i,
-                Text = text.Substring(i, char.IsSurrogatePair(text, i) ? 2 : 1),
+                Text = char.IsSurrogatePair(text, i) ? text.Substring(i, 2) : Character(text[i]),
                 Mask = Global,
             };
             SetCharacter(g, cp);
@@ -275,7 +285,7 @@ internal sealed partial class Shaper
                     ShaperKind.Hangul => HangulStages,
                     _ => DefaultStages,
                 };
-                foreach (ShapingFeature[] stage in stages) ApplyStage(_gsub, _gsubFeatures, stage);
+                foreach (ShapingFeature[] stage in stages) ApplyStage(_gsub, _gsubFeatures, stage, fixedStage: true);
                 break;
         }
 
@@ -289,7 +299,7 @@ internal sealed partial class Shaper
         if (_gpos is not null)
         {
             gposKern = _gposFeatures.Any(f => f.Tag == "kern");
-            ApplyStage(_gpos, _gposFeatures, PositionFeatures);
+            ApplyStage(_gpos, _gposFeatures, PositionFeatures, fixedStage: true);
         }
 
         // As HarfBuzz: the kern table applies when GPOS does not kern this script.
@@ -309,13 +319,9 @@ internal sealed partial class Shaper
     private ShaperKind SelectShaper(string script)
     {
         string[] tags = IndicTags.TryGetValue(script, out string[]? indic) ? indic : script == "mymr" ? ["mym2", "mymr"] : [script];
-        (_gsubFeatures, _gsubScript, _gposFeatures) = _tables.Features.GetOrAdd(string.Join(",", tags), _ =>
-        {
-            string? chosen = null;
-            List<(string Tag, int[] Lookups)> gsub = _gsub?.Features(tags, out chosen) ?? [];
-            List<(string Tag, int[] Lookups)> gpos = _gpos?.Features(tags, out string? _) ?? [];
-            return (gsub, chosen, gpos);
-        });
+        string key = string.Join(",", tags);
+        if (!_tables.Features.TryGetValue(key, out var features)) features = _tables.Features.GetOrAdd(key, FeaturesFor(tags));
+        (_gsubFeatures, _gsubScript, _gposFeatures) = features;
         bool fallback = _gsubScript is "DFLT" or "latn";
         return script switch
         {
@@ -329,6 +335,15 @@ internal sealed partial class Shaper
             _ when UseScripts.Contains(script) => fallback ? ShaperKind.Default : ShaperKind.Use,
             _ => ShaperKind.Default,
         };
+    }
+
+    /// <summary>The GSUB features, the GSUB script chosen and the GPOS features for the script tags searched.</summary>
+    private (List<(string Tag, int[] Lookups)> Gsub, string? Script, List<(string Tag, int[] Lookups)> Gpos) FeaturesFor(string[] tags)
+    {
+        string? chosen = null;
+        List<(string Tag, int[] Lookups)> gsub = _gsub?.Features(tags, out chosen) ?? [];
+        List<(string Tag, int[] Lookups)> gpos = _gpos?.Features(tags, out string? _) ?? [];
+        return (gsub, chosen, gpos);
     }
 
     /// <summary>Sets a glyph's character and the Unicode properties shaping reads from it.</summary>
@@ -482,9 +497,28 @@ internal sealed partial class Shaper
     /// Applies the lookups of <paramref name="stage"/>'s features together, in lookup order. A
     /// lookup in several features takes all their masks.
     /// </summary>
-    internal void ApplyStage(LayoutTable? table, List<(string Tag, int[] Lookups)> fontFeatures, IReadOnlyList<ShapingFeature> stage)
+    /// <param name="fixedStage">The stage is one of the shaper's own static lists, so its lookups for the font are kept.</param>
+    internal void ApplyStage(LayoutTable? table, List<(string Tag, int[] Lookups)> fontFeatures, IReadOnlyList<ShapingFeature> stage, bool fixedStage = false)
     {
         if (table is null) return;
+        StageLookup[] lookups = fixedStage
+            ? _tables.Stages.TryGetValue((stage, fontFeatures), out StageLookup[]? planned) ? planned : _tables.Stages.GetOrAdd((stage, fontFeatures), Plan(fontFeatures, stage))
+            : Plan(fontFeatures, stage);
+        bool substitute = ReferenceEquals(table, _gsub);
+        foreach (StageLookup l in lookups)
+        {
+            _lookupMask = l.Mask;
+            _autoZwj = l.AutoZwj;
+            _autoZwnj = l.AutoZwnj;
+            _perSyllable = l.PerSyllable && substitute;
+            _positioning = !substitute;
+            ApplyLookup(table, l.Index, substitute);
+        }
+    }
+
+    /// <summary>The lookups of the stage's features, in lookup order; a lookup in several features takes all their masks.</summary>
+    private static StageLookup[] Plan(List<(string Tag, int[] Lookups)> fontFeatures, IReadOnlyList<ShapingFeature> stage)
+    {
         var lookups = new SortedDictionary<int, (uint Mask, bool AutoZwj, bool AutoZwnj, bool PerSyllable)>();
         foreach ((string tag, int[] indices) in fontFeatures)
         {
@@ -502,27 +536,22 @@ internal sealed partial class Shaper
             }
         }
 
-        bool substitute = ReferenceEquals(table, _gsub);
-        foreach (KeyValuePair<int, (uint Mask, bool AutoZwj, bool AutoZwnj, bool PerSyllable)> l in lookups)
-        {
-            _lookupMask = l.Value.Mask;
-            _autoZwj = l.Value.AutoZwj;
-            _autoZwnj = l.Value.AutoZwnj;
-            _perSyllable = l.Value.PerSyllable && substitute;
-            _positioning = !substitute;
-            ApplyLookup(table, l.Key, substitute);
-        }
+        return [.. lookups.Select(l => new StageLookup(l.Key, l.Value.Mask, l.Value.AutoZwj, l.Value.AutoZwnj, l.Value.PerSyllable))];
     }
 
     private void ApplyLookup(LayoutTable table, int index, bool substitute)
     {
         Lookup? lookup = table.GetLookup(index);
         if (lookup is null) return;
+
+        // Glyphs outside the lookup's first coverage are passed over without trying each subtable,
+        // which would find that coverage does not list them.
+        GlyphDigest? starts = lookup.Starts;
         if (substitute && lookup.Type == 8)
         {
             for (int i = _buffer.Count - 1; i >= 0; i--)
             {
-                if (Applies(_buffer[i], lookup) && Budget()) ApplyAt(table, lookup, i, substitute, 0);
+                if (Applies(_buffer[i], lookup) && Budget() && (starts is null || starts.MayContain(_buffer[i].Glyph))) ApplyAt(table, lookup, i, substitute, 0);
             }
 
             return;
@@ -530,7 +559,7 @@ internal sealed partial class Shaper
 
         for (int i = 0; i < _buffer.Count;)
         {
-            if (!Applies(_buffer[i], lookup) || !Budget())
+            if (!Applies(_buffer[i], lookup) || !Budget() || (starts is not null && !starts.MayContain(_buffer[i].Glyph)))
             {
                 i++;
                 continue;
@@ -545,6 +574,12 @@ internal sealed partial class Shaper
     private bool Applies(GlyphInfo g, Lookup lookup) => (g.Mask & _lookupMask) != 0 && !Skip(g, lookup);
 
     private bool Budget() => --_operations > 0;
+
+    // One string per character below U+0800 for the whole process, made on first use: a run
+    // otherwise makes a string for each of its characters.
+    private static readonly string?[] Characters = new string?[0x800];
+
+    private static string Character(char c) => c < Characters.Length ? Characters[c] ??= c.ToString() : c.ToString();
 
     /// <summary>Applies the first subtable that matches at <paramref name="i"/>. Returns the index to continue at, or -1.</summary>
     private int ApplyAt(LayoutTable table, Lookup lookup, int i, bool substitute, int depth)

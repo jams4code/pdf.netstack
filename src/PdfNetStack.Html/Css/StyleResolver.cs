@@ -69,15 +69,26 @@ internal sealed class ComputedStyle
     {
         foreach (CssValue v in Values[property])
         {
-            if (v.IsToken && v.Token.Type == CssTokenType.Ident) return v.Token.Value.ToLowerInvariant();
+            if (v.IsToken && v.Token.Type == CssTokenType.Ident) return v.LowerValue;
         }
 
         return "";
     }
 
     /// <summary>All identifiers of a value, lowercase and space separated, such as "inline flow-root".</summary>
-    public string Keywords(string property) =>
-        string.Join(" ", Values[property].Where(v => v.IsToken && v.Token.Type == CssTokenType.Ident).Select(v => v.Token.Value.ToLowerInvariant()));
+    public string Keywords(string property)
+    {
+        string? first = null;
+        List<string>? all = null;
+        foreach (CssValue v in Values[property])
+        {
+            if (!v.IsToken || v.Token.Type != CssTokenType.Ident) continue;
+            if (first is null) first = v.LowerValue;
+            else (all ??= [first]).Add(v.LowerValue);
+        }
+
+        return all is null ? first ?? "" : string.Join(" ", all);
+    }
 
     /// <summary>A length in px, a percentage of <paramref name="basis"/>, or null for auto, none and the like.</summary>
     public double? Length(string property, double basis = 0)
@@ -106,7 +117,7 @@ internal sealed class ComputedStyle
     public CssColor Color(string property = "color")
     {
         List<CssValue> value = Values[property];
-        CssColor? color = value.Count == 1 ? CssColor.Parse(value[0]) : null;
+        CssColor? color = value.Count == 1 ? value[0].Color : null;
         if (color is not CssColor c) return CssColor.Black;
         return c.IsCurrentColor ? (property == "color" ? CssColor.Black : Color()) : c;
     }
@@ -266,10 +277,14 @@ internal sealed class StyleResolver
         return false;
     }
 
+    // The cascade's winners, one dictionary for every element: emptied, it lists what is added again in order.
+    private readonly Dictionary<string, (CssDeclaration Declaration, long Rank)> _winners = new(StringComparer.Ordinal);
+
     /// <summary>Computes the style of an element, or of one of its pseudo-elements such as before.</summary>
     public ComputedStyle Compute(HtmlElement element, ComputedStyle? parent, string? pseudoElement = null)
     {
-        var winners = new Dictionary<string, (CssDeclaration Declaration, long Rank)>(StringComparer.Ordinal);
+        Dictionary<string, (CssDeclaration Declaration, long Rank)> winners = _winners;
+        winners.Clear();
         void Consider(CssDeclaration d, int tier, CssSpecificity s, int order)
         {
             static long Clamp(int x) => Math.Min(Math.Max(x, 0), 1023);

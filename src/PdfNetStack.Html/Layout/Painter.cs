@@ -22,7 +22,7 @@ internal sealed partial class Painter
     }
 
     // A box painted in its stacking context's z-index layer, with the overflow clips of the boxes between them.
-    private sealed record Layer(BoxFragment Box, int Z, List<BoxFragment> Clips);
+    internal sealed record Layer(BoxFragment Box, int Z, List<BoxFragment> Clips);
 
     // Bounds the curves of one wavy decoration: far more than any page is wide.
     private const int MaxWaves = 4096;
@@ -35,6 +35,7 @@ internal sealed partial class Painter
     private readonly Func<string, HtmlImage?>? _images;
     private readonly Tagging? _tags;
     private readonly bool _artifact;
+    private readonly PaintIndex? _index;
 
     /// <param name="graphics">The canvas, already scaled to px with the slice at the top of the page area.</param>
     /// <param name="top">The slice of the canvas this page shows.</param>
@@ -44,8 +45,10 @@ internal sealed partial class Painter
     /// <param name="images">Loads background images by URL; null to draw none.</param>
     /// <param name="tags">The structure tree content is tagged into, or null for an untagged document.</param>
     /// <param name="artifact">Everything drawn is an artifact: repeated headers, fixed boxes, page margins.</param>
-    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, HtmlImage?>? images = null, Tagging? tags = null, bool artifact = false)
+    /// <param name="index">What the tree's subtrees cover, so that a page passes over those it does not show; null to visit every box.</param>
+    public Painter(PdfGraphics graphics, double top, double bottom, Func<string, (PdfPage Page, double Top)?> anchor, Box? skipBackground, Func<string, HtmlImage?>? images = null, Tagging? tags = null, bool artifact = false, PaintIndex? index = null)
     {
+        _index = index;
         _images = images;
         _tags = tags;
         _artifact = artifact;
@@ -81,6 +84,7 @@ internal sealed partial class Painter
     /// <param name="context">The box roots a stacking context: its descendants with a z-index paint in its layers.</param>
     private void Paint(BoxFragment f, double opacity, Phase phase, bool context)
     {
+        if (_index is not null && _index.Silent(f, _top - 1, _bottom + 1)) return;
         opacity *= Opacity(f.Style);
         if (opacity <= 0) return;
         bool visible = f.Style.Keyword("visibility") == "visible";
@@ -122,20 +126,24 @@ internal sealed partial class Painter
         // A stacking context paints its negative layers over its own background and under its
         // content, and its positive layers over everything (CSS 2.1, Appendix E); equal z-index
         // values keep tree order.
-        IEnumerable<Layer> layers = (context || FormsStackingContext(f) ? Layers(f) : null) ?? [];
-        foreach (Layer layer in layers.Where(l => l.Z < 0).OrderBy(l => l.Z)) PaintLayer(layer, opacity);
+        List<Layer>? layers = context || FormsStackingContext(f) ? (_index is null ? Layers(f) : _index.Layers(f)) : null;
+        if (layers is not null)
+        {
+            foreach (Layer layer in layers.Where(l => l.Z < 0).OrderBy(l => l.Z)) PaintLayer(layer, opacity);
+        }
 
         if (f.Marker is LineFragment marker && visible) PaintLine(marker, opacity, f.Box.Element);
         foreach (Fragment child in f.Children)
         {
-            if (child is BoxFragment b && !Layered(b)) Paint(b, opacity, Phase.All, context: false);
+            if (child is BoxFragment b && !(_index?.Layered(b) ?? Layered(b))) Paint(b, opacity, Phase.All, context: false);
             else if (child is LineFragment line && Visible(line)) PaintLine(line, opacity);
         }
 
+        if (layers is null) return;
         foreach (Layer layer in layers.Where(l => l.Z > 0).OrderBy(l => l.Z)) PaintLayer(layer, opacity);
     }
 
-    private static bool Clips(BoxFragment f) => f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
+    internal static bool Clips(BoxFragment f) => f.Style.Keyword("overflow-x") is not "visible" || f.Style.Keyword("overflow-y") is not "visible";
 
     /// <summary>The padding box, rounded with the corners: where overflow clips content.</summary>
     private static PdfPath PaddingShape(BoxFragment f)
@@ -157,10 +165,10 @@ internal sealed partial class Painter
     }
 
     /// <summary>A box painted in its stacking context's negative or positive layer rather than in tree order.</summary>
-    private static bool Layered(BoxFragment f) => ZIndex(f) is int z && z != 0;
+    internal static bool Layered(BoxFragment f) => ZIndex(f) is int z && z != 0;
 
     /// <summary>Whether a box roots a stacking context: a z-index, opacity below one, a transform, or fixed or sticky positioning.</summary>
-    private static bool FormsStackingContext(BoxFragment f) =>
+    internal static bool FormsStackingContext(BoxFragment f) =>
         ZIndex(f) is not null || Opacity(f.Style) < 1 || HasTransform(f.Style) || f.Style.Keyword("position") is "fixed" or "sticky";
 
     /// <summary>
@@ -168,7 +176,7 @@ internal sealed partial class Painter
     /// descendants with a z-index other than zero, outside any stacking context nested in it.
     /// Null when there are none.
     /// </summary>
-    private static List<Layer>? Layers(Fragment root)
+    internal static List<Layer>? Layers(Fragment root)
     {
         List<Layer>? layers = null;
         void Walk(Fragment f, List<BoxFragment> clips)
@@ -283,7 +291,7 @@ internal sealed partial class Painter
                     Text(text, opacity, Owner(text.Owner) ?? fallbackOwner);
                     break;
                 // An atomic inline paints whole, but its layered descendants belong to the enclosing stacking context.
-                case BoxFragment atomic when !Layered(atomic):
+                case BoxFragment atomic when !(_index?.Layered(atomic) ?? Layered(atomic)):
                     Paint(atomic, opacity, Phase.All, context: false);
                     break;
             }
@@ -331,8 +339,8 @@ internal sealed partial class Painter
     private void Side(ComputedStyle s, string side, CollapsedEdge? edge, double width, double opacity, PdfPoint[] trapezoid, double x1, double y1, double x2, double y2)
     {
         if (width <= 0) return;
-        string style = edge?.Style ?? s.Keyword("border-" + side + "-style");
-        CssColor color = edge?.Color ?? s.Color("border-" + side + "-color");
+        string style = edge?.Style ?? s.Keyword(BoxMetrics.StyleProperty(side));
+        CssColor color = edge?.Color ?? s.Color(BoxMetrics.ColorProperty(side));
         if (color.A <= 0) return;
         PdfColor pdf = ToPdf(color, opacity);
         switch (style)

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using PdfNetStack.Documents;
 using PdfNetStack.Objects;
@@ -23,6 +24,15 @@ public sealed record PdfSaveOptions
     /// with verification. Merged documents often share fonts and images, so this pays off. Default true.
     /// </summary>
     public bool Optimize { get; init; } = true;
+
+    /// <summary>
+    /// Whether the optimizer proves its rewrite equivalent to the file as first written, by reading
+    /// both back and comparing them, before it uses the rewrite. Default true. The proof takes about
+    /// half the optimizer's time. Turn it off for documents whose content this library drew itself,
+    /// as <c>HtmlConverter.ConvertToPdf</c> does: whenever the proof would pass, the bytes are the
+    /// same either way. Applies only with <see cref="Optimize"/>.
+    /// </summary>
+    public bool VerifyOptimization { get; init; } = true;
 
     /// <summary>Flate effort for streams the writer compresses. Default <see cref="CompressionEffort.Maximum"/>.</summary>
     public CompressionEffort Compression { get; init; } = CompressionEffort.Maximum;
@@ -523,8 +533,32 @@ public sealed class PdfDocument
         foreach (Drawing.PdfGraphics g in _openGraphics.ToArray()) g.Dispose();
 
         // Font dictionaries were reserved on first use; widths, encodings and subsets depend on
-        // everything drawn, so they are written now.
-        foreach (Fonts.FontResource font in _fonts.Values) font.Finish();
+        // everything drawn, so they are written now. Subsetting and compressing each program is
+        // the font's own work, so fonts do it side by side, then write in order.
+        Fonts.FontResource[] fonts = [.. _fonts.Values];
+        var finish = new Action?[fonts.Length];
+        var failures = new ExceptionDispatchInfo?[fonts.Length];
+        if (fonts.Length > 1)
+        {
+            Parallel.For(0, fonts.Length, i =>
+            {
+                try
+                {
+                    finish[i] = fonts[i].Prepare();
+                }
+                catch (Exception e)
+                {
+                    failures[i] = ExceptionDispatchInfo.Capture(e);
+                }
+            });
+        }
+
+        for (int i = 0; i < fonts.Length; i++)
+        {
+            failures[i]?.Throw();
+            (finish[i] ?? fonts[i].Prepare())();
+        }
+
         if (Pages.Count == 0) throw new InvalidOperationException("A PDF must have at least one page.");
         if (Invoice is not null && options.Conformance == PdfConformance.None)
         {
@@ -641,6 +675,7 @@ public sealed class PdfDocument
                 MinSavingPercent = 0,
                 Compression = options.Compression,
                 UseObjectStreams = objectStreams,
+                Verify = options.VerifyOptimization,
             };
             (written, _) = PdfOptimizer.Optimize(written, optimizerOptions);
         }

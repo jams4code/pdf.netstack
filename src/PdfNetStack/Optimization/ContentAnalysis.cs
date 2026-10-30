@@ -423,7 +423,7 @@ internal sealed class ContentAnalysis
                     return;
                 }
 
-                string op = Compat.Latin1.GetString(parser.Span[t.Start..t.End]);
+                string op = Operator(parser.Span[t.Start..t.End]);
                 switch (op)
                 {
                     case "q":
@@ -484,6 +484,33 @@ internal sealed class ContentAnalysis
     }
 
     private static readonly PdfDictionary Missing = new();
+
+    /// <summary>The operators <see cref="Interpret"/> acts on, without a string per operator read; empty for any other.</summary>
+    private static string Operator(ReadOnlySpan<byte> k) => k.Length switch
+    {
+        1 => k[0] switch
+        {
+            (byte)'q' => "q",
+            (byte)'Q' => "Q",
+            (byte)'\'' => "'",
+            (byte)'"' => "\"",
+            (byte)')' => ")",
+            (byte)'{' => "{",
+            (byte)'}' => "}",
+            _ => "",
+        },
+        2 => (k[0], k[1]) switch
+        {
+            ((byte)'T', (byte)'f') => "Tf",
+            ((byte)'g', (byte)'s') => "gs",
+            ((byte)'T', (byte)'j') => "Tj",
+            ((byte)'T', (byte)'J') => "TJ",
+            ((byte)'D', (byte)'o') => "Do",
+            ((byte)'B', (byte)'I') => "BI",
+            _ => "",
+        },
+        _ => "",
+    };
 
     private static bool IsLiteral(ReadOnlySpan<byte> k) => k.SequenceEqual("true"u8) || k.SequenceEqual("false"u8) || k.SequenceEqual("null"u8);
 

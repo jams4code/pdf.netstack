@@ -165,9 +165,10 @@ internal sealed partial class LayoutEngine
         if (!Collapsed(table)) return null;
         int n = grid.ColumnCount;
         var result = new Dictionary<CellSlot, (Edges, CollapsedEdge[])>();
+        var styles = new Dictionary<ComputedStyle, Side[]>();
         foreach (CellSlot cell in grid.Cells)
         {
-            Side[] sides = CollapsedSides(grid, cell, table);
+            Side[] sides = CollapsedSides(grid, cell, table, styles);
 
             // Inner edges are shared: each cell takes half. Outer edges belong to the cell whole.
             double Part(Side side, bool outer) => outer ? side.Width : side.Width / 2;
@@ -362,95 +363,133 @@ internal sealed partial class LayoutEngine
         _ => 0,
     };
 
-    private static Side SideOf(ComputedStyle s, string side, int source) =>
-        new(BoxMetrics.Border(s, side), s.Keyword("border-" + side + "-style"), s.Color("border-" + side + "-color"), source);
+    // Sides in the order CollapsedSides returns them.
+    private static readonly string[] SideNames = ["top", "right", "bottom", "left"];
+    private const int Top = 0, Right = 1, Bottom = 2, Left = 3;
 
-    /// <summary>The winning border between candidates (CSS 2.1, 17.6.2.1): hidden, then width, style, and cell over row over group over table.</summary>
-    private static Side Winner(IEnumerable<Side> candidates)
+    /// <summary>The four sides of a box's border, read once per style and table: every edge asks its neighbours too.</summary>
+    private static Side[] SidesOf(Dictionary<ComputedStyle, Side[]> styles, ComputedStyle s)
     {
-        Side best = new(0, "none", CssColor.Transparent, -1);
-        foreach (Side s in candidates)
+        if (!styles.TryGetValue(s, out Side[]? sides))
         {
-            if (s.Style == "hidden") return new Side(0, "hidden", CssColor.Transparent, s.Source);
-            if (s.Width <= 0) continue;
-            if (s.Width > best.Width
-                || (s.Width == best.Width && StyleRank(s.Style) > StyleRank(best.Style))
-                || (s.Width == best.Width && StyleRank(s.Style) == StyleRank(best.Style) && s.Source > best.Source))
+            sides = new Side[4];
+            for (int k = 0; k < 4; k++)
             {
-                best = s;
+                string side = SideNames[k];
+                sides[k] = new(BoxMetrics.Border(s, side), s.Keyword(BoxMetrics.StyleProperty(side)), s.Color(BoxMetrics.ColorProperty(side)), 0);
             }
+
+            styles[s] = sides;
         }
 
-        return best;
+        return sides;
+    }
+
+    /// <summary>
+    /// The winning border between candidates offered in turn (CSS 2.1, 17.6.2.1): hidden, then
+    /// width, style, and cell over row over group over table.
+    /// </summary>
+    private struct Winner()
+    {
+        private Side _best = new(0, "none", CssColor.Transparent, -1);
+        private bool _hidden;
+
+        public readonly Side Best => _best;
+
+        public void Offer(Side side, int source)
+        {
+            if (_hidden) return;
+            if (side.Style == "hidden")
+            {
+                _best = new Side(0, "hidden", CssColor.Transparent, source);
+                _hidden = true;
+                return;
+            }
+
+            if (side.Width <= 0) return;
+            if (side.Width > _best.Width
+                || (side.Width == _best.Width && StyleRank(side.Style) > StyleRank(_best.Style))
+                || (side.Width == _best.Width && StyleRank(side.Style) == StyleRank(_best.Style) && source > _best.Source))
+            {
+                _best = side with { Source = source };
+            }
+        }
     }
 
     /// <summary>The four resolved edges of a cell, full widths, top right bottom left.</summary>
-    private static Side[] CollapsedSides(TableGrid grid, CellSlot cell, TableBox table)
+    private static Side[] CollapsedSides(TableGrid grid, CellSlot cell, TableBox table, Dictionary<ComputedStyle, Side[]> styles)
     {
         const int Cell = 4, Row = 3, Group = 2, Table = 1;
         int lastRow = cell.Row + cell.RowSpan - 1, lastColumn = cell.Column + cell.ColumnSpan - 1;
         (TableRowBox firstRow, TableRowGroupBox firstGroup) = grid.Rows[cell.Row];
         (TableRowBox endRow, TableRowGroupBox endGroup) = grid.Rows[lastRow];
+        Side Of(ComputedStyle s, int side) => SidesOf(styles, s)[side];
 
-        var top = new List<Side> { SideOf(cell.Box.Style, "top", Cell), SideOf(firstRow.Style, "top", Row) };
-        if (cell.Row == 0) top.Add(SideOf(table.Style, "top", Table));
+        var top = new Winner();
+        top.Offer(Of(cell.Box.Style, Top), Cell);
+        top.Offer(Of(firstRow.Style, Top), Row);
+        if (cell.Row == 0) top.Offer(Of(table.Style, Top), Table);
         else
         {
             (TableRowBox above, TableRowGroupBox aboveGroup) = grid.Rows[cell.Row - 1];
-            top.Add(SideOf(above.Style, "bottom", Row));
-            if (aboveGroup != firstGroup) top.Add(SideOf(aboveGroup.Style, "bottom", Group));
+            top.Offer(Of(above.Style, Bottom), Row);
+            if (aboveGroup != firstGroup) top.Offer(Of(aboveGroup.Style, Bottom), Group);
 
             for (int k = cell.Column; k <= lastColumn; k++)
             {
-                if (grid.Slots.TryGetValue(Key(cell.Row - 1, k), out CellSlot? n)) top.Add(SideOf(n.Box.Style, "bottom", Cell));
+                if (grid.Slots.TryGetValue(Key(cell.Row - 1, k), out CellSlot? n)) top.Offer(Of(n.Box.Style, Bottom), Cell);
             }
         }
 
-        if (cell.Row == 0 || grid.Rows[cell.Row - 1].Group != firstGroup) top.Add(SideOf(firstGroup.Style, "top", Group));
+        if (cell.Row == 0 || grid.Rows[cell.Row - 1].Group != firstGroup) top.Offer(Of(firstGroup.Style, Top), Group);
 
-        var bottom = new List<Side> { SideOf(cell.Box.Style, "bottom", Cell), SideOf(endRow.Style, "bottom", Row) };
-        if (lastRow == grid.Rows.Count - 1) bottom.Add(SideOf(table.Style, "bottom", Table));
+        var bottom = new Winner();
+        bottom.Offer(Of(cell.Box.Style, Bottom), Cell);
+        bottom.Offer(Of(endRow.Style, Bottom), Row);
+        if (lastRow == grid.Rows.Count - 1) bottom.Offer(Of(table.Style, Bottom), Table);
         else
         {
             (TableRowBox below, TableRowGroupBox belowGroup) = grid.Rows[lastRow + 1];
-            bottom.Add(SideOf(below.Style, "top", Row));
-            if (belowGroup != endGroup) bottom.Add(SideOf(belowGroup.Style, "top", Group));
+            bottom.Offer(Of(below.Style, Top), Row);
+            if (belowGroup != endGroup) bottom.Offer(Of(belowGroup.Style, Top), Group);
             for (int k = cell.Column; k <= lastColumn; k++)
             {
-                if (grid.Slots.TryGetValue(Key(lastRow + 1, k), out CellSlot? n)) bottom.Add(SideOf(n.Box.Style, "top", Cell));
+                if (grid.Slots.TryGetValue(Key(lastRow + 1, k), out CellSlot? n)) bottom.Offer(Of(n.Box.Style, Top), Cell);
             }
         }
 
-        if (lastRow == grid.Rows.Count - 1 || grid.Rows[lastRow + 1].Group != endGroup) bottom.Add(SideOf(endGroup.Style, "bottom", Group));
+        if (lastRow == grid.Rows.Count - 1 || grid.Rows[lastRow + 1].Group != endGroup) bottom.Offer(Of(endGroup.Style, Bottom), Group);
 
-        var left = new List<Side> { SideOf(cell.Box.Style, "left", Cell) };
-        var right = new List<Side> { SideOf(cell.Box.Style, "right", Cell) };
+        var left = new Winner();
+        var right = new Winner();
+        left.Offer(Of(cell.Box.Style, Left), Cell);
+        right.Offer(Of(cell.Box.Style, Right), Cell);
         for (int r = cell.Row; r <= lastRow; r++)
         {
             if (cell.Column == 0)
             {
-                left.Add(SideOf(grid.Rows[r].Row.Style, "left", Row));
-                left.Add(SideOf(grid.Rows[r].Group.Style, "left", Group));
+                left.Offer(Of(grid.Rows[r].Row.Style, Left), Row);
+                left.Offer(Of(grid.Rows[r].Group.Style, Left), Group);
             }
             else if (grid.Slots.TryGetValue(Key(r, cell.Column - 1), out CellSlot? n))
             {
-                left.Add(SideOf(n.Box.Style, "right", Cell));
+                left.Offer(Of(n.Box.Style, Right), Cell);
             }
 
             if (lastColumn == grid.ColumnCount - 1)
             {
-                right.Add(SideOf(grid.Rows[r].Row.Style, "right", Row));
-                right.Add(SideOf(grid.Rows[r].Group.Style, "right", Group));
+                right.Offer(Of(grid.Rows[r].Row.Style, Right), Row);
+                right.Offer(Of(grid.Rows[r].Group.Style, Right), Group);
             }
             else if (grid.Slots.TryGetValue(Key(r, lastColumn + 1), out CellSlot? n))
             {
-                right.Add(SideOf(n.Box.Style, "left", Cell));
+                right.Offer(Of(n.Box.Style, Left), Cell);
             }
         }
 
-        if (cell.Column == 0) left.Add(SideOf(table.Style, "left", Table));
-        if (lastColumn == grid.ColumnCount - 1) right.Add(SideOf(table.Style, "right", Table));
-        return [Winner(top), Winner(right), Winner(bottom), Winner(left)];
+        if (cell.Column == 0) left.Offer(Of(table.Style, Left), Table);
+        if (lastColumn == grid.ColumnCount - 1) right.Offer(Of(table.Style, Right), Table);
+        return [top.Best, right.Best, bottom.Best, left.Best];
     }
 
     /// <summary>Lays out a table and its captions in a wrapper box that holds the margins.</summary>
@@ -591,6 +630,8 @@ internal sealed partial class LayoutEngine
 
         // Row groups and rows around the cells, for backgrounds, borders and page breaks.
         double rowWidth = Math.Max(0, columnX[n] - columnX[0] - hs);
+        var cellsOfRow = new List<int>?[rows];
+        for (int i = 0; i < cells.Length; i++) (cellsOfRow[grid.Cells[i].Row] ??= []).Add(i);
         foreach ((TableRowGroupBox group, int first, int count) in grid.Groups)
         {
             if (count == 0) continue;
@@ -604,10 +645,7 @@ internal sealed partial class LayoutEngine
             for (int r = first; r < first + count; r++)
             {
                 var rowFragment = new BoxFragment(grid.Rows[r].Row) { X = columnX[0], Y = rowY[r], Width = rowWidth, Height = heights[r] };
-                for (int i = 0; i < cells.Length; i++)
-                {
-                    if (grid.Cells[i].Row == r) rowFragment.Children.Add(cells[i]);
-                }
+                foreach (int i in cellsOfRow[r] ?? []) rowFragment.Children.Add(cells[i]);
 
                 rowFragment.FirstBaseline = rowFragment.Children.OfType<BoxFragment>().Select(c => c.FirstBaseline).FirstOrDefault(b => b is not null);
                 groupFragment.Children.Add(rowFragment);

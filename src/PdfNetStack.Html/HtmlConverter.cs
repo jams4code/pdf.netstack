@@ -111,10 +111,12 @@ public static class HtmlConverter
         List<BoxFragment> fixedBelow = [.. fixedBoxes.Where(f => Painter.ZIndex(f) < 0)];
         List<BoxFragment> fixedAbove = [.. fixedBoxes.Where(f => !(Painter.ZIndex(f) < 0))];
         (CssColor canvas, Box? propagated) = Painter.CanvasBackground(runs[0].Layout);
+        var indexes = new Dictionary<PageRun, PaintIndex>();
         for (int i = 0; i < pages.Count; i++)
         {
             (PageRun run, Paginator.Slice slice) = pageRuns[i];
             BoxFragment layout = run.Layout;
+            if (!indexes.TryGetValue(run, out PaintIndex? index)) indexes[run] = index = new PaintIndex(layout);
             PageGeometry g = master.Geometry(i, run.Name);
             using PdfGraphics graphics = pages[i].CreateGraphics();
             double pageWidth = g.Width * PointsPerPixel, pageHeight = g.Height * PointsPerPixel;
@@ -150,7 +152,7 @@ public static class HtmlConverter
 
                     // The page shows its slice; content may overflow sideways into the margins.
                     graphics.IntersectClip(-g.Margin.Left, slice.Top, g.Width, slice.Bottom - slice.Top);
-                    new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage, tags).Paint(layout, phase);
+                    new Painter(graphics, slice.Top, slice.Bottom, Anchor, propagated, resources.LoadImage, tags, index: index).Paint(layout, phase);
                 }
             }
 
@@ -243,7 +245,7 @@ public static class HtmlConverter
     /// <param name="html">The HTML.</param>
     /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
     /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
-    public static byte[] ConvertToPdf(string html, HtmlConverterOptions? options = null) => ConvertToDocument(html, options).ToArray();
+    public static byte[] ConvertToPdf(string html, HtmlConverterOptions? options = null) => ConvertToDocument(html, options).ToArray(SaveOptions(options));
 
     /// <summary>Converts an HTML string and writes the PDF to a stream.</summary>
     /// <param name="html">The HTML.</param>
@@ -253,8 +255,13 @@ public static class HtmlConverter
     public static void ConvertToPdf(string html, Stream output, HtmlConverterOptions? options = null)
     {
         Compat.ThrowIfNull(output, nameof(output));
-        ConvertToDocument(html, options).Save(output);
+        ConvertToDocument(html, options).Save(output, SaveOptions(options));
     }
+
+    // The converter draws every page itself, so the optimizer's rewrite of it needs no proof.
+    private static readonly PdfSaveOptions Unverified = new() { VerifyOptimization = false };
+
+    private static PdfSaveOptions SaveOptions(HtmlConverterOptions? options) => options?.SaveOptions ?? Unverified;
 
     /// <summary>
     /// Converts an HTML file. Relative URLs resolve against the file's folder, and files in that
@@ -281,6 +288,8 @@ public static class HtmlConverter
                 StyleSheet = options.StyleSheet,
                 Bookmarks = options.Bookmarks,
                 Tagged = options.Tagged,
+                SaveOptions = options.SaveOptions,
+                MaxPages = options.MaxPages,
             };
         }
 
@@ -324,18 +333,23 @@ public static class HtmlConverter
         return slices.Count - 1;
     }
 
-    private static IEnumerable<Fragment> Walk(Fragment f)
+    /// <summary>Every fragment in tree order, depth first, without an iterator per level.</summary>
+    private static IEnumerable<Fragment> Walk(Fragment root)
     {
-        yield return f;
-        IEnumerable<Fragment> children = f switch
+        var stack = new Stack<Fragment>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            BoxFragment b => b.Children,
-            LineFragment l => l.Items,
-            _ => [],
-        };
-        foreach (Fragment c in children)
-        {
-            foreach (Fragment d in Walk(c)) yield return d;
+            Fragment f = stack.Pop();
+            yield return f;
+            List<Fragment>? children = f switch
+            {
+                BoxFragment b => b.Children,
+                LineFragment l => l.Items,
+                _ => null,
+            };
+            if (children is null) continue;
+            for (int i = children.Count - 1; i >= 0; i--) stack.Push(children[i]);
         }
     }
 

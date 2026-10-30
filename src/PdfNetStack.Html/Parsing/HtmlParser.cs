@@ -185,6 +185,17 @@ internal sealed class HtmlParser
         if (_at < _s.Length && _s[_at] is '"' or '\'')
         {
             char quote = _s[_at++];
+
+            // A value without character references, such as a long data: URI, is copied whole.
+            int end = _s.IndexOf(quote, _at);
+            if (end < 0) end = _s.Length;
+            if (_s.IndexOf('&', _at, end - _at) < 0)
+            {
+                string plain = _s.Substring(_at, end - _at);
+                _at = Math.Min(_s.Length, end + 1);
+                return plain;
+            }
+
             while (_at < _s.Length && _s[_at] != quote)
             {
                 if (_s[_at] == '&') sb.Append(CharacterReference(inAttribute: true));

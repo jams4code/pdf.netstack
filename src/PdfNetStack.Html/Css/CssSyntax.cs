@@ -382,6 +382,26 @@ internal sealed class CssValue
 
     public bool IsIdent(string name) => IsToken && Token.Is(CssTokenType.Ident, name);
 
+    // Worked out on first use and kept: a value is shared by many computed styles, and an initial
+    // value by every conversion, so each is asked for often. Both always get the same result, so
+    // threads racing to set one write the same thing.
+    private string? _lowerValue;
+    private object? _color;
+    private static readonly object NotAColor = new();
+
+    /// <summary>The token's value in lowercase, as keywords compare.</summary>
+    public string LowerValue => _lowerValue ??= Token.Value.ToLowerInvariant();
+
+    /// <summary>The value as a color, as <see cref="CssColor.Parse(CssValue)"/> reads it; null when it is not one.</summary>
+    public CssColor? Color
+    {
+        get
+        {
+            object color = _color ??= CssColor.Parse(this) is CssColor c ? c : NotAColor;
+            return color == NotAColor ? null : (CssColor)color;
+        }
+    }
+
     public override string ToString() => IsToken
         ? Token.ToString()
         : (Function is not null ? Function + "(" : Block switch { CssTokenType.LeftBrace => "{", CssTokenType.LeftBracket => "[", _ => "(" })

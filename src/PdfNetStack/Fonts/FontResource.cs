@@ -34,4 +34,12 @@ internal abstract class FontResource
 
     /// <summary>Writes the font dictionary entries that depend on the glyphs used so far.</summary>
     public abstract void Finish();
+
+    /// <summary>
+    /// <see cref="Finish"/> in two steps: the work that reads only the font and the glyphs used,
+    /// such as subsetting and compressing a font program, which may run beside other fonts', and
+    /// the returned action, which writes the result into the document. The default does all of
+    /// it in the action.
+    /// </summary>
+    public virtual Action Prepare() => Finish;
 }

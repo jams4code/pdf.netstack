@@ -14,7 +14,51 @@ internal enum GlyphClass : byte
 }
 
 /// <summary>One lookup of a GSUB or GPOS table, with its subtables resolved through extension lookups.</summary>
-internal sealed record Lookup(int Type, int Flag, int[] Subtables, int MarkFilteringSet);
+internal sealed record Lookup(int Type, int Flag, int[] Subtables, int MarkFilteringSet)
+{
+    /// <summary>
+    /// The glyphs a match of the lookup can start at, from each subtable's first coverage; null
+    /// when every glyph must be tried. A subtable that checks anything before that coverage, or
+    /// that cannot be read, leaves it null.
+    /// </summary>
+    public GlyphDigest? Starts { get; init; }
+}
+
+/// <summary>
+/// A set of glyph ids kept as three 64 bit masks over different bits of the id, as HarfBuzz's
+/// set digests are: a glyph that was added always tests positive, and most others test negative.
+/// </summary>
+internal sealed class GlyphDigest
+{
+    private static readonly int[] Shifts = [0, 4, 9];
+    private readonly ulong[] _masks = new ulong[3];
+
+    public bool MayContain(int glyph)
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            if ((_masks[k] & (1UL << ((glyph >> Shifts[k]) & 63))) == 0) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Adds the glyphs from <paramref name="first"/> to <paramref name="last"/>, in at most 64 steps per mask.</summary>
+    public void Add(int first, int last)
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            int from = first >> Shifts[k], to = last >> Shifts[k];
+            if (to - from >= 63)
+            {
+                _masks[k] = ulong.MaxValue;
+                continue;
+            }
+
+            for (int v = from; v <= to; v++) _masks[k] |= 1UL << (v & 63);
+        }
+    }
+}
 
 /// <summary>
 /// The script, feature and lookup lists shared by GSUB and GPOS. Offsets are absolute in the
@@ -200,7 +244,98 @@ internal sealed class LayoutTable
         }
 
         int markSet = (flag & 0x10) != 0 ? U16(d, lookup + 6 + 2 * count) : -1;
-        return _cache[index] = new Lookup(actualType, flag, subtables, markSet);
+        return _cache[index] = new Lookup(actualType, flag, subtables, markSet) { Starts = Starts(actualType, subtables) };
+    }
+
+    // Coverage entries read for one lookup's digest at most: past it, every glyph is tried.
+    private const int MaxDigestEntries = 1 << 16;
+
+    /// <summary>
+    /// The glyphs at which <see cref="Shaper"/> can apply a lookup: those its subtables' first
+    /// input coverage tables list, as no subtable applies at a glyph outside it. Coverage is
+    /// binary searched, which can only miss listed glyphs, so listing them all is never too few.
+    /// Every subtable reads that coverage first, except chained contexts of format 3, which walk
+    /// their backtrack before it; passing over a glyph there saves the walk and changes nothing
+    /// but the steps counted against a hostile font's budget (HarfBuzz checks the coverage first
+    /// too). A subtable that cannot be read leaves the digest out.
+    /// </summary>
+    private GlyphDigest? Starts(int type, int[] subtables)
+    {
+        bool gsub = _extensionType == 7;
+        var digest = new GlyphDigest();
+        int budget = MaxDigestEntries;
+        try
+        {
+            foreach (int sub in subtables)
+            {
+                ReadOnlySpan<byte> d = _data;
+                int coverage;
+                bool context = type == (gsub ? 5 : 7) || type == (gsub ? 6 : 8);
+                if (context)
+                {
+                    bool chained = type == (gsub ? 6 : 8);
+                    int format = U16(d, sub);
+                    if (format is 1 or 2)
+                    {
+                        coverage = sub + U16(d, sub + 2);
+                    }
+                    else if (format == 3 && !chained)
+                    {
+                        if (U16(d, sub + 2) == 0) continue;
+                        coverage = sub + U16(d, sub + 6);
+                    }
+                    else if (format == 3)
+                    {
+                        int input = sub + 4 + (2 * U16(d, sub + 2));
+                        if (U16(d, input) == 0) continue;
+                        coverage = sub + U16(d, input + 2);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                else if (type is 1 or 2 or 3 or 4 || (gsub && type == 8) || (!gsub && type is 5 or 6))
+                {
+                    coverage = sub + U16(d, sub + 2);
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (!AddCoverage(d, coverage, digest, ref budget)) return null;
+            }
+        }
+        catch (FontFormatException)
+        {
+            return null;
+        }
+
+        return digest;
+    }
+
+    private static bool AddCoverage(ReadOnlySpan<byte> d, int table, GlyphDigest digest, ref int budget)
+    {
+        int format = U16(d, table), count = U16(d, table + 2);
+        if (format is not (1 or 2)) return true;
+        if ((budget -= count) < 0) return false;
+        for (int i = 0; i < count; i++)
+        {
+            if (format == 1)
+            {
+                int glyph = U16(d, table + 4 + 2 * i);
+                digest.Add(glyph, glyph);
+            }
+            else
+            {
+                int at = table + 4 + 6 * i;
+                int start = U16(d, at), end = U16(d, at + 2);
+                if (start <= end) digest.Add(start, end);
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

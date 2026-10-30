@@ -597,8 +597,9 @@ A layout engine in C#, no browser: the CSS cascade, block, inline, table, flex a
 (named lines, dense packing, subgrid), floats and positioning, paged media with `@page` and
 named pages on any element of the block flow, running headers and footers
 with page counters and named strings, repeated table headers, tagged output for accessibility, web fonts and variable fonts, right to left and Arabic text, links and bookmarks.
-Without a resource loader nothing is fetched from the network. Details, options and limits in the
-[package readme](eng/nuget/PdfNetStack.Html.md).
+Without a resource loader nothing is fetched from the network. `ConvertToPdf` optimizes the file
+without re-proving it (`HtmlConverterOptions.SaveOptions` changes that). Details, options and
+limits in the [package readme](eng/nuget/PdfNetStack.Html.md).
 
 ### Command line
 

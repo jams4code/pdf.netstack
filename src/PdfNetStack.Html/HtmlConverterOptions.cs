@@ -51,6 +51,16 @@ public sealed class HtmlConverterOptions
     public bool Tagged { get; init; } = true;
 
     /// <summary>
+    /// How <see cref="HtmlConverter.ConvertToPdf(string, HtmlConverterOptions?)"/> saves the
+    /// document, such as a PDF/A conformance level. Null, the default, saves as
+    /// <see cref="PdfSaveOptions.Default"/> does but without the optimizer's equivalence proof
+    /// (<see cref="PdfSaveOptions.VerifyOptimization"/> false): the converter draws all the
+    /// content itself, and the bytes are the same whenever the proof would pass. Set
+    /// <see cref="PdfSaveOptions.Default"/> to keep the proof.
+    /// </summary>
+    public PdfSaveOptions? SaveOptions { get; init; }
+
+    /// <summary>
     /// The most pages a conversion may produce. Default 10000. A document that needs more, such as
     /// one whose sizes run to kilometres, ends with <see cref="HtmlConversionException"/> instead of
     /// using memory without bound.

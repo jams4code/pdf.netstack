@@ -140,6 +140,10 @@ internal sealed class InlineLayout
         _intrinsic = intrinsic;
         _rtl = container.Keyword("direction") == "rtl";
 
+        int length = Length(children);
+        _sb.EnsureCapacity(length);
+        _styleList.Capacity = length;
+        _spanList.Capacity = length;
         Walk(children, -1, 0);
         _text = _sb.ToString();
         int n = _text.Length;
@@ -170,7 +174,55 @@ internal sealed class InlineLayout
         FindBreaks();
     }
 
+    // The same text at another width: everything worked out from the text is shared, and only
+    // reads follow, so both layouts can lay out lines.
+    private InlineLayout(InlineLayout source, double width, bool intrinsic)
+    {
+        _engine = source._engine;
+        _container = source._container;
+        _containerBox = source._containerBox;
+        _width = width;
+        _intrinsic = intrinsic;
+        _rtl = source._rtl;
+        _sb = source._sb;
+        _styleList = source._styleList;
+        _spanList = source._spanList;
+        _spans = source._spans;
+        _atomics = source._atomics;
+        _text = source._text;
+        _shaping = source._shaping;
+        _style = source._style;
+        _span = source._span;
+        _font = source._font;
+        _level = source._level;
+        _advance = source._advance;
+        _startEdge = source._startEdge;
+        _endEdge = source._endEdge;
+        _prefix = source._prefix;
+        _items = source._items;
+        _itemAt = source._itemAt;
+        _breaks = source._breaks;
+    }
+
     public bool IsEmpty => _text.Length == 0;
+
+    /// <summary>
+    /// The same content laid out across <paramref name="width"/>, sharing the text, fonts, shaping
+    /// and break opportunities already worked out, as when a table cell measured for the column
+    /// widths is laid out in its column. Null when those depend on the width: atomic inlines are
+    /// laid out at it, and inline boxes may have margins or padding in percentages of it.
+    /// </summary>
+    public InlineLayout? AtWidth(double width)
+    {
+        if (_atomics.Count > 0) return null;
+        foreach (Span s in _spans)
+        {
+            ComputedStyle style = s.Box.Style;
+            if (BoxMetrics.Margins(style, width) != BoxMetrics.Margins(style, _width) || BoxMetrics.Paddings(style, width) != BoxMetrics.Paddings(style, _width)) return null;
+        }
+
+        return new InlineLayout(this, width, intrinsic: false);
+    }
 
     private void Walk(IReadOnlyList<Box> boxes, int parent, int depth)
     {
@@ -218,6 +270,23 @@ internal sealed class InlineLayout
         }
     }
 
+    /// <summary>How many characters <see cref="Walk"/> appends for the boxes: each atomic inline counts one.</summary>
+    private static int Length(IReadOnlyList<Box> boxes)
+    {
+        int length = 0;
+        foreach (Box b in boxes)
+        {
+            length += b switch
+            {
+                TextBox t => t.Text.Length,
+                InlineBox ib => Length(ib.Children),
+                _ => 1,
+            };
+        }
+
+        return length;
+    }
+
     private Atomic LayoutAtomic(Box b)
     {
         if (_intrinsic)
@@ -257,10 +326,12 @@ internal sealed class InlineLayout
         int n = _text.Length;
         _font = new PdfFont[n];
         _shaping = _text.ToCharArray();
+        ComputedStyle? lastStyle = null;
+        FontSet? fonts = null;
         for (int i = 0; i < n; i++)
         {
             ComputedStyle style = _style[i];
-            FontSet fonts = _engine.FontsFor(style);
+            if (!ReferenceEquals(style, lastStyle)) (lastStyle, fonts) = (style, _engine.FontsFor(style));
             if (char.IsLowSurrogate(_text[i]) && i > 0 && char.IsHighSurrogate(_text[i - 1]))
             {
                 _font[i] = _font[i - 1];
@@ -270,7 +341,7 @@ internal sealed class InlineLayout
             int cp = char.IsSurrogatePair(_text, i) ? char.ConvertToUtf32(_text, i) : _text[i];
             if (IsAtomic(i) || cp == '\n' || PdfFont.IsInvisible(_text, i))
             {
-                _font[i] = fonts.Primary;
+                _font[i] = fonts!.Primary;
                 if (cp == '\t') _shaping[i] = ' ';
                 continue;
             }
@@ -280,7 +351,7 @@ internal sealed class InlineLayout
             PdfFont font = i > 0 && category is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark
                 && ReferenceEquals(_style[i - 1], style) && _font[i - 1].Covers(_text, i)
                 ? _font[i - 1]
-                : fonts.For(_text, i);
+                : fonts!.For(_text, i);
             _font[i] = font;
 
             // No font has it: a question mark keeps the text visible, as browsers show a box.
@@ -298,6 +369,11 @@ internal sealed class InlineLayout
         int n = _text.Length;
         _level = new byte[n];
         int direction = _container.Keyword("unicode-bidi") == "plaintext" ? 2 : _rtl ? 1 : 0;
+
+        // Below U+0590 no character is right to left, an Arabic number or a bidi control, so in a
+        // paragraph that is not right to left every level is 0 (UAX #9: numbers after the start of
+        // a left to right paragraph resolve to L, and neutrals between L and L to L).
+        if (direction != 1 && _text.All(c => c < 0x0590)) return;
         int start = 0;
         for (int i = 0; i <= n; i++)
         {
@@ -369,7 +445,7 @@ internal sealed class InlineLayout
     private List<ShapedGlyph> Shape(Item item, int script, string shaping)
     {
         double size = item.Style.FontSize;
-        List<ShapedGlyph> glyphs = item.Font.ShapeRun(shaping, item.Start, item.End, item.Level % 2 == 1, UnicodeData.ScriptTags[script]);
+        List<ShapedGlyph> glyphs = _engine.Fonts.Shaping.Shape(item.Font, shaping, item.Start, item.End, item.Level % 2 == 1, UnicodeData.ScriptTags[script]);
         double toUnits = size > 0 ? 1000 / size : 0;
         double letter = Spacing(item.Style, "letter-spacing") * toUnits;
         double word = Spacing(item.Style, "word-spacing") * toUnits;
@@ -417,31 +493,57 @@ internal sealed class InlineLayout
     private void FindBreaks()
     {
         int n = _text.Length;
-        var positions = new SortedDictionary<int, bool>();
+
+        // UAX #14 gives the opportunities in order, each once.
+        var breaks = new List<LineBreak>();
         foreach (LineBreak b in LineBreaker.Breaks(_text))
         {
             int p = b.Position;
             if (b.Mandatory || p >= n)
             {
-                positions[p] = true;
+                breaks.Add(new LineBreak(p, true));
                 continue;
             }
 
             if (p <= 0 || NoWrap(_style[p - 1])) continue;
             if (_text[p - 1] == SoftHyphen && _style[p - 1].Keyword("hyphens") == "none") continue;
-            positions[p] = false;
+            breaks.Add(new LineBreak(p, false));
         }
 
         // word-break: break-all allows a break between any two letters.
-        for (int p = 1; p < n; p++)
+        if (AnyStyle(s => s.Keyword("word-break") == "break-all"))
         {
-            if (_style[p - 1].Keyword("word-break") != "break-all" || NoWrap(_style[p - 1]) || positions.ContainsKey(p)) continue;
-            if (char.IsLowSurrogate(_text[p]) || IsMark(p)) continue;
-            if (char.IsLetterOrDigit(_text[p - 1]) || char.IsLetterOrDigit(_text[p])) positions[p] = false;
+            var merged = new List<LineBreak>(breaks.Count);
+            int next = 0;
+            for (int p = 1; p < n; p++)
+            {
+                while (next < breaks.Count && breaks[next].Position < p) merged.Add(breaks[next++]);
+                if (next < breaks.Count && breaks[next].Position == p) continue;
+                if (_style[p - 1].Keyword("word-break") != "break-all" || NoWrap(_style[p - 1])) continue;
+                if (char.IsLowSurrogate(_text[p]) || IsMark(p)) continue;
+                if (char.IsLetterOrDigit(_text[p - 1]) || char.IsLetterOrDigit(_text[p])) merged.Add(new LineBreak(p, false));
+            }
+
+            while (next < breaks.Count) merged.Add(breaks[next++]);
+            breaks = merged;
         }
 
-        _breaks = [.. positions.Select(p => new LineBreak(p.Key, p.Value))];
+        _breaks = breaks;
         if (_breaks.Count == 0 || _breaks[^1].Position != n) _breaks.Add(new LineBreak(n, true));
+    }
+
+    /// <summary>Whether any of the text's styles passes the test, asked once per run of one style.</summary>
+    private bool AnyStyle(Func<ComputedStyle, bool> test)
+    {
+        ComputedStyle? last = null;
+        foreach (ComputedStyle style in _style)
+        {
+            if (ReferenceEquals(style, last)) continue;
+            if (test(style)) return true;
+            last = style;
+        }
+
+        return false;
     }
 
     private bool IsMark(int i) =>
@@ -481,7 +583,7 @@ internal sealed class InlineLayout
         double indent = _container.Length("text-indent", _width) ?? 0;
         double min = 0, max = 0;
         int previous = 0, lineStart = 0;
-        bool anywhere = _style.Any(s => s.Keyword("overflow-wrap") == "anywhere");
+        bool anywhere = AnyStyle(s => s.Keyword("overflow-wrap") == "anywhere");
         foreach (LineBreak b in _breaks)
         {
             min = Math.Max(min, LineWidth(previous, b.Position) - AtomicSlack(previous, b.Position));
@@ -631,7 +733,13 @@ internal sealed class InlineLayout
         {
             Item item = _items[_itemAt[i]];
             int s = Math.Max(item.Start, start), e = Math.Min(item.End, visibleEnd);
-            var seg = new Segment(item, s, e) { Glyphs = item.Glyphs.Where(g => g.Cluster >= s && g.Cluster < e).ToList() };
+            var glyphs = new List<ShapedGlyph>(Math.Min(item.Glyphs.Count, e - s));
+            foreach (ShapedGlyph g in item.Glyphs)
+            {
+                if (g.Cluster >= s && g.Cluster < e) glyphs.Add(g);
+            }
+
+            var seg = new Segment(item, s, e) { Glyphs = glyphs };
             seg.Width = Width(s, e);
             segments.Add(seg);
             i = e;

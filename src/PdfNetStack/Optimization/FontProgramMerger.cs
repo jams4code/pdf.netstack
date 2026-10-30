@@ -22,7 +22,8 @@ internal static class FontProgramMerger
     /// The FontFile2 streams this pass may change, with the glyph ids the fonts using each one
     /// can show: the codes from the content analysis, .notdef, and composite components.
     /// </summary>
-    public static Dictionary<int, HashSet<int>> MergeablePrograms(PdfFile file, ContentAnalysis analysis, long decodeLimit)
+    /// <param name="read">Receives each program's glyphs as read here, so that they need not be read again; null when not wanted.</param>
+    public static Dictionary<int, HashSet<int>> MergeablePrograms(PdfFile file, ContentAnalysis analysis, long decodeLimit, Dictionary<int, TrueTypeGlyphs>? read = null)
     {
         var result = new Dictionary<int, HashSet<int>>();
         if (!analysis.Complete || !analysis.GlyphUsageComplete) return result;
@@ -55,6 +56,7 @@ internal static class FontProgramMerger
             if (file.GetObject(program) is not PdfStream stream) continue;
             TrueTypeGlyphs? glyphs = TrueTypeGlyphs.Read(file, stream, decodeLimit);
             if (glyphs is null) continue;
+            if (read is not null) read[program] = glyphs;
 
             var used = new HashSet<int> { 0 };
             foreach ((_, HashSet<int> codes) in list) used.UnionWith(codes);
@@ -102,15 +104,15 @@ internal static class FontProgramMerger
     public static (int Merged, HashSet<int> Changed) Run(PdfFile file, ContentAnalysis analysis, CompressionLevel level, long decodeLimit, CancellationToken ct)
     {
         var changed = new HashSet<int>();
-        Dictionary<int, HashSet<int>> programs = MergeablePrograms(file, analysis, decodeLimit);
+        var read = new Dictionary<int, TrueTypeGlyphs>();
+        Dictionary<int, HashSet<int>> programs = MergeablePrograms(file, analysis, decodeLimit, read);
         if (programs.Count < 2) return (0, changed);
 
         var groups = new Dictionary<string, List<(int Number, TrueTypeGlyphs Glyphs, HashSet<int> Used)>>(StringComparer.Ordinal);
         foreach ((int number, HashSet<int> used) in programs.OrderBy(p => p.Key))
         {
             ct.ThrowIfCancellationRequested();
-            if (file.GetObject(number) is not PdfStream stream) continue;
-            if (TrueTypeGlyphs.Read(file, stream, decodeLimit) is not { } glyphs) continue;
+            TrueTypeGlyphs glyphs = read[number];
             string key = glyphs.CompatibilityKey();
             if (!groups.TryGetValue(key, out var group))
             {
