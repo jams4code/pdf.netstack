@@ -101,7 +101,9 @@
     sequence as HarfBuzz does.
 - Text extraction reads right to left lines in logical order when they start or end with a Latin
   word: the paragraph direction comes from both ends of the line, and punctuation next to the
-  word stays in it ("To." rather than "To .").
+  word stays in it ("To." rather than "To ."). Numbers in right to left lines follow the
+  weak rules of UAX #9: after Arabic, "2026-114" (drawn 114-2026) reads in logical order, while
+  dates, amounts and percentages stay whole.
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color

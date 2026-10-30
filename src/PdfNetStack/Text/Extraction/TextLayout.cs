@@ -547,10 +547,11 @@ internal static class TextLayout
 
     /// <summary>
     /// The logical order of a line's letters from their visual order (Unicode Standard Annex #9,
-    /// rule L2, run backwards). In a right to left paragraph left to right letters sit at level 2, right to left letters at level 1, numbers take
-    /// the left to right level, and neutrals take the level around them or the paragraph's. Since
-    /// reversing runs is its own inverse, applying L2 to the visual order gives the logical order.
-    /// Null when that is the visual order: a line without right to left letters.
+    /// rule L2, run backwards). In a right to left paragraph left to right letters sit at level 2,
+    /// right to left letters at level 1, numbers take the left to right level (see
+    /// <see cref="ResolveNumbers"/>), and neutrals take the level around them or the paragraph's.
+    /// Since reversing runs is its own inverse, applying L2 to the visual order gives the logical
+    /// order. Null when that is the visual order: a line without right to left letters.
     /// </summary>
     private static int[]? LogicalOrder(Item[] visual, int n)
     {
@@ -577,10 +578,18 @@ internal static class TextLayout
             };
         }
 
+        // What a neutral sees of each neighbor: its level, except for numbers in a right to left line.
+        int[] influence = levels;
+        if (paragraph == 1 && Array.IndexOf(types, Kind.Number) >= 0)
+        {
+            influence = (int[])levels.Clone();
+            ResolveNumbers(visual, types, levels, influence);
+        }
+
         for (int i = 0; i < n; i++)
         {
             if (levels[i] >= 0) continue;
-            int before = Neighbor(levels, i, -1, paragraph), after = Neighbor(levels, i, 1, paragraph);
+            int before = Neighbor(influence, i, -1, paragraph), after = Neighbor(influence, i, 1, paragraph);
             levels[i] = before == after ? before : paragraph;
         }
 
@@ -643,6 +652,85 @@ internal static class TextLayout
             string t = visual[i].Letter.Text;
             return t.Length > 0 && t.All(c => char.GetUnicodeCategory(c) == UnicodeCategory.OtherPunctuation) ? punctuation : 0;
         }
+    }
+
+    /// <summary>
+    /// Numbers in a right to left line, after rules W2, W4, W5, W7 and N1 of UAX #9, judged from
+    /// the visual neighbors since the logical ones are what is sought. Digits that follow left to
+    /// right letters go with them (W7). Digits with an Arabic letter after them on the right, and
+    /// no left to right letter on their left, are Arabic numbers (W2). A common separator between
+    /// numbers of one kind, a European separator between European numbers and terminators next
+    /// to a European number belong to the number (W4, W5). Any other neutral sees a number as
+    /// right to left (N1): after Arabic, "2026-114" is two numbers parted by a hyphen, while
+    /// "29/10/2026" and "1,250.00" stay whole.
+    /// </summary>
+    private static void ResolveNumbers(Item[] visual, Kind[] types, int[] levels, int[] influence)
+    {
+        int n = types.Length;
+        var arabic = new bool[n];
+        for (int i = 0; i < n; i++)
+        {
+            if (types[i] != Kind.Number) continue;
+            int left = StrongIndex(types, i, -1), right = StrongIndex(types, i, 1);
+            bool afterLeft = left >= 0 && types[left] == Kind.Left;
+            arabic[i] = Deciding(visual[i].Letter.Text) == BidiClass.AN
+                || (!afterLeft && right >= 0 && Deciding(visual[right].Letter.Text) == BidiClass.AL);
+            influence[i] = afterLeft ? 2 : 1;
+        }
+
+        for (int i = 0; i < n; i++)
+        {
+            if (types[i] != Kind.Neutral) continue;
+            bool numberBefore = i > 0 && types[i - 1] == Kind.Number, numberAfter = i + 1 < n && types[i + 1] == Kind.Number;
+            if (!numberBefore && !numberAfter && !IsTerminator(i)) continue;
+            int number = -1;
+            switch (Deciding(visual[i].Letter.Text))
+            {
+                case BidiClass.CS when numberBefore && numberAfter && arabic[i - 1] == arabic[i + 1]:
+                case BidiClass.ES when numberBefore && numberAfter && !arabic[i - 1] && !arabic[i + 1]:
+                    number = i - 1;
+                    break;
+                case BidiClass.ET:
+                    // A run of terminators touching a European number on either side.
+                    int start = i, end = i;
+                    while (start > 0 && IsTerminator(start - 1)) start--;
+                    while (end + 1 < n && IsTerminator(end + 1)) end++;
+                    if (start > 0 && types[start - 1] == Kind.Number && !arabic[start - 1]) number = start - 1;
+                    else if (end + 1 < n && types[end + 1] == Kind.Number && !arabic[end + 1]) number = end + 1;
+                    break;
+            }
+
+            if (number < 0) continue;
+            levels[i] = levels[number];
+            influence[i] = influence[number];
+        }
+
+        bool IsTerminator(int i) => types[i] == Kind.Neutral && Deciding(visual[i].Letter.Text) == BidiClass.ET;
+    }
+
+    private static int StrongIndex(Kind[] types, int at, int step)
+    {
+        for (int i = at + step; i >= 0 && i < types.Length; i += step)
+        {
+            if (types[i] is Kind.Left or Kind.Right) return i;
+        }
+
+        return -1;
+    }
+
+    /// <summary>The bidi class that decides a letter's text: its first strong character or digit, else its first character's.</summary>
+    private static BidiClass Deciding(string text)
+    {
+        BidiClass first = BidiClass.ON;
+        for (int i = 0; i < text.Length; i += char.IsSurrogatePair(text, i) ? 2 : 1)
+        {
+            int cp = char.IsSurrogate(text[i]) && !char.IsSurrogatePair(text, i) ? 0xFFFD : char.ConvertToUtf32(text, i);
+            BidiClass c = UnicodeData.Bidi(cp);
+            if (c is BidiClass.L or BidiClass.R or BidiClass.AL or BidiClass.EN or BidiClass.AN) return c;
+            if (i == 0) first = c;
+        }
+
+        return first;
     }
 
     private static Kind Strong(Kind[] types, int at, int step)

@@ -489,6 +489,24 @@ public sealed class TextExtractionTests
     }
 
     [TestMethod]
+    public void NumbersInRightToLeftLinesReadLogically()
+    {
+        // Glyphs drawn left to right as they appear. Codes 1 to 3 are the Arabic reh, qaf and meem,
+        // 4 to 6 the Hebrew shin, lamed and final mem. After Arabic, digits are Arabic numbers:
+        // "2026-114" shows as 114-2026, the hyphen between two numbers, while the slashes of a
+        // date stay inside it. After Hebrew the hyphen joins the two numbers into one, and the
+        // percent sign goes with its number.
+        string cmap = CMap("1 begincodespacerange <00> <FF> endcodespacerange 6 beginbfchar <01> <0631> <02> <0642> <03> <0645> "
+            + "<04> <05E9> <05> <05DC> <06> <05DD> endbfchar");
+        PdfPage page = Page(
+            "BT /F1 10 Tf 72 700 Td (29/10/2026 114-2026 ) Tj <030201> Tj ET BT /F1 10 Tf 72 680 Td (2026-114 50% ) Tj <060504> Tj ET",
+            "/Font<</F1 10 0 R>>",
+            (10, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica/ToUnicode 11 0 R>>"),
+            (11, "stream:|" + cmap));
+        Assert.AreEqual("رقم 2026-114 29/10/2026\nשלם 50% 2026-114", page.ExtractText());
+    }
+
+    [TestMethod]
     public void HtmlRightToLeftParagraphsWithLatinWordsReadInLogicalOrder()
     {
         var fonts = new PdfFontCollection();
