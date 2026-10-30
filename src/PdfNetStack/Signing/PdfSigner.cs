@@ -479,6 +479,11 @@ public static class PdfSigner
             IEnumerable<X509Certificate2> embedded = info.IsDocumentTimestamp ? token.Cms.Certificates : token.Cms.Certificates.Concat(cms.Certificates);
             authority = validator.Validate(tsa, embedded, CertificateRole.TimestampAuthority, time, source);
             stamp.Validation = authority;
+            if (validator.TrustedLists is TrustedListQualifier lists)
+            {
+                (stamp.QualifiedTimestamp, stamp.QualifiedTimestampService, stamp.QualifiedTimestampReasons) =
+                    lists.Timestamp([.. authority.Certificates.Select(c => c.Certificate)], time);
+            }
         }
 
         if (info.IsDocumentTimestamp)

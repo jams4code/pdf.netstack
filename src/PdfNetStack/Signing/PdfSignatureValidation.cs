@@ -72,6 +72,22 @@ public sealed record PdfValidationOptions
 
     /// <summary>Do not let anyPolicy in a certificate stand for every policy (initial-any-policy-inhibit). Default false.</summary>
     public bool InhibitAnyPolicy { get; init; }
+
+    /// <summary>
+    /// Trusted lists (ETSI TS 119 612) to confirm qualified status against, such as the EU list of
+    /// trusted lists and the national lists it points to, read with
+    /// <see cref="PdfTrustedList.Load(byte[], PdfTrustedList)"/>. Lists whose signature did not
+    /// pass, or that have expired, are not used. With lists, every signer gets
+    /// <see cref="PdfCertificateValidation.TrustedListQualification"/> and every timestamp
+    /// <see cref="PdfTimestampInfo.QualifiedTimestamp"/>. Empty by default.
+    /// </summary>
+    public IReadOnlyList<PdfTrustedList> TrustedLists { get; init; } = [];
+
+    /// <summary>
+    /// Count the certificates of every service in the usable <see cref="TrustedLists"/> as trust
+    /// anchors, beside <see cref="TrustAnchors"/>, as the EU trust model does. Default true.
+    /// </summary>
+    public bool TrustedListsAsTrustAnchors { get; init; } = true;
 }
 
 /// <summary>The checks made on one certificate of a chain.</summary>
@@ -138,8 +154,9 @@ public sealed class PdfCertificateCheck
 /// 5280 treats the anchor as input; its name constraints are applied. Policy qualifiers are not
 /// read. A constraint on another name form fails a certificate that carries such a name, and any
 /// other critical extension the library does not process fails the certificate. Qualified status
-/// is what the QCStatements claim (ETSI EN 319 412-5); confirming it needs an EU trusted list,
-/// which the library does not download. Delta and partitioned CRLs are not used.
+/// is what the QCStatements claim (ETSI EN 319 412-5), confirmed against the trusted lists the
+/// application supplies (ETSI TS 119 615), which the library never downloads. Delta and
+/// partitioned CRLs are not used.
 /// </remarks>
 public sealed class PdfCertificateValidation
 {
@@ -178,9 +195,16 @@ public sealed class PdfCertificateValidation
 
     /// <summary>
     /// The qualification the first certificate's QCStatements claim, such as QESig. Meaningful only
-    /// when <see cref="Status"/> is Passed, and not confirmed against an EU trusted list.
+    /// when <see cref="Status"/> is Passed. <see cref="TrustedListQualification"/> confirms it.
     /// </summary>
     public PdfQualification Qualification { get; internal set; }
+
+    /// <summary>
+    /// The qualification confirmed against <see cref="PdfValidationOptions.TrustedLists"/> at the
+    /// validation time; null when no trusted lists were supplied, and for a time stamp authority.
+    /// Meaningful only when <see cref="Status"/> is Passed.
+    /// </summary>
+    public PdfTrustedListQualification? TrustedListQualification { get; internal set; }
 
     /// <summary>Everything that did not pass, in plain words.</summary>
     public IReadOnlyList<string> Problems { get; internal set; } = [];
@@ -222,6 +246,22 @@ public sealed class PdfTimestampInfo
 
     /// <summary>The authority's certificate checks, when validation options were given.</summary>
     public PdfCertificateValidation? Validation { get; internal set; }
+
+    /// <summary>
+    /// Whether the authority is a qualified time stamp service by
+    /// <see cref="PdfValidationOptions.TrustedLists"/>: Passed when a TSA/QTST service whose
+    /// identity is the authority's certificate, or a certificate above it, was granted at the
+    /// validation time; Failed when none was; Indeterminate when no list can be used or the
+    /// service has critical extensions the library does not interpret; NotChecked without
+    /// trusted lists or without the authority's certificate.
+    /// </summary>
+    public PdfCheckStatus QualifiedTimestamp { get; internal set; }
+
+    /// <summary>The TSA/QTST service that confirmed <see cref="QualifiedTimestamp"/>, or null.</summary>
+    public PdfTrustService? QualifiedTimestampService { get; internal set; }
+
+    /// <summary>How <see cref="QualifiedTimestamp"/> was decided, in plain words.</summary>
+    public IReadOnlyList<string> QualifiedTimestampReasons { get; internal set; } = [];
 
     /// <summary>Why the timestamp failed, or null.</summary>
     public string? Problem { get; internal set; }

@@ -17,10 +17,10 @@ public enum PdfQcType
 }
 
 /// <summary>
-/// The qualification a signature has by what its certificate claims, named as ETSI TS 119 102-2
-/// names signature qualifications. It is read from the certificate's QCStatements alone: whether
-/// the issuer is a qualified trust service provider, and whether a key is really in a qualified
-/// device, is confirmed by an EU trusted list, which the library does not download.
+/// The qualification of a signature, named as ETSI TS 119 102-2 names signature qualifications.
+/// <see cref="PdfCertificateValidation.Qualification"/> reads it from the certificate's
+/// QCStatements alone; <see cref="PdfTrustedListQualification.Qualification"/> confirms it
+/// against the EU trusted lists the application supplies, which the library never downloads.
 /// </summary>
 public enum PdfQualification
 {
@@ -44,6 +44,9 @@ public enum PdfQualification
 
     /// <summary>QESeal: a qualified electronic seal, from a qualified certificate for seals with the key in a qualified seal creation device.</summary>
     QESeal,
+
+    /// <summary>The trusted lists do not decide: no usable list, lists or qualifiers that conflict, or a criterion the library cannot evaluate. Never claimed by QCStatements alone.</summary>
+    Indeterminate,
 }
 
 /// <summary>Where a PKI disclosure statement can be read (QcPDS), and its language.</summary>
@@ -94,22 +97,21 @@ public sealed class PdfQcStatements
     public IReadOnlyList<string> StatementIds { get; internal set; } = [];
 
     /// <summary>The qualification these statements claim for a signature made with the certificate.</summary>
-    public PdfQualification Qualification
-    {
-        get
-        {
-            if (!IsQualified || Legislations.Count > 0) return PdfQualification.AdES;
-            bool signature = Types.Count == 0 || Types.All(t => t == PdfQcType.ElectronicSignature);
-            bool seal = Types.Count > 0 && Types.All(t => t == PdfQcType.ElectronicSeal);
-            return KeyInQualifiedDevice
-                ? signature ? PdfQualification.QESig : seal ? PdfQualification.QESeal : PdfQualification.QES
-                : signature ? PdfQualification.AdESigQC : seal ? PdfQualification.AdESealQC : PdfQualification.AdESQC;
-        }
-    }
+    public PdfQualification Qualification => !IsQualified || Legislations.Count > 0 ? PdfQualification.AdES : Classify(Types, KeyInQualifiedDevice);
 
     internal const string Oid = "1.3.6.1.5.5.7.1.3";
     private const string Etsi = "0.4.0.1862.1.";
     private const int MaxStatements = 64;
+
+    /// <summary>The qualification of a signature made with an EU qualified certificate of these types (none meaning electronic signatures), with or without the key in a qualified device.</summary>
+    internal static PdfQualification Classify(IReadOnlyList<PdfQcType> types, bool qualifiedDevice)
+    {
+        bool signature = types.Count == 0 || types.All(t => t == PdfQcType.ElectronicSignature);
+        bool seal = types.Count > 0 && types.All(t => t == PdfQcType.ElectronicSeal);
+        return qualifiedDevice
+            ? signature ? PdfQualification.QESig : seal ? PdfQualification.QESeal : PdfQualification.QES
+            : signature ? PdfQualification.AdESigQC : seal ? PdfQualification.AdESealQC : PdfQualification.AdESQC;
+    }
 
     /// <summary>The statements of a certificate, or null when it has none.</summary>
     /// <exception cref="FormatException">The extension cannot be read.</exception>

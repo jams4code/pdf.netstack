@@ -21,7 +21,31 @@
   package), so `PdfNetStack.Tool` stays small and free of ONNX. `pdfnetstack ocr` runs it when it
   is installed and says how to install it when it is not.
 - `eng/check-licenses.ps1` allows a package under `onlyIn` to ship with several named projects.
-
+- Signature validation confirms qualified status against EU trusted lists the application
+  supplies; the library still downloads nothing. `PdfTrustedList.Load` reads ETSI TS 119 612
+  lists (the list of lists and national lists) from bytes or a stream, with DTDs prohibited, at
+  most 32 MiB and 64 levels: scheme information, pointers to other lists with their signing
+  certificates, providers, services with type, status, history, digital identities
+  (certificates, subject key identifiers, subject names), qualifications with their criteria and
+  additional service information. Each list's enveloped XMLDSig signature is verified against the
+  certificates supplied for it, or for a national list against the pointers of a verified list of
+  lists (`Load(xml, listOfLists)`): every reference must digest correctly and one must cover the
+  whole list, identifiers must be unique, and Canonical XML 1.0 and 1.1 and Exclusive XML
+  Canonicalization are implemented in the library (no new dependency), checked against
+  Microsoft's implementation in the tests. RSA PKCS #1 v1.5, RSA-PSS with any salt length (also
+  for id-RSASSA-PSS keys) and ECDSA, with SHA-256, 384 and 512; SHA-1 is refused. The signer must
+  be valid at the signed XAdES signing time, or else at the issue date.
+- `PdfValidationOptions.TrustedLists` and `TrustedListsAsTrustAnchors`; every signer gets
+  `PdfCertificateValidation.TrustedListQualification` (`Qualification` at the signing time,
+  `AtIssuance`, the deciding `Service`, `Reasons`) as ETSI TS 119 615 decides it: the CA/QC
+  service found by public key or subject key identifier anywhere above the certificate, its
+  status from the history at issuance and at the signing time (granted, or supervised or
+  accredited before eIDAS), the qualifiers its criteria select (key usage, policies, extended key
+  usage, subject attributes, nested lists) and the certificate's QCStatements. Conflicts,
+  criteria or critical extensions the library cannot evaluate, and missing or expired lists give
+  the new `PdfQualification.Indeterminate`. Timestamps get `PdfTimestampInfo.QualifiedTimestamp`
+  from TSA/QTST services. `tools/PdfNetStack.TrustedListCheck` reads and verifies the live EU
+  lists for a manual check; the tests generate every list and PKI.
 - HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
   across an unbounded number of pages. Computed lengths are now clamped to a million px either
   way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000

@@ -21,12 +21,22 @@ internal sealed class CertificateValidator
     private readonly SecurityStore _store;
     private readonly Dictionary<string, PdfRevocationValues> _supplied = new();
     private readonly SignatureChecks _checks = new();
+    private readonly IReadOnlyList<X509Certificate2> _anchors;
 
     public CertificateValidator(PdfValidationOptions options, SecurityStore store)
     {
         _options = options;
         _store = store;
+        _anchors = options.TrustAnchors;
+        if (options.TrustedLists.Count > 0)
+        {
+            TrustedLists = new TrustedListQualifier(options.TrustedLists, DateTimeOffset.UtcNow);
+            if (options.TrustedListsAsTrustAnchors) _anchors = [.. options.TrustAnchors, .. TrustedLists.Anchors];
+        }
     }
+
+    /// <summary>The usable trusted lists of the options, or null when none were supplied.</summary>
+    public TrustedListQualifier? TrustedLists { get; }
 
     /// <summary>Builds a chain upward from a certificate through the pool, stopping at a certificate <paramref name="isAnchor"/> accepts.</summary>
     /// <exception cref="SignatureChecks.ExhaustedException">The operation used up its signature checks.</exception>
@@ -69,7 +79,7 @@ internal sealed class CertificateValidator
 
     private PdfCertificateValidation Check(X509Certificate2 leaf, IEnumerable<X509Certificate2> embedded, CertificateRole role, DateTimeOffset time, PdfValidationTimeSource source)
     {
-        IReadOnlyList<X509Certificate2> anchors = _options.TrustAnchors;
+        IReadOnlyList<X509Certificate2> anchors = _anchors;
         List<X509Certificate2> pool = [.. embedded, .. _options.Certificates, .. _store.Certificates];
         bool IsAnchor(X509Certificate2 c) => anchors.Any(a => Same(a, c));
         List<X509Certificate2> path = BuildChain(leaf, pool, IsAnchor, anchors, _checks);
@@ -152,6 +162,7 @@ internal sealed class CertificateValidator
         result.Certificates = checks;
         result.Problems = problems;
         result.Qualification = checks[0].QcStatements?.Qualification ?? PdfQualification.AdES;
+        if (role == CertificateRole.Signer && TrustedLists is not null) result.TrustedListQualification = TrustedLists.Signer(path, checks[0].QcStatements, time);
         var statuses = new List<PdfCheckStatus> { result.Chain, result.Policy };
         foreach (PdfCertificateCheck c in checks)
         {

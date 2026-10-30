@@ -443,8 +443,7 @@ graph of RFC 9618, so hostile mappings stay cheap): set `AcceptablePolicies` and
 be valid for one of them, and `ValidPolicies` says which. Name constraints are enforced on DNS
 names, email addresses, URI hosts, directory names and IP addresses. Each certificate's
 QCStatements (ETSI EN 319 412-5) are read, and `Qualification` reports what the signer's
-certificate claims, such as QESig or AdESeal-QC. No trusted list is downloaded, so that claim is
-not confirmed against one.
+certificate claims, such as QESig or AdESeal-QC.
 
 ```csharp
 var etsi = new PdfValidationOptions
@@ -455,6 +454,31 @@ var etsi = new PdfValidationOptions
 PdfCertificateValidation v = PdfSigner.Verify(signed, etsi)[0].Validation!;
 Console.WriteLine($"{v.Status} {v.Policy} {v.Qualification}");
 ```
+
+That claim is confirmed against EU trusted lists (ETSI TS 119 612) that you supply. The library
+never downloads one: fetch the EU list of trusted lists and the national lists it points to
+yourself, and pass the certificates the Official Journal publishes for the list of lists.
+
+```csharp
+PdfTrustedList lotl = PdfTrustedList.Load(lotlXml, ojCertificates);   // checks the XML signature
+PdfTrustedList be = PdfTrustedList.Load(beXml, lotl);                  // signer taken from the LOTL pointer
+var eu = new PdfValidationOptions { TrustedLists = [lotl, be] };
+PdfSignatureInfo s = PdfSigner.Verify(signed, eu)[0];
+PdfTrustedListQualification q = s.Validation!.TrustedListQualification!;
+Console.WriteLine($"{q.Qualification} via {q.Service?.Name}");          // QESig, AdES or Indeterminate
+foreach (string reason in q.Reasons) Console.WriteLine(reason);
+Console.WriteLine(s.Timestamp?.QualifiedTimestamp);                    // Passed for a granted TSA/QTST
+```
+
+Each list's enveloped XML signature is verified (Exclusive and inclusive Canonical XML, RSA,
+RSA-PSS and ECDSA with SHA-2) against the certificates given for it, and only lists that pass
+and have not expired are used. Qualification follows ETSI TS 119 615: the CA/QC service whose
+identity is a CA of the chain, its status from the history at the certificate's issuance and at
+the signing time, the qualifiers its criteria select (QCWithQSCD, QCForESeal, NotQualified and
+the rest) and the certificate's QCStatements. Conflicting qualifiers or services, criteria the
+library cannot evaluate and missing lists give Indeterminate, with the reasons. The services'
+certificates also count as trust anchors (`TrustedListsAsTrustAnchors`). A manual check that
+reads and verifies the live lists is in `tools/PdfNetStack.TrustedListCheck`.
 
 ### Encryption
 
