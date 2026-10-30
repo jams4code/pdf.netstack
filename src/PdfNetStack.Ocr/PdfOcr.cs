@@ -31,6 +31,46 @@ public sealed class PdfOcrOptions
 
     /// <summary>Share of the crop box an image must cover to be read as the page's scan.</summary>
     public double MinimumCoverage { get; init; } = 0.5;
+
+    /// <summary>
+    /// Find scans whose text is turned a quarter or half turn with nothing in the PDF saying so,
+    /// as when a page is fed into a scanner sideways, and read them turned back. Only pages where
+    /// most of the text read does not run left to right cost more: a reduced copy is read in each
+    /// of the four orientations, then the page once more in the best one.
+    /// </summary>
+    public bool DetectOrientation { get; init; } = true;
+
+    /// <summary>
+    /// Renders pages that have no scan to read: text drawn as vector outlines, vector art with
+    /// images too small to be a scan, or scans in encodings or placements that are not decoded.
+    /// Null (the default) leaves such pages unread. PdfNetStack has no renderer; see
+    /// <see cref="IPdfPageRasterizer"/>.
+    /// </summary>
+    public IPdfPageRasterizer? Rasterizer { get; init; }
+
+    /// <summary>The resolution pages are rendered at by <see cref="Rasterizer"/>, at most <see cref="MaxOcrDpi"/>.</summary>
+    public double RasterizerDpi { get; init; } = 300;
+}
+
+/// <summary>
+/// Renders a page to pixels for OCR, for pages <see cref="PdfOcr"/> cannot read from their images.
+/// PdfNetStack does not render; an application supplies a renderer, for example one built on
+/// PDFium, through <see cref="PdfOcrOptions.Rasterizer"/>.
+/// </summary>
+public interface IPdfPageRasterizer
+{
+    /// <summary>
+    /// Renders a page as it is shown: its crop box, turned clockwise by its /Rotate, on white.
+    /// Called one page at a time, on the thread running <see cref="PdfOcr"/>, before the page's
+    /// text layer is added, so a renderer may also read the original file at
+    /// <paramref name="pageIndex"/>.
+    /// </summary>
+    /// <param name="page">The page.</param>
+    /// <param name="pageIndex">Its zero based index in the document.</param>
+    /// <param name="dpi">The resolution to render at, in pixels per inch; already lowered to keep the page within <see cref="PdfOcrOptions.MaxImagePixels"/>.</param>
+    /// <param name="cancellationToken">Stops the rendering.</param>
+    /// <returns>The page in 8 bit gray, or null to leave it unread.</returns>
+    OcrBitmap? Render(PdfPage page, int pageIndex, double dpi, CancellationToken cancellationToken);
 }
 
 /// <summary>What happened to a page.</summary>
@@ -61,6 +101,13 @@ public sealed record PdfOcrPage(int Index, PdfOcrPageStatus Status, string? Reas
 {
     /// <summary>The page's text, lines joined with newlines.</summary>
     public string Text => string.Join("\n", Lines.Select(l => l.Text));
+
+    /// <summary>
+    /// How far the text on the scan was found turned clockwise, in degrees, beyond what the page's
+    /// /Rotate and the scan's placement say: 0, 90, 180 or 270. The page was read turned back.
+    /// See <see cref="PdfOcrOptions.DetectOrientation"/>.
+    /// </summary>
+    public int Orientation { get; init; }
 }
 
 /// <summary>The result for a document.</summary>
@@ -154,6 +201,14 @@ public sealed class PdfOcr
 
     private (Scan? Scan, PdfOcrPage? Skipped) Prepare(PdfPage page, int index, CancellationToken cancellationToken)
     {
+        (Scan? scan, PdfOcrPage? skipped) = FindScan(page, index, cancellationToken);
+        return _options.Rasterizer is not null && skipped is { Status: PdfOcrPageStatus.SkippedNoScan or PdfOcrPageStatus.SkippedUnsupported }
+            ? Rasterize(page, index, skipped, cancellationToken)
+            : (scan, skipped);
+    }
+
+    private (Scan? Scan, PdfOcrPage? Skipped) FindScan(PdfPage page, int index, CancellationToken cancellationToken)
+    {
         PdfOcrPage Skip(PdfOcrPageStatus status, string? reason) => new(index, status, reason, []);
         try
         {
@@ -240,6 +295,54 @@ public sealed class PdfOcr
         return (new Scan(index, new OcrBitmap(uw, uh, upright), ToPage), null);
     }
 
+    /// <summary>
+    /// The page rendered by <see cref="PdfOcrOptions.Rasterizer"/>, for a page with no scan to read.
+    /// The rendering shows the crop box turned by /Rotate, so it is already upright; a pixel maps
+    /// back through that turn to the crop box. A rasterizer that declines keeps the page as skipped.
+    /// </summary>
+    private (Scan? Scan, PdfOcrPage? Skipped) Rasterize(PdfPage page, int index, PdfOcrPage skipped, CancellationToken cancellationToken)
+    {
+        (Scan?, PdfOcrPage?) Skip(PdfOcrPageStatus status, string reason) => (null, new PdfOcrPage(index, status, reason, []));
+        PdfRectangle crop = page.CropBox;
+        if (!(crop.Width > 0 && crop.Height > 0)) return (null, skipped);
+
+        // Lowered, before anything is rendered, until the page fits the pixel limit.
+        double dpi = Math.Min(_options.RasterizerDpi, _options.MaxOcrDpi);
+        double pixels = crop.Width * crop.Height * (dpi / 72) * (dpi / 72);
+        if (pixels > _options.MaxImagePixels) dpi *= Math.Sqrt(_options.MaxImagePixels / pixels);
+        if (!(dpi > 0)) return (null, skipped);
+
+        OcrBitmap? bitmap;
+        try
+        {
+            bitmap = _options.Rasterizer!.Render(page, index, dpi, cancellationToken);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return Skip(PdfOcrPageStatus.Failed, "The rasterizer failed: " + e.Message);
+        }
+
+        if (bitmap is null) return (null, skipped);
+        if ((long)bitmap.Width * bitmap.Height > _options.MaxImagePixels) return Skip(PdfOcrPageStatus.SkippedUnsupported, $"The rasterizer returned {bitmap.Width} by {bitmap.Height} pixels, over the limit.");
+
+        // The size before the turn, which must have the crop box's shape, give or take rounding.
+        int turns = (((page.Rotation / 90) % 4) + 4) % 4;
+        (int width, int height) = turns % 2 == 1 ? (bitmap.Height, bitmap.Width) : (bitmap.Width, bitmap.Height);
+        if (Math.Abs(width - (height * crop.Width / crop.Height)) > 1 + (0.01 * width))
+        {
+            return Skip(PdfOcrPageStatus.SkippedUnsupported, $"The rasterizer returned {bitmap.Width} by {bitmap.Height} pixels, not the shape of the page as shown.");
+        }
+
+        double scaleX = width / crop.Width, scaleY = height / crop.Height;
+        PdfPoint ToPage(PdfPoint p)
+        {
+            (double x, double y) = Unturn(p, turns, width, height);
+            return new PdfPoint(crop.Left + (x / scaleX), crop.Top - (y / scaleY));
+        }
+
+        return (new Scan(index, bitmap, ToPage), null);
+    }
+
     /// <summary>The area the images cover together inside the crop box.</summary>
     private static double Covered(List<PdfPageImage> images, PdfRectangle crop) => Mosaic.UnionArea([.. images.Select(i => Clip(i.Bounds, crop))]);
 
@@ -300,21 +403,111 @@ public sealed class PdfOcr
     {
         try
         {
-            List<OcrLine>? best = null;
-            foreach (string language in _options.Languages)
+            (List<OcrLine> best, string language) = ReadLines(scan.Bitmap, cancellationToken);
+            Func<PdfPoint, PdfPoint> toPage = scan.ToPage;
+            int turns = 0;
+            if (_options.DetectOrientation && Turned(best))
             {
-                OcrImageResult result = _engine.Recognize(scan.Bitmap, new OcrRequest { Language = language }, cancellationToken);
-                best = best is null ? [.. result.Lines] : Merge(best, result.Lines);
+                turns = Orientation(scan.Bitmap, language, cancellationToken);
+                if (turns != 0)
+                {
+                    int width = scan.Bitmap.Width, height = scan.Bitmap.Height;
+                    (byte[] pixels, int w, int h) = ImageOps.Rotate(scan.Bitmap.Pixels, width, height, turns);
+                    best = ReadLines(new OcrBitmap(w, h, pixels), cancellationToken).Lines;
+                    toPage = p =>
+                    {
+                        (double x, double y) = Unturn(p, turns, width, height);
+                        return scan.ToPage(new PdfPoint(x, y));
+                    };
+                }
             }
 
-            List<OcrLine> lines = [.. (best ?? []).Where(l => l.Confidence >= _options.MinimumConfidence).Select(l => ToPage(l, scan.ToPage))];
-            return new PdfOcrPage(scan.Index, PdfOcrPageStatus.Done, null, lines);
+            List<OcrLine> lines = [.. best.Where(l => l.Confidence >= _options.MinimumConfidence).Select(l => ToPage(l, toPage))];
+            return new PdfOcrPage(scan.Index, PdfOcrPageStatus.Done, null, lines) { Orientation = ((4 - turns) % 4) * 90 };
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             return new PdfOcrPage(scan.Index, PdfOcrPageStatus.Failed, e.Message, []);
         }
     }
+
+    /// <summary>The lines in every language, each kept in its most confident reading, and the language that read the most.</summary>
+    private (List<OcrLine> Lines, string Language) ReadLines(OcrBitmap bitmap, CancellationToken cancellationToken)
+    {
+        List<OcrLine>? best = null;
+        string bestLanguage = "latin";
+        double most = -1;
+        foreach (string language in _options.Languages)
+        {
+            OcrImageResult result = _engine.Recognize(bitmap, new OcrRequest { Language = language }, cancellationToken);
+            best = best is null ? [.. result.Lines] : Merge(best, result.Lines);
+            double read = result.Lines.Sum(Weight);
+            if (read > most) (most, bestLanguage) = (read, language);
+        }
+
+        return (best ?? [], bestLanguage);
+    }
+
+    // Longest side of the copy read in each orientation: about 140 dpi for an A4 page.
+    private const int OrientationSide = 1600;
+
+    /// <summary>
+    /// Whether most of the text, weighed by length and confidence, does not run left to right: the
+    /// detector found the lines taller than wide, or the line orientation model turned them.
+    /// </summary>
+    private static bool Turned(List<OcrLine> lines)
+    {
+        double upright = 0, turned = 0;
+        foreach (OcrLine line in lines)
+        {
+            if (Quarter(line) == 0) upright += Weight(line);
+            else turned += Weight(line);
+        }
+
+        return turned > upright;
+    }
+
+    /// <summary>
+    /// The quarter turns clockwise that stand the scan's text upright. A copy reduced to at most
+    /// <see cref="OrientationSide"/> pixels a side is read in each of the four orientations, in the
+    /// language that read the most; the one with the most text read left to right, weighed by
+    /// confidence, wins. A tie keeps the scan as it is.
+    /// </summary>
+    private int Orientation(OcrBitmap scan, string language, CancellationToken cancellationToken)
+    {
+        OcrBitmap small = scan;
+        int longest = Math.Max(scan.Width, scan.Height);
+        if (longest > OrientationSide)
+        {
+            double scale = (double)OrientationSide / longest;
+            int w = Math.Max(1, (int)Math.Round(scan.Width * scale)), h = Math.Max(1, (int)Math.Round(scan.Height * scale));
+            small = new OcrBitmap(w, h, ImageOps.Shrink(scan.Pixels, scan.Width, scan.Height, w, h));
+        }
+
+        var request = new OcrRequest { Language = language };
+        int best = 0;
+        double bestScore = 0;
+        for (int turns = 0; turns < 4; turns++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (byte[] pixels, int w, int h) = ImageOps.Rotate(small.Pixels, small.Width, small.Height, turns);
+            double score = _engine.Recognize(new OcrBitmap(w, h, pixels), request, cancellationToken).Lines.Where(l => Quarter(l) == 0).Sum(Weight);
+            if (score > bestScore) (best, bestScore) = (turns, score);
+        }
+
+        return best;
+    }
+
+    /// <summary>The way a line reads, in quarter turns clockwise from left to right (image space, y down).</summary>
+    private static int Quarter(OcrLine line)
+    {
+        if (line.Quad is not { Length: >= 2 }) return 0;
+        PdfPoint a = line.Quad[0], b = line.Quad[1];
+        double angle = Math.Atan2(b.Y - a.Y, b.X - a.X) * 180 / Math.PI;
+        return (((int)Math.Round(angle / 90) % 4) + 4) % 4;
+    }
+
+    private static double Weight(OcrLine line) => line.Confidence * line.Text.Length;
 
     /// <summary>
     /// Per line, the more confident reading. Detection does not depend on the script, so the same

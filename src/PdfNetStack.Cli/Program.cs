@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using PdfNetStack;
 using PdfNetStack.Cli;
+using static PdfNetStack.Cli.ConsoleText;
 
 return await Cli.RunAsync(args);
 
@@ -33,6 +34,9 @@ namespace PdfNetStack.Cli
                                   [--allow print,copy,modify,annotate,forms,accessibility,assemble,print-hq] [--aes128]
               pdfnetstack decrypt <input.pdf> <output.pdf> --password <owner password>
               Every editing command accepts --password to open an encrypted input.
+
+            OCR (needs the PdfNetStack.Ocr.Tool package; pdfnetstack-ocr --help for its options):
+              pdfnetstack ocr <input.pdf> <output.pdf> [--languages latin,arabic] [--models <folder>]
 
             Options:
               --fast | --balanced       Faster Flate levels (default: maximum)
@@ -79,6 +83,9 @@ namespace PdfNetStack.Cli
 
             try
             {
+                // OCR is a tool of its own, so this one stays free of ONNX Runtime; its options are its own too.
+                if (args[0] == "ocr") return OcrTool.Run(args[1..]) ?? Fail(OcrTool.Missing);
+
                 var parsed = Arguments.Parse(args.Skip(1).ToArray());
                 return args[0] switch
                 {
@@ -288,24 +295,6 @@ namespace PdfNetStack.Cli
             return 0;
         }
 
-        /// <summary>
-        /// Text from a document is untrusted. Control, C1 and bidirectional override characters are
-        /// shown as escapes so a crafted title cannot drive the terminal.
-        /// </summary>
-        internal static string Printable(string? text)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            var sb = new StringBuilder(text.Length);
-            foreach (char c in text)
-            {
-                bool unsafeChar = char.IsControl(c) || c is >= '\u0080' and <= '\u009F' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069' or '\u200E' or '\u200F' or '\u061C';
-                if (unsafeChar) sb.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
-                else sb.Append(c);
-            }
-
-            return sb.ToString();
-        }
-
         private static int Verify(Arguments a)
         {
             string? difference = PdfEquivalence.FindDifference(File.ReadAllBytes(a.Positional[0]), File.ReadAllBytes(a.Positional[1]),
@@ -435,14 +424,6 @@ namespace PdfNetStack.Cli
             if (s.Length > 0 && s[0] is '=' or '+' or '-' or '@' or '\t' or '\r') s = "'" + s;
             return "\"" + s.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
         }
-
-        internal static string Size(long bytes) => bytes switch
-        {
-            >= 1L << 30 => $"{bytes / (double)(1L << 30):F2} GiB",
-            >= 1L << 20 => $"{bytes / (double)(1L << 20):F2} MiB",
-            >= 1L << 10 => $"{bytes / 1024.0:F1} KiB",
-            _ => $"{bytes} B",
-        };
     }
 
     internal static class Editing

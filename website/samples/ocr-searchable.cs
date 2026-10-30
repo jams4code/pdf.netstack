@@ -17,7 +17,9 @@ doc.Save("scan-searchable.pdf");   // looks the same, now selects, copies and se
 #region report
 foreach (PdfOcrPage page in report.Pages)
 {
-    Console.WriteLine($"Page {page.Index + 1}: {page.Status} {page.Reason}");
+    // Orientation: how far a page scanned sideways or upside down stood turned; it was read turned back.
+    string turned = page.Orientation != 0 ? $", scanned turned {page.Orientation} degrees" : "";
+    Console.WriteLine($"Page {page.Index + 1}: {page.Status} {page.Reason}{turned}");
     foreach (OcrLine line in page.Lines)
     {
         string direction = line.RightToLeft ? ", right to left" : "";

@@ -7,7 +7,7 @@ faq:
   - q: Is PdfNetStack free for commercial use?
     a: Yes. PdfNetStack is MIT licensed. On .NET 8 and later the core package has no dependencies; on .NET Standard 2.0 it uses Microsoft's System.Memory, which is also MIT. CI blocks any runtime package that is not on a reviewed license allowlist.
   - q: Does it need Ghostscript, a browser or other native binaries?
-    a: No. The library, the HTML to PDF package and the command line tool are managed code and start no external process. The one exception is the optional OCR add-on, which runs its models on ONNX Runtime.
+    a: No. The library, the HTML to PDF package and the command line tool are managed code and start no external process. The one exception is OCR. The optional OCR add-on and its pdfnetstack-ocr tool run their models on ONNX Runtime, and pdfnetstack ocr starts that separate tool.
   - q: Which platforms and .NET versions does it run on?
     a: .NET 8, 9, 10 and later through the net8.0 and net10.0 targets, and .NET Framework 4.6.2 to 4.8.1, Mono, Unity and .NET Core 2.0+ through netstandard2.0. CI runs the tests on Windows, Linux and macOS, on .NET Framework 4.8, .NET 8 and .NET 10.
   - q: Is it compatible with trimming and Native AOT?

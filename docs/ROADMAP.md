@@ -30,7 +30,7 @@ Done and in the main branch:
 | Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
 | Scale and performance | Documents read on demand from a seekable stream, with incremental saving; text extraction and HTML conversion profiled and made faster with unchanged output, measured by a benchmark project under `tools/` |
 | Command line | Native AOT executables for linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64 on every GitHub release, with SHA-256 checksums |
-| Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) with its models in `PdfNetStack.Ocr.Models`, scans stored in one image or in several (strips, tiles, a text mask over a background) |
+| Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) with its models in `PdfNetStack.Ocr.Models`, scans stored in one image or in several (strips, tiles, a text mask over a background), pages scanned sideways or upside down found and read turned back, an `IPdfPageRasterizer` hook for pages an application renders; the `pdfnetstack-ocr` command line tool (`PdfNetStack.Ocr.Tool`, also run as `pdfnetstack ocr`) |
 | HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, variable fonts (`font-weight`, `font-stretch`, `font-style`, `font-optical-sizing` and `font-variation-settings` choosing the instance), tagged PDF |
 | Evidence | A public benchmark corpus of 77 openly licensed PDFs, listed by URL and SHA-256 in `eng/corpus/manifest.json` and never committed; `tools/corpus_bench.py` measures lossless and lossy optimization (size, time, peak memory), proves every rewrite again, compares extracted text and images and PDFium renders, weekly and on demand in CI |
 
@@ -43,8 +43,8 @@ Done and in the main branch:
 - Qualified status confirmed against EU trusted lists supplied by the application.
 
 **OCR**
-- 90 degree page orientation (try both, keep the more confident reading).
-- A rasterizer hook for pages that mix vector art and scans, and a command line `ocr` command.
+- A Tesseract engine behind `IOcrEngine`, once a maintained .NET wrapper ships builds for Linux
+  and macOS.
 
 **Optimizer**
 - Lossy image options for JPEG 2000, JBIG2 and CCITT images, which the corpus shows dominate

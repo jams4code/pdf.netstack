@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    pdfnetstack-ocr: the OCR command line tool. A package of its own so that PdfNetStack.Tool stays
+    free of ONNX Runtime: this one carries the runtime's native libraries for Windows, Linux and
+    macOS and the PP-OCRv5 models, and works as installed. `pdfnetstack ocr` runs it.
+
+    The models are never committed. Before packing, fetch them into the models package's folder:
+        python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- One build that runs on .NET 8 and later: the native libraries and models are most of the
+         package, and a second target framework would carry them twice. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <RootNamespace>PdfNetStack.Cli</RootNamespace>
+    <AssemblyName>PdfNetStack.Ocr.Tool</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>pdfnetstack-ocr</ToolCommandName>
+    <PackageId>PdfNetStack.Ocr.Tool</PackageId>
+    <!-- The tool is MIT; the models it carries are Apache-2.0 (models/LICENSE.txt and NOTICE.txt), ONNX Runtime is MIT (onnxruntime/). -->
+    <PackageLicenseExpression>MIT AND Apache-2.0</PackageLicenseExpression>
+    <Title>pdfnetstack-ocr: make scanned PDF files searchable from the command line</Title>
+    <Description>Command line OCR for PDF files: finds the scan on each page, recognizes Latin and Arabic text with the PP-OCRv5 models on ONNX Runtime, turns pages scanned sideways or upside down, and adds an invisible text layer so the PDF can be searched and copied. Models and runtime included; also runs as `pdfnetstack ocr` next to PdfNetStack.Tool. Install with: dotnet tool install -g PdfNetStack.Ocr.Tool. MIT licensed. By Jamal Abdelkhalek, JADEV.</Description>
+    <PackageTags>pdf;ocr;searchable-pdf;scanned-pdf;paddleocr;onnx;arabic;cli;dotnet-tool;jadev</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
+    <Compile Include="..\PdfNetStack.Cli\ConsoleText.cs" Link="ConsoleText.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfNetStack.Tests" />
+  </ItemGroup>
+
+  <!-- The models next to the tool, in the folder OnnxOcrEngine.Load() reads, as the models package puts them next to an application. -->
+  <Import Project="../PdfNetStack.Ocr.Models/build/PdfNetStack.Ocr.Models.targets" />
+
+  <ItemGroup>
+    <None Include="../PdfNetStack.Ocr.Models/LICENSE.txt;../PdfNetStack.Ocr.Models/NOTICE.txt" Pack="true" PackagePath="models/" Visible="false" />
+    <!-- The same ONNX Runtime version PdfNetStack.Ocr references: its license and the notices for its native libraries. -->
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime/1.31.0/LICENSE;$(NuGetPackageRoot)microsoft.ml.onnxruntime/1.31.0/ThirdPartyNotices.txt" Pack="true" PackagePath="onnxruntime/" Visible="false" />
+  </ItemGroup>
+
+  <!-- ONNX Runtime's package also has Android and iOS builds and Windows import libraries, which a desktop tool never loads. -->
+  <Target Name="DropUnusedOnnxRuntimeFiles" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.aar' or '%(Extension)' == '.zip' or '%(Extension)' == '.lib'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- A tool without its models would only fail when run: packing fails instead. -->
+  <Target Name="RequireOcrModels" BeforeTargets="GenerateNuspec">
+    <ItemGroup>
+      <_ToolOcrModel Include="$(MSBuildThisFileDirectory)../PdfNetStack.Ocr.Models/models/*.onnx" />
+    </ItemGroup>
+    <Error Condition="'@(_ToolOcrModel->Count())' != '4'" Text="The OCR models are missing. Run: python tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models" />
+  </Target>
+
+</Project>

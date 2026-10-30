@@ -21,18 +21,18 @@ public sealed class OcrTests
     /// A white page with a black block in its top left corner, to tell which way is up, stored
     /// turned clockwise by <paramref name="turns"/> quarters as a scanner may store it.
     /// </summary>
-    private static PdfImage MarkedScan(int turns = 0)
+    private static PdfImage MarkedScan(int turns = 0, int width = ScanWidth, int height = ScanHeight)
     {
-        (byte[] stored, int w, int h) = ImageOps.Rotate(MarkedPixels(), ScanWidth, ScanHeight, turns);
+        (byte[] stored, int w, int h) = ImageOps.Rotate(MarkedPixels(width, height), width, height, turns);
         return PdfImage.Load(Imaging.PngWriter.Write(w, h, 1, stored));
     }
 
     /// <summary>The marked scan's pixels: white, the block at 10 to 30 across and down.</summary>
-    private static byte[] MarkedPixels()
+    private static byte[] MarkedPixels(int width = ScanWidth, int height = ScanHeight)
     {
-        var pixels = new byte[ScanWidth * ScanHeight];
+        var pixels = new byte[width * height];
         pixels.AsSpan().Fill(255);
-        for (int y = 10; y < 30; y++) pixels.AsSpan((y * ScanWidth) + 10, 20).Clear();
+        for (int y = 10; y < 30; y++) pixels.AsSpan((y * width) + 10, 20).Clear();
         return pixels;
     }
 
@@ -45,7 +45,11 @@ public sealed class OcrTests
         return PdfImage.Load(Imaging.PngWriter.Write(width, height, 1, piece));
     }
 
-    /// <summary>Finds the black block, says whether it is where the top left is, and reads it as one word.</summary>
+    /// <summary>
+    /// Finds the black block, says whether it is where the top left is, and reads it as one word.
+    /// A block in another corner is a page turned that many quarters clockwise from the top left,
+    /// and reads as a line running down, left or up, as the detector and line model report one.
+    /// </summary>
     private sealed class BlockEngine : IOcrEngine
     {
         public List<(int Width, int Height, bool BlockTopLeft, string Language)> Calls { get; } = [];
@@ -75,7 +79,10 @@ public sealed class OcrTests
             }
 
             if (maxX < 0) return new OcrImageResult([]);
-            PdfPoint[] quad = [new(minX, minY), new(maxX, minY), new(maxX, maxY), new(minX, maxY)];
+            bool left = minX < image.Width / 2, top = minY < image.Height / 2;
+            int quarter = top ? (left ? 0 : 1) : (left ? 3 : 2);
+            PdfPoint[] corners = [new(minX, minY), new(maxX, minY), new(maxX, maxY), new(minX, maxY)];
+            PdfPoint[] quad = [.. Enumerable.Range(0, 4).Select(i => corners[(i + quarter) % 4])];
             string text = Text(request.Language);
             return new OcrImageResult([new OcrLine(text, quad, Confidence, [new OcrWord(text, quad, Confidence)], false)]);
         }
@@ -311,6 +318,231 @@ public sealed class OcrTests
         PdfOcrReport doubtful = new PdfOcr(new BlockEngine { Confidence = 0.3 }).Recognize(doc);
         Assert.AreEqual(PdfOcrPageStatus.Done, doubtful.Pages[0].Status);
         Assert.IsEmpty(doubtful.Pages[0].Lines);
+    }
+
+    /// <summary>The marked scan's pixels turned clockwise by <paramref name="turns"/> quarters, drawn upright filling a page of their size.</summary>
+    private static void AddTurnedPage(PdfDocument d, int turns, int width = ScanWidth, int height = ScanHeight)
+    {
+        PdfImage scan = MarkedScan(turns, width, height);
+        using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(scan.PixelWidth, scan.PixelHeight)).CreateGraphics();
+        g.DrawImage(scan, 0, 0, scan.PixelWidth, scan.PixelHeight);
+    }
+
+    [TestMethod]
+    public void ReadsScansTurnedWithNothingSayingSo()
+    {
+        PdfDocument doc = Scanned(d =>
+        {
+            for (int turns = 0; turns < 4; turns++) AddTurnedPage(d, turns);
+
+            // Turned a half turn in the pixels, and the page shown a quarter turn clockwise: as shown, three quarters.
+            PdfPage page = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight));
+            using (PdfGraphics g = page.CreateGraphics()) g.DrawImage(MarkedScan(2), 0, 0, ScanWidth, ScanHeight);
+            page.Rotate(90);
+        });
+
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { MaxDegreeOfParallelism = 1 }).MakeSearchable(doc);
+        Assert.IsTrue(report.Pages.All(p => p.Status == PdfOcrPageStatus.Done), string.Join(", ", report.Pages.Select(p => p.Status + " " + p.Reason)));
+        CollectionAssert.AreEqual(new[] { 0, 90, 180, 270, 270 }, report.Pages.Select(p => p.Orientation).ToArray());
+
+        // An upright page is read once; a turned one once as it is, in four orientations, and once turned back.
+        Assert.HasCount(1 + (4 * 6), engine.Calls);
+        Assert.IsTrue(engine.Calls[0].BlockTopLeft);
+        for (int page = 1; page < 5; page++)
+        {
+            List<(int Width, int Height, bool BlockTopLeft, string Language)> calls = engine.Calls.GetRange(1 + ((page - 1) * 6), 6);
+            Assert.IsFalse(calls[0].BlockTopLeft, $"page {page} as it is");
+            Assert.AreEqual(1, calls.Skip(1).Take(4).Count(c => c.BlockTopLeft), $"page {page}: one orientation stands it upright");
+            Assert.IsTrue(calls[5].BlockTopLeft && calls[5].Width == ScanWidth && calls[5].Height == ScanHeight, $"page {page} turned back");
+        }
+
+        // The block where it is on each page, in page space, and the word running the way the text
+        // runs on the page: across, down, back or up.
+        (double X, double Y)[] centers = [(20, 280), (280, 180), (180, 20), (20, 20), (180, 20)];
+        (double X, double Y)[] directions = [(1, 0), (0, -1), (-1, 0), (0, 1), (-1, 0)];
+        for (int i = 0; i < centers.Length; i++)
+        {
+            PdfPoint[] quad = report.Pages[i].Lines[0].Words[0].Quad;
+            Assert.AreEqual(centers[i].X, Center(quad).X, 0.5, $"page {i}");
+            Assert.AreEqual(centers[i].Y, Center(quad).Y, 0.5, $"page {i}");
+            double dx = quad[1].X - quad[0].X, dy = quad[1].Y - quad[0].Y, length = Math.Sqrt((dx * dx) + (dy * dy));
+            Assert.AreEqual(directions[i].X, dx / length, 1e-9, $"page {i}");
+            Assert.AreEqual(directions[i].Y, dy / length, 1e-9, $"page {i}");
+        }
+
+        StringAssert.Contains(Content(PdfDocument.Open(doc.ToArray(Unoptimized)), 1), "<0062006C006F0063006B>Tj");
+
+        // Turned off, each page is read once as it is, and the line keeps the direction it was read in.
+        var plain = new BlockEngine();
+        PdfOcrReport asIs = new PdfOcr(plain, new PdfOcrOptions { DetectOrientation = false }).Recognize(Scanned(d => AddTurnedPage(d, 1)));
+        Assert.HasCount(1, plain.Calls);
+        Assert.AreEqual(0, asIs.Pages[0].Orientation);
+        PdfPoint[] read = asIs.Pages[0].Lines[0].Quad;
+        Assert.AreEqual(280, Center(read).X, 0.5);
+        Assert.IsLessThan(read[0].Y, read[1].Y, "down the page, as the engine read it");
+    }
+
+    [TestMethod]
+    public void TriesOrientationsOnAReducedCopy()
+    {
+        // 1200 by 1800 pixels: the orientations are tried at 1600 on the long side, the page read at full size.
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine).Recognize(Scanned(d => AddTurnedPage(d, 3, 1200, 1800)));
+        Assert.AreEqual(270, report.Pages[0].Orientation);
+        Assert.HasCount(6, engine.Calls);
+        Assert.IsTrue(engine.Calls.Skip(1).Take(4).All(c => Math.Max(c.Width, c.Height) == 1600), string.Join(", ", engine.Calls));
+        Assert.AreEqual((1200, 1800, true), (engine.Calls[5].Width, engine.Calls[5].Height, engine.Calls[5].BlockTopLeft));
+        PdfPoint center = Center(report.Pages[0].Lines[0].Quad);
+        Assert.AreEqual(20, center.X, 0.5);
+        Assert.AreEqual(20, center.Y, 0.5);
+
+        // With no line read at all, nothing more is tried.
+        var blank = new BlockEngine();
+        PdfDocument empty = Scanned(d =>
+        {
+            using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics();
+            g.DrawImage(MarkedPiece(0, 0, 10, 10), 0, 0, ScanWidth, ScanHeight);
+        });
+        Assert.AreEqual(PdfOcrPageStatus.Done, new PdfOcr(blank).Recognize(empty).Pages[0].Status);
+        Assert.HasCount(1, blank.Calls);
+    }
+
+    /// <summary>Renders through a delegate and records each call.</summary>
+    private sealed class Rasterizer(Func<PdfPage, int, double, OcrBitmap?> render) : IPdfPageRasterizer
+    {
+        public List<(int Index, double Dpi)> Calls { get; } = [];
+
+        public OcrBitmap? Render(PdfPage page, int pageIndex, double dpi, CancellationToken cancellationToken)
+        {
+            Calls.Add((pageIndex, dpi));
+            return render(page, pageIndex, dpi);
+        }
+    }
+
+    /// <summary>A page as a renderer shows it, turned by /Rotate: white, with the block 10 to 30 points in from the top left.</summary>
+    private static OcrBitmap MarkAsShown(PdfPage page, int pageIndex, double dpi)
+    {
+        bool sideways = page.Rotation % 180 != 0;
+        double scale = dpi / 72;
+        int width = (int)Math.Round((sideways ? page.CropBox.Height : page.CropBox.Width) * scale);
+        int height = (int)Math.Round((sideways ? page.CropBox.Width : page.CropBox.Height) * scale);
+        var pixels = new byte[width * height];
+        pixels.AsSpan().Fill(255);
+        int from = (int)Math.Round(10 * scale), to = (int)Math.Round(30 * scale);
+        for (int y = from; y < to; y++) pixels.AsSpan((y * width) + from, to - from).Clear();
+        return new OcrBitmap(width, height, pixels);
+    }
+
+    /// <summary>A page with a full page image in an encoding that is not decoded.</summary>
+    private static void AddUndecodedPage(PdfDocument d)
+    {
+        PdfPage page = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight));
+        var dict = new PdfDictionary
+        {
+            ["Type"] = new PdfName("XObject"),
+            ["Subtype"] = new PdfName("Image"),
+            ["Width"] = PdfNumber.FromInteger(100),
+            ["Height"] = PdfNumber.FromInteger(100),
+            ["ColorSpace"] = new PdfName("DeviceGray"),
+            ["BitsPerComponent"] = PdfNumber.FromInteger(1),
+            ["Filter"] = new PdfName("UnknownDecode"),
+        };
+        page.Dictionary.Set("Resources", new PdfDictionary { ["XObject"] = new PdfDictionary { ["J"] = d.AddObject(new PdfStream(dict, new byte[] { 1, 2, 3 })) } });
+        page.Dictionary.Set("Contents", d.AddObject(PdfStream.FromData("q 200 0 0 300 0 0 cm /J Do Q"u8)));
+    }
+
+    /// <summary>A page with a black square drawn as a path, as text turned into outlines is.</summary>
+    private static PdfPage AddVectorPage(PdfDocument d, double width = ScanWidth, double height = ScanHeight)
+    {
+        PdfPage page = d.Pages.Add(PdfRectangle.FromSize(width, height));
+        page.Dictionary.Set("Contents", d.AddObject(PdfStream.FromData("0 g 10 10 20 20 re f"u8)));
+        return page;
+    }
+
+    [TestMethod]
+    public void RendersPagesWithoutAScanThroughTheRasterizer()
+    {
+        PdfImage scan = MarkedScan();
+        PdfDocument doc = Scanned(d =>
+        {
+            // Vector art only, upright and shown turned a quarter.
+            AddVectorPage(d);
+            AddVectorPage(d, ScanHeight, ScanWidth).Rotate(90);
+
+            // Text, and a scan the add-on reads itself: the rasterizer is not asked.
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics()) g.DrawString("Born digital", PdfStandardFont.Helvetica, 12, PdfColor.Black, 50, 50);
+            using (PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(ScanWidth, ScanHeight)).CreateGraphics()) g.DrawImage(scan, 0, 0, ScanWidth, ScanHeight);
+
+            AddUndecodedPage(d);
+        });
+
+        var rasterizer = new Rasterizer(MarkAsShown);
+        var engine = new BlockEngine();
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { Rasterizer = rasterizer, RasterizerDpi = 144, MaxDegreeOfParallelism = 1 }).MakeSearchable(doc);
+        CollectionAssert.AreEqual(
+            new[] { PdfOcrPageStatus.Done, PdfOcrPageStatus.Done, PdfOcrPageStatus.SkippedHasText, PdfOcrPageStatus.Done, PdfOcrPageStatus.Done },
+            report.Pages.Select(p => p.Status).ToArray(),
+            string.Join(", ", report.Pages.Select(p => p.Reason)));
+        CollectionAssert.AreEqual(new[] { (0, 144.0), (1, 144.0), (4, 144.0) }, rasterizer.Calls);
+        Assert.IsTrue(engine.Calls.All(c => c.BlockTopLeft), string.Join(", ", engine.Calls));
+        Assert.AreEqual((400, 600), (engine.Calls[0].Width, engine.Calls[0].Height), "rendered at 144 dpi");
+
+        // The block's center in page space. On the page shown turned a quarter clockwise, the top
+        // left as shown is page space's bottom left.
+        (int Page, double X, double Y)[] expected = [(0, 20, 280), (1, 20, 20), (3, 20, 280), (4, 20, 280)];
+        foreach ((int i, double x, double y) in expected)
+        {
+            PdfPoint center = Center(report.Pages[i].Lines[0].Words[0].Quad);
+            Assert.AreEqual(x, center.X, 0.5, $"page {i}");
+            Assert.AreEqual(y, center.Y, 0.5, $"page {i}");
+        }
+
+        StringAssert.Contains(Content(PdfDocument.Open(doc.ToArray(Unoptimized)), 0), "3 Tr");
+
+        // Never finer than MaxOcrDpi, and lowered until the page fits the pixel limit before it is rendered.
+        PdfDocument vector = Scanned(d => AddVectorPage(d));
+        var fine = new Rasterizer(MarkAsShown);
+        _ = new PdfOcr(new BlockEngine(), new PdfOcrOptions { Rasterizer = fine, RasterizerDpi = 1200 }).Recognize(vector);
+        Assert.AreEqual(400, fine.Calls[0].Dpi);
+        var limited = new Rasterizer(MarkAsShown);
+        PdfOcrReport small = new PdfOcr(new BlockEngine(), new PdfOcrOptions { Rasterizer = limited, MaxImagePixels = 30_000 }).Recognize(vector);
+        Assert.AreEqual(PdfOcrPageStatus.Done, small.Pages[0].Status, small.Pages[0].Reason);
+        Assert.AreEqual(72 * Math.Sqrt(30_000.0 / (ScanWidth * ScanHeight)), limited.Calls[0].Dpi, 1e-9);
+    }
+
+    [TestMethod]
+    public void ReportsWhatTheRasterizerCannotRender()
+    {
+        PdfDocument doc = Scanned(d =>
+        {
+            for (int i = 0; i < 4; i++) AddVectorPage(d);
+        });
+
+        var rasterizer = new Rasterizer((page, index, dpi) => index switch
+        {
+            0 => null,
+            1 => throw new InvalidOperationException("no renderer for this page"),
+            2 => new OcrBitmap(ScanHeight, ScanWidth, new byte[ScanWidth * ScanHeight]),
+            _ => new OcrBitmap(2000, 3000, new byte[2000 * 3000]),
+        });
+        PdfOcrReport report = new PdfOcr(new BlockEngine(), new PdfOcrOptions { Rasterizer = rasterizer, RasterizerDpi = 72, MaxImagePixels = 1_000_000 }).Recognize(doc);
+        CollectionAssert.AreEqual(
+            new[] { PdfOcrPageStatus.SkippedNoScan, PdfOcrPageStatus.Failed, PdfOcrPageStatus.SkippedUnsupported, PdfOcrPageStatus.SkippedUnsupported },
+            report.Pages.Select(p => p.Status).ToArray());
+        StringAssert.Contains(report.Pages[1].Reason, "no renderer for this page");
+        StringAssert.Contains(report.Pages[2].Reason, "not the shape of the page");
+        StringAssert.Contains(report.Pages[3].Reason, "over the limit");
+
+        // Cancellation is not a failure of the page: it ends the run.
+        using var cancel = new CancellationTokenSource();
+        var cancelling = new Rasterizer((_, _, _) =>
+        {
+            cancel.Cancel();
+            cancel.Token.ThrowIfCancellationRequested();
+            return null;
+        });
+        Assert.ThrowsExactly<OperationCanceledException>(() => new PdfOcr(new BlockEngine(), new PdfOcrOptions { Rasterizer = cancelling }).Recognize(doc, cancel.Token));
     }
 
     private static string Fixture(params string[] parts) => Path.Combine([AppContext.BaseDirectory, "Fixtures", "Ocr", .. parts]);
@@ -690,6 +922,54 @@ public sealed class OcrTests
         (byte[] turned, int w, int h) = ImageOps.Rotate(upright.Pixels, upright.Width, upright.Height, 2);
         string[] lines = [.. engine.Recognize(new OcrBitmap(w, h, turned), new OcrRequest(), default).Lines.Select(l => l.Text)];
         foreach (string line in Expected) CollectionAssert.Contains(lines, line, string.Join(" | ", lines));
+    }
+
+    [TestMethod]
+    public void ReadsPagesScannedSidewaysWithTheModels()
+    {
+        string models = Models();
+        string[] languages = ["latin", "arabic"];
+        using OnnxOcrEngine engine = OnnxOcrEngine.Load(models, new OnnxOcrEngineOptions { Languages = languages });
+        OcrBitmap upright = OcrBitmap.FromPdfBitmap(Scanned(d => AddFixturePage(d, null)).Pages[0].GetImages()[0].Decode()!);
+
+        // The page's pixels turned a quarter, a half and three quarters clockwise, each drawn upright
+        // on a page of its shape, with nothing in the PDF to say so.
+        PdfDocument doc = Scanned(d =>
+        {
+            for (int turns = 1; turns < 4; turns++)
+            {
+                (byte[] pixels, int w, int h) = ImageOps.Rotate(upright.Pixels, upright.Width, upright.Height, turns);
+                double width = w * FixturePoint, height = h * FixturePoint;
+                using PdfGraphics g = d.Pages.Add(PdfRectangle.FromSize(width, height)).CreateGraphics();
+                g.DrawImage(PdfImage.Load(Imaging.PngWriter.Write(w, h, 1, pixels)), 0, 0, width, height);
+            }
+        });
+
+        PdfOcrReport report = new PdfOcr(engine, new PdfOcrOptions { Languages = languages }).MakeSearchable(doc);
+        CollectionAssert.AreEqual(new[] { 90, 180, 270 }, report.Pages.Select(p => p.Orientation).ToArray());
+        PdfDocument saved = PdfDocument.Open(doc.ToArray());
+        foreach (PdfOcrPage page in report.Pages)
+        {
+            Assert.AreEqual(PdfOcrPageStatus.Done, page.Status, page.Reason);
+            string[] lines = [.. page.Lines.Select(l => l.Text)];
+            foreach (string line in Expected.Append(Arabic)) CollectionAssert.Contains(lines, line, $"page {page.Index}: " + string.Join(" | ", lines));
+            int[] order = [.. Expected.Append(Arabic).Select(l => Array.IndexOf(lines, l))];
+            CollectionAssert.AreEqual(order.OrderBy(i => i).ToArray(), order, $"page {page.Index} in reading order: " + string.Join(" | ", lines));
+
+            // The heading lies along the side the page's top was turned to: right, bottom, left.
+            PdfPoint heading = Center(page.Lines.Single(l => l.Text == Expected[0]).Quad);
+            PdfRectangle box = saved.Pages[page.Index].MediaBox;
+            switch (page.Orientation)
+            {
+                case 90: Assert.IsGreaterThan(box.Width - 100, heading.X); break;
+                case 180: Assert.IsLessThan(100, heading.Y); break;
+                default: Assert.IsLessThan(100, heading.X); break;
+            }
+
+            // The invisible text runs along the turned lines, so the page searches as it reads.
+            string text = saved.Pages[page.Index].ExtractText();
+            foreach (string line in Expected.Append(Arabic)) StringAssert.Contains(text, line, $"page {page.Index}");
+        }
     }
 
     [TestMethod]

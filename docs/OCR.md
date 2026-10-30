@@ -1,8 +1,9 @@
 # OCR add-on: design
 
-Status: built. Phases 0 and 1 and the multi-image part of phase 2 are done, and `PdfNetStack.Ocr`
-and `PdfNetStack.Ocr.Models` are ready for NuGet, not published yet (section 4 has the status and
-the publish steps). `PdfNetStack.Ocr` is an optional package that makes scanned PDFs searchable
+Status: built. Phases 0, 1 and 2 are done, and of phase 3 the page orientation, the rasterizer
+hook and the command line tool. `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models` and
+`PdfNetStack.Ocr.Tool` are ready for NuGet, not published yet (section 4 has the status and the
+publish steps). `PdfNetStack.Ocr` is an optional package that makes scanned PDFs searchable
 with an invisible text layer (render mode 3) and returns text with word boxes. The core stays pure
 managed, MIT, dependency free; native code and models live only in the add-on. External facts
 were checked on 2026-10-29 against the NuGet API, the GitHub API and the package contents.
@@ -132,13 +133,23 @@ public sealed class PdfOcrOptions
     public int MaxDegreeOfParallelism { get; init; } = Environment.ProcessorCount;
     public long MaxImagePixels { get; init; } = 1L << 27;    // about 11.5k by 11.5k
     public double MaxOcrDpi { get; init; } = 400;             // larger scans are downsampled first
-    public IPageRasterizer? Rasterizer { get; init; }         // optional fallback, see below
+    public double MinimumCoverage { get; init; } = 0.5;       // share of the crop box a scan covers
+    public bool DetectOrientation { get; init; } = true;       // pages scanned sideways, see below
+    public IPdfPageRasterizer? Rasterizer { get; init; }      // optional fallback, see below
+    public double RasterizerDpi { get; init; } = 300;
+}
+
+/// <summary>Renders a page as shown (crop box, turned by /Rotate) to 8 bit gray; supplied by the application.</summary>
+public interface IPdfPageRasterizer
+{
+    OcrBitmap? Render(PdfPage page, int pageIndex, double dpi, CancellationToken cancellationToken);
 }
 
 /// <summary>One word: text in logical order, quad in page space (PDF user space, y up).</summary>
 public sealed record OcrWord(string Text, PdfPoint[] Quad, double Confidence, bool RightToLeft);
-// PdfOcrReport -> PdfOcrPage { Index, Status (Done, SkippedHasText, SkippedUnsupported, Failed),
-//                               Reason, IReadOnlyList<OcrLine> Lines }; OcrLine holds OcrWords.
+// PdfOcrReport -> PdfOcrPage { Index, Status (Done, SkippedHasText, SkippedNoScan,
+//                               SkippedUnsupported, Failed), Reason, IReadOnlyList<OcrLine> Lines,
+//                               Orientation }; OcrLine holds OcrWords.
 ```
 
 ### Pipeline per page
@@ -148,14 +159,60 @@ public sealed record OcrWord(string Text, PdfPoint[] Quad, double Confidence, bo
 2. Several axis aligned images that cover the crop box together (strips, tiles, MRC background
    plus JBIG2 text mask): composite into one gray canvas in page space, stencil masks painting
    black (next section). Otherwise the one image covering most of the crop box: decode it.
-   Anything else (vector art, rotated pieces): use `Rasterizer` if set, else report
-   `SkippedUnsupported`. The core does not grow a renderer for this.
+   Anything else (vector art, rotated pieces, encodings not decoded): use `Rasterizer` if set,
+   else report `SkippedNoScan` or `SkippedUnsupported`. The core does not grow a renderer for
+   this (see "Rasterizer hook").
 3. Check `Width * Height` against `MaxImagePixels` before decoding to gray. Above `MaxOcrDpi`,
    box filter down and keep the scale.
 4. Rotate pixels upright from `/Rotate` and the image matrix (multiples of 90 in practice), then
-   run the engine. Its line classifier fixes 180 degree lines; 90 degree page errors wait for
-   phase 3 (try both, keep the higher confidence).
-5. Map boxes to page space and write the text layer.
+   run the engine. Its line classifier fixes 180 degree lines.
+5. If most of the text read does not run left to right, the content itself is turned: find the
+   orientation (see "Page orientation") and read the page again turned back.
+6. Map boxes to page space and write the text layer.
+
+### Page orientation
+
+A page fed into a scanner sideways or upside down gives a scan whose content is turned, with no
+`/Rotate` or image matrix saying so. The engine still finds lines on it: the detector returns
+tall boxes for text running down or up the page, which it reads turned a quarter, and the line
+orientation model turns lines it sees upside down. Each line's quad then runs down, left or up.
+The lines come back in the wrong order, though, and a sideways line reads less reliably, so
+`PdfOcr` looks at the lines it got:
+
+- A line's direction is its quad's top edge, rounded to a quarter turn. Weighed by length times
+  confidence, when the lines that do not run left to right outweigh those that do, the page is
+  taken as turned. An upright page costs nothing more.
+- A copy reduced to at most 1600 pixels on its long side (about 140 dpi for A4) is read in each
+  of the four orientations, in the language that read the most text on the page. The score of an
+  orientation is the length times confidence of the lines that run left to right in it, so lines
+  the orientation model had to turn do not count. The highest score wins and a tie keeps the
+  page as it was. Four reads of the reduced copy, then one of the page: the work is bounded.
+- The page is read in the winning orientation; a word corner maps back through that turn, then
+  through the scan's own way back to page space. `PdfOcrPage.Orientation` reports how far the
+  content stood turned clockwise. `DetectOrientation = false` turns all of this off.
+
+On the fixture page turned a quarter, a half and three quarters, the lines come back in reading
+order with orientation on, and out of order with it off (`ReadsPagesScannedSidewaysWithTheModels`).
+
+### Rasterizer hook
+
+Pages with no scan to decode (text drawn as vector outlines, vector art with images too small to
+be a scan, scans in an encoding the core does not decode, pieces at odd angles) can be read through
+`PdfOcrOptions.Rasterizer`, an `IPdfPageRasterizer` the application supplies. PdfNetStack does not
+render and takes no native dependency for it; an application can wrap a PDFium binding (PDFium is
+BSD-3-Clause and Apache-2.0, and MIT licensed .NET bindings exist) or any other renderer.
+
+- It is asked only for pages that would otherwise be `SkippedNoScan` or `SkippedUnsupported`,
+  one page at a time on the calling thread, before that page's text layer is written, so a
+  renderer may read the original file at the page index instead of the `PdfPage`.
+- It renders the page as shown: the crop box turned by `/Rotate`, on white, in 8 bit gray. The
+  resolution is `RasterizerDpi` (300), at most `MaxOcrDpi`, lowered before the call until the
+  page fits `MaxImagePixels`.
+- A null result leaves the page skipped as before. A bitmap over the pixel limit, or whose shape
+  is not the page's as shown (within a pixel and 1%), is `SkippedUnsupported`; an exception from
+  the renderer is `Failed` with its message, except cancellation, which ends the run.
+- A pixel maps back through the `/Rotate` turn to the crop box. Orientation detection then works
+  on rendered pages as on scans.
 
 ### Scans in several images
 
@@ -234,7 +291,7 @@ memory does not grow with the scan. Buffers come from `ArrayPool`, as in the cor
 
 ### Packaging
 
-Two packages, so users can pin or replace the models, and the core packages stay free of ONNX:
+Three packages, so users can pin or replace the models, and the core packages stay free of ONNX:
 
 - `PdfNetStack.Ocr` targets netstandard2.0, net8.0 and net10.0 and references
   `Microsoft.ML.OnnxRuntime` (MIT; its native binaries carry `ThirdPartyNotices.txt`, all
@@ -253,9 +310,39 @@ Two packages, so users can pin or replace the models, and the core packages stay
   project's `VerifyOcrModels` target fails the pack when a file is missing or its SHA-256 differs
   from the pin. The pins live in three places (`OnnxOcrEngine`, the models project, the fetch
   script); `OcrTests.PinsTheSameModelsEverywhere` keeps them equal.
-- `eng/check-licenses.ps1` checks both projects; `eng/license-allowlist.json` lists ONNX Runtime
-  under `onlyIn` (it may ship with `PdfNetStack.Ocr` and nothing else) and the four model files
-  under `bundledFiles` with their license.
+- `PdfNetStack.Ocr.Tool` (`src/PdfNetStack.Ocr.Tool`) is the command line tool,
+  `pdfnetstack-ocr <in.pdf> <out.pdf> [--languages latin,arabic] [--models folder]`, with
+  `--text`, `--json`, `--no-orientation`, `--all-pages`, `--min-confidence`, `--threads`,
+  `--password` and `--no-optimize`. It loads the models from the `pdfnetstack-ocr-models` folder
+  next to it by default. See "Command line" below for why it is a package of its own.
+- `eng/check-licenses.ps1` checks every project; `eng/license-allowlist.json` lists ONNX Runtime
+  under `onlyIn` (it may ship with `PdfNetStack.Ocr` and `PdfNetStack.Ocr.Tool` and nothing
+  else) and the four model files under `bundledFiles` with their license.
+
+### Command line
+
+The `pdfnetstack` tool (`PdfNetStack.Tool`) is a few megabytes of managed code, also published as
+native executables compiled ahead of time. Putting OCR in it would add ONNX Runtime's native
+libraries (17 to 45 MB per platform, 130 MB for the five desktop platforms) and 21 MB of models
+for every user, most of whom never run OCR, and the native executables would need those files
+shipped beside them. One tool package cannot hold ONNX Runtime only for the users who want it: a
+.NET tool is installed whole, and loading the add-on from elsewhere at run time would need a
+plugin loader and a second install step anyway.
+
+So OCR is a second tool package, `PdfNetStack.Ocr.Tool`, command `pdfnetstack-ocr`:
+
+- It references `PdfNetStack.Ocr` and carries the models (imported through the models package's
+  build file, so they land in `pdfnetstack-ocr-models` beside the tool) and ONNX Runtime's native
+  libraries for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64. The Android and iOS
+  builds and Windows import libraries in the ONNX Runtime package are left out of the publish.
+- One target framework, net8.0 with `RollForward` set to `Major`, so it runs on .NET 8 and later
+  and carries the native files once: a 70 MB package. License expression `MIT AND Apache-2.0`,
+  with ONNX Runtime's `LICENSE` and `ThirdPartyNotices.txt` under `onnxruntime/` and the models'
+  `LICENSE.txt` and `NOTICE.txt` under `models/`.
+- Packing fails when the models were not fetched, so a tool without them is never published.
+- `pdfnetstack ocr ...` in the main tool runs `pdfnetstack-ocr` with the same arguments, found
+  next to the `pdfnetstack` executable or on the `PATH`, and says how to install it when it is
+  missing. The main tool keeps no ONNX dependency and stays compatible with native AOT.
 
 No cloud resources, so no cost.
 
@@ -266,13 +353,15 @@ Status: phase 0 is complete: the content walker, image placement (public as
 inline images, the CCITT Group 3 and 4 decoder, the glyphless font and invisible text (public as
 `PdfGraphics.DrawInvisibleText`). Phase 1 is done in `src/PdfNetStack.Ocr`, with the models
 package in `src/PdfNetStack.Ocr.Models`. In phase 2, JBIG2 decoding is done in the core and
-multi-image compositing in the add-on. Integration tests run when `PDFNETSTACK_OCR_MODELS` names
+multi-image compositing in the add-on. In phase 3, page orientation, the rasterizer hook and the
+command line tool are done. Integration tests run when `PDFNETSTACK_OCR_MODELS` names
 the model folder, or when the models were fetched into the models project (the test project
 imports its build file, as an application would).
 
-Publishing (owner, later): the release workflow already packs both packages on a version tag.
+Publishing (owner, later): the release workflow already packs the three packages on a version tag.
 1. Make sure the nuget.org trusted publishing policy (or the `NUGET_API_KEY` secret) belongs to
-   the account that will own the two new IDs, `PdfNetStack.Ocr` and `PdfNetStack.Ocr.Models`.
+   the account that will own the three new IDs, `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models` and
+   `PdfNetStack.Ocr.Tool`.
 2. Move the CHANGELOG `Unreleased` section under the new version heading.
 3. Tag and push: `git tag v1.1.0 && git push origin v1.1.0`. The workflow fetches and checks the
    models, packs every package and pushes them; `PdfNetStack.Ocr.Models` 1.0.0 goes up once and
@@ -285,7 +374,7 @@ Publishing (owner, later): the release workflow already packs both packages on a
 | 0 Core prerequisites (MIT, no deps) | Content walker and an internal image placement API; raw sample to gray with color spaces and Decode arrays; JPEG pixel decode on top of `JpegReader`; CCITT G3/G4 decoder; `GlyphlessFont` and `DrawInvisibleText`; InternalsVisibleTo | 17 to 24 days |
 | 1 Add-on MVP | `IOcrEngine`, `OnnxOcrEngine` (DB boxes, cls, CTC, word split, Arabic reversal), model package with hashes, `MakeSearchable` for single image pages, Latin and Arabic, report | 8 to 12 days |
 | 2 Coverage | JBIG2 decoder (generic, symbol, text, refinement; halftone last), done; multi-image compositing, done; inline images | 13 to 20 days |
-| 3 Extras | JPX through CoreJ2K; 90 degree page orientation; `IPageRasterizer` hook; CLI `ocr` command; optional Tesseract adapter | 7 to 10 days |
+| 3 Extras | JPX (done in the core instead); page orientation, done; `IPdfPageRasterizer` hook, done; command line tool, done; optional Tesseract adapter | 7 to 10 days |
 
 ### Tests
 
@@ -307,6 +396,16 @@ No real customer PDFs.
   stencil masks).
 - Mapping: a fake `IOcrEngine` returns fixed pixel boxes for images placed at 0, 90, 180 and
   270 degrees, skewed, mirrored and in nested forms; quads must match to 1e-6. No model needed.
+- Orientation: the fake engine reports a line running down, left or up when its mark is in another
+  corner; pages turned each way, alone and under a `/Rotate`, must be found, read once turned
+  back, and map back to the same page points with the word running the way the text runs; the
+  reduced copy and the number of reads are checked. With the models, the fixture page turned
+  three ways reads in order and extracts.
+- Rasterizer: a fake renderer marks the page as shown; vector pages, a page under `/Rotate` and
+  a scan in an unknown encoding are rendered and map back, pages with text or a readable scan are
+  not; declining, throwing, the wrong shape, too many pixels and cancellation are each tested.
+- Command line: argument errors leave nothing written; with the models, an upside down scan
+  becomes searchable and its text file reads in order; the forwarding command finds the tool.
 - Text layer: assert `3 Tr`, `Tz`, mirrored `Tm` for RTL and the ToUnicode map; extract with
   PDFium (script beside `tools/render_compare.py`) in ground truth order for Latin and Arabic;
   renders before and after must be pixel identical.
@@ -324,3 +423,5 @@ No real customer PDFs.
 - JBIG2 is the largest job and common in scanner output; it is now decoded in the core.
 - ORT floating point differs across CPUs, so OCR output is not byte reproducible, unlike the rest
   of PdfNetStack. Mixed vector and image pages need a user supplied rasterizer.
+- Orientation is decided by the recognizer's own confidence. A page with very little text, or
+  text the loaded languages do not cover, may show no clear winner and is then read as it is.

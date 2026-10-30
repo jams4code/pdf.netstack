@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- OCR finds pages scanned sideways or upside down. When most of the lines read on a page do not
+  run left to right (the detector found them tall, or the line orientation model turned them), a
+  copy reduced to 1600 pixels on its long side is read in each of the four orientations and the
+  one with the most confident left to right text wins; the page is then read turned back and the
+  words map back to page space through the turn. `PdfOcrPage.Orientation` says how far the
+  content stood turned; `PdfOcrOptions.DetectOrientation` (on by default) turns it off. Upright
+  pages cost nothing more. Sideways pages now read in line order.
+- OCR rasterizer hook: `PdfOcrOptions.Rasterizer` takes an `IPdfPageRasterizer` the application
+  supplies, for pages with no scan to decode (text as vector outlines, vector art, encodings not
+  decoded). It renders the page as shown at `RasterizerDpi` (300, at most `MaxOcrDpi`, lowered to
+  fit `MaxImagePixels`); its result is checked for size and shape, and its failures are reported
+  per page. PdfNetStack still does not render; a PDFium based renderer can be plugged in.
+- `pdfnetstack-ocr`, a command line tool in its own package, `PdfNetStack.Ocr.Tool`:
+  `pdfnetstack-ocr in.pdf out.pdf --languages latin,arabic [--models folder]`, with `--text`,
+  `--json`, `--no-orientation`, `--all-pages`, `--min-confidence`, `--threads` and `--password`.
+  It carries the models and ONNX Runtime's native libraries for Windows, Linux and macOS (a 70 MB
+  package), so `PdfNetStack.Tool` stays small and free of ONNX. `pdfnetstack ocr` runs it when it
+  is installed and says how to install it when it is not.
+- `eng/check-licenses.ps1` allows a package under `onlyIn` to ship with several named projects.
+
 - HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
   across an unbounded number of pages. Computed lengths are now clamped to a million px either
   way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000

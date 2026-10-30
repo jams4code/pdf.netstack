@@ -1,8 +1,8 @@
 # Fails when a shipping project resolves a package that is not on the license allowlist.
 # The core library must stay dependency free on modern .NET; on .NET Standard 2.0 it may use only
 # Microsoft's span polyfill packages listed under coreNetStandardOnly. Packages under onlyIn may
-# ship with the named project and no other (ONNX Runtime with the OCR add-on). Data files a package
-# carries, the OCR models, must be listed under bundledFiles with their license.
+# ship with the named projects and no other (ONNX Runtime with the OCR add-on and the OCR tool).
+# Data files a package carries, the OCR models, must be listed under bundledFiles with their license.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $config = Get-Content (Join-Path $PSScriptRoot 'license-allowlist.json') -Raw | ConvertFrom-Json
@@ -14,7 +14,8 @@ $projects = @(
     'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
     'src/PdfNetStack.Html/PdfNetStack.Html.csproj',
     'src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj',
-    'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj'
+    'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj',
+    'src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj'
 )
 $buildOnly = @('Microsoft.NET.ILLink.Tasks')
 $failed = $false
@@ -35,8 +36,8 @@ foreach ($project in $projects) {
                     Write-Host "FAIL $project ($($f.framework)): $($pkg.id) $($pkg.resolvedVersion) is not on the license allowlist"
                     $failed = $true
                 }
-                elseif ($onlyIn.PSObject.Properties[$pkg.id] -and $onlyIn.($pkg.id) -ne $project) {
-                    Write-Host "FAIL $project ($($f.framework)): $($pkg.id) may ship only with $($onlyIn.($pkg.id))"
+                elseif ($onlyIn.PSObject.Properties[$pkg.id] -and @($onlyIn.($pkg.id)) -notcontains $project) {
+                    Write-Host "FAIL $project ($($f.framework)): $($pkg.id) may ship only with $(@($onlyIn.($pkg.id)) -join ', ')"
                     $failed = $true
                 }
             }
@@ -44,7 +45,7 @@ foreach ($project in $projects) {
     }
 }
 
-# The model files the OCR models package packs.
+# The model files the OCR models package packs, and the OCR tool carries too.
 $modelsProject = [xml](Get-Content (Join-Path $root 'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj') -Raw)
 $models = @($modelsProject.Project.ItemGroup.OcrModel | Where-Object { $_ })
 if ($models.Count -eq 0) {

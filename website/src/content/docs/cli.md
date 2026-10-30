@@ -42,6 +42,7 @@ It needs the .NET 8 or later runtime. `pdfnetstack --help` prints every command 
 | [`meta`](#meta) | Reads or writes the title, author, subject and keywords |
 | [`encrypt`](#encrypt) | Adds password protection |
 | [`decrypt`](#decrypt) | Removes password protection |
+| [`ocr`](#ocr) | Makes scanned pages searchable (separate package, 1.1) |
 
 ## optimize
 
@@ -179,6 +180,42 @@ pdfnetstack decrypt <input.pdf> <output.pdf> --password <owner password>
 
 Saves the document without protection. It needs the owner password.
 
+## ocr
+
+```bash
+pdfnetstack ocr <input.pdf> <output.pdf> [--languages latin,arabic] [--models <folder>] [options]
+pdfnetstack-ocr <input.pdf> <output.pdf> [options]    # the same tool, run directly
+```
+
+In the main branch, ships with 1.1. Makes scanned pages searchable: the scan on each page is read
+and its words are laid over it as invisible text, as the [OCR guide](/guides/ocr/) describes.
+OCR needs ONNX Runtime's native libraries and about 21 MB of models, so it is a tool of its own,
+`pdfnetstack-ocr`, in the `PdfNetStack.Ocr.Tool` package (about 70 MB, models included).
+`pdfnetstack ocr` runs it with the same arguments, found next to `pdfnetstack` or on the `PATH`,
+and says how to install it when it is missing:
+
+```bash
+dotnet tool install -g PdfNetStack.Ocr.Tool
+```
+
+| Option | Effect | Library option |
+|---|---|---|
+| `--languages <list>` | Scripts to read, comma separated: `latin`, `arabic` (default `latin`) | `Languages` |
+| `--models <folder>` | Load the models from this folder instead of the ones installed with the tool | `OnnxOcrEngine.Load(folder)` |
+| `--min-confidence <0-1>` | Leave out lines read with less confidence (default 0.5) | `MinimumConfidence` |
+| `--no-orientation` | Do not look for pages scanned sideways or upside down | `DetectOrientation = false` |
+| `--all-pages` | Also read pages that already show text | `SkipPagesWithText = false` |
+| `--threads <n>` | Pages recognized at once (default: all cores) | `MaxDegreeOfParallelism` |
+| `--text <file.txt>` | Also write the text found, pages apart by a blank line | `PdfOcrReport.Text` |
+| `--password <password>` | Open an encrypted input | |
+| `--no-optimize` | Save without the optimizer pass | |
+| `--json` | Per page report: status, reason, orientation, lines and text | |
+
+Prints one line per page (lines and words read, how far a sideways page was turned, or why it was
+skipped) and the output size. The output is written when the run completes, even if some pages
+failed; it exits 1 in that case. Pages that already show text are left as they are, so a second
+run changes nothing.
+
 ## Options
 
 Optimizer options apply to `optimize`, `batch` and, where they make sense, to `verify`.
@@ -229,7 +266,7 @@ page:
 | Code | Meaning |
 |---|---|
 | 0 | Success. For `verify`: the files are equivalent |
-| 1 | `verify` only: the files differ |
+| 1 | `verify`: the files differ. `ocr`: the output was written, but some pages failed |
 | 2 | Wrong arguments, an unreadable PDF, a wrong password, or a file error. The message goes to standard error |
 
 An `optimize` or `batch` run that keeps the original, because the saving is too small or the file
@@ -250,4 +287,5 @@ is refused by the [safety model](/concepts/safety-model/), is a success: the out
 - [Linearize a PDF for fast web view](/recipes/linearize-pdf/)
 - [Edit pages](/guides/edit-pages/): merge, split and extract from C#
 - [Benchmarks](/benchmarks/): how `batch` reports were used to measure a corpus
+- [OCR](/guides/ocr/): the same from C#, and what happens to each page
 - API: [PdfOptimizer](/api/pdfnetstack/pdfoptimizer/), [PdfOptimizerOptions](/api/pdfnetstack/pdfoptimizeroptions/), [PdfInspector](/api/pdfnetstack/pdfinspector/), [PdfEquivalence](/api/pdfnetstack/pdfequivalence/)

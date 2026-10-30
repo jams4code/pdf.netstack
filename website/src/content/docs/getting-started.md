@@ -47,6 +47,7 @@ The same managed code runs on Windows, Linux and macOS. CI runs the test suite o
 | `PdfNetStack.Tool` | The `pdfnetstack` command line tool | 1.0.0 |
 | `PdfNetStack.Html` | HTML and CSS to PDF | Not yet, ships with 1.1 |
 | `PdfNetStack.Ocr` | OCR add-on for scanned PDFs | Not yet |
+| `PdfNetStack.Ocr.Tool` | The `pdfnetstack-ocr` command line tool, models included | Not yet |
 
 ```bash
 dotnet add package PdfNetStack            # library

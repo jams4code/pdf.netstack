@@ -22,4 +22,8 @@
     <ProjectReference Include="..\PdfNetStack\PdfNetStack.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfNetStack.Tests" />
+  </ItemGroup>
+
 </Project>

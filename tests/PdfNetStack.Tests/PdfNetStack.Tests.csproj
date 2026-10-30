@@ -31,6 +31,12 @@
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
   </ItemGroup>
 
+  <!-- The command line tools, for the OCR command end to end. They run on .NET only. -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net48'">
+    <ProjectReference Include="..\..\src\PdfNetStack.Cli\PdfNetStack.Cli.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Ocr.Tool\PdfNetStack.Ocr.Tool.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>

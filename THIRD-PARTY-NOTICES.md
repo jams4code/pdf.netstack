@@ -304,6 +304,19 @@ notices (`NOTICE.txt`); whoever redistributes the model files keeps both with th
 not in this repository: `tools/fetch_ocr_models.py` downloads them and checks each against its
 pinned SHA-256. The package's build file is part of PdfNetStack, MIT License.
 
+## PdfNetStack.Ocr.Tool
+
+The `pdfnetstack-ocr` command line tool. Redistributes, unmodified:
+
+- ONNX Runtime's managed assembly and native libraries for win-x64, win-arm64, linux-x64,
+  linux-arm64 and osx-arm64 (`Microsoft.ML.OnnxRuntime` 1.31.0, Copyright (c) Microsoft
+  Corporation, MIT License), with ONNX Runtime's `LICENSE` and `ThirdPartyNotices.txt` under
+  `onnxruntime/` in the package. `System.Numerics.Tensors` (MIT) comes with it.
+- The PP-OCRv5 models of `PdfNetStack.Ocr.Models` (above, Apache License 2.0), with their
+  `LICENSE.txt` and `NOTICE.txt` under `models/` in the package.
+
+The tool's own code is part of PdfNetStack, MIT License.
+
 ## Development only
 
 Not shipped in any package: MSTest (MIT) for tests, and `pypdfium2` (Apache-2.0 and BSD-3-Clause)
