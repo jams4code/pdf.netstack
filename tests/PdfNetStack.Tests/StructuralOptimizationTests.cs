@@ -328,6 +328,43 @@ public sealed class StructuralOptimizationTests
         Assert.IsNotNull(ContentCompactor.FindDifference(original, "q 1 0 0 1 10 20 cm BT /F1 12 Tf (Hello) Tj ET Q"u8.ToArray()), "The trailing separator matters.");
     }
 
+    /// <summary>
+    /// A '%' inside a string is not a comment. Two byte codes of composite fonts often contain
+    /// 0x25, and compaction joins every line into one, so a check that looked for '%' on the
+    /// last line refused every such rewrite after making it.
+    /// </summary>
+    [TestMethod]
+    public void PercentInsideStringsIsNotAComment()
+    {
+        byte[] content = [.. Repeat("  BT  /F1  12  Tf  72  700  Td  (100%)  Tj  ET  \n", 10), .. "BT /F2 12 Tf <0025> Tj ("u8, 0x30, 0x25, .. ") Tj ET"u8];
+        byte[]? compacted = ContentCompactor.Compact(content);
+        Assert.IsNotNull(compacted);
+        Assert.IsNull(ContentCompactor.FindDifference(content, compacted));
+
+        var b = PdfBuilder.Simple("x");
+        b.SetStream(4, "", Repeat("  BT  /F1  12  Tf  72  700  Td  (Saved 100% of it)  Tj  ET  \n", 30));
+        byte[] input = b.Build();
+        (byte[] output, PdfOptimizationResult result) = Run(input);
+        AssertVerified(input, output, result);
+        Assert.AreEqual(1, result.Statistics.ContentStreamsCompacted);
+    }
+
+    [TestMethod]
+    public void StreamEndingInACommentIsNotCompacted()
+    {
+        byte[] open = [.. Repeat("  0   0   m   10   10   l   S  \n", 20), .. "% swallows what a reader joins next"u8];
+        Assert.IsNull(ContentCompactor.Compact(open));
+        byte[] dropped = [.. Repeat("0 0 m 10 10 l S\n", 19), .. "0 0 m 10 10 l S"u8];
+        Assert.IsNotNull(ContentCompactor.FindDifference(open, dropped));
+
+        byte[] closed = [.. Repeat("  0   0   m   10   10   l   S  \n", 20), .. "% a closed comment\n"u8];
+        byte[]? compacted = ContentCompactor.Compact(closed);
+        Assert.IsNotNull(compacted);
+        Assert.IsNull(ContentCompactor.FindDifference(closed, compacted));
+        byte[] reopened = [.. compacted, .. "%x "u8];
+        Assert.IsNotNull(ContentCompactor.FindDifference(closed, reopened), "A comment left open at the end changes what follows.");
+    }
+
     [TestMethod]
     public void CompactionRoundTripsRandomContent()
     {

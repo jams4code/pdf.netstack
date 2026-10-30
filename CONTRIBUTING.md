@@ -79,6 +79,28 @@ dotnet run --project src/PdfNetStack.Cli -c Release -- batch /path/to/pdfs ./out
 python tools/render_compare.py /path/to/pdfs ./out
 ```
 
+### The public benchmark corpus
+
+`eng/corpus/manifest.json` lists 77 public domain and openly licensed PDFs (U.S. government
+publications, arXiv papers under CC BY 4.0, public domain scans and East Asian documents from
+Wikimedia Commons, and test files from other open source PDF projects), each with its URL,
+SHA-256, size, license, where the license is stated and what the file exercises. The files are
+downloaded, never committed. The benchmark optimizes each one with a lossless and a lossy
+profile, checks every rewrite, extracts text and images before and after, and compares PDFium
+renders:
+
+```bash
+pip install pypdfium2 numpy
+python tools/fetch_corpus.py                       # into artifacts/corpus/files
+dotnet build tools/PdfNetStack.CorpusRunner -c Release
+python tools/corpus_bench.py                       # artifacts/corpus/report/report.md and .json
+```
+
+The opt-in tests above run on the same files with
+`PDFNETSTACK_CORPUS=artifacts/corpus/files`. The `Corpus benchmark` workflow runs the benchmark
+weekly and on demand and uploads the report. A new entry needs a license statement you can link
+to. Never add anything from a company's internal documents, and never commit the files.
+
 ## Coding standards
 
 - Nullable reference types on, analyzers on, warnings are errors.

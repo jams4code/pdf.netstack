@@ -64,6 +64,38 @@ public sealed class ReaderTests
         Assert.IsNotNull(file.ResolveDictionary(file.Trailer["Root"]));
     }
 
+    /// <summary>
+    /// The newest section of an incremental update lists only what changed and names itself as
+    /// /Prev, so following the chain alone never reaches the catalog or the page tree. The file
+    /// must be rebuilt from its objects, with the update still winning, and flagged as repaired so
+    /// the optimizer does not rewrite it into a document without pages.
+    /// </summary>
+    [TestMethod]
+    public void PrevLoopHidingOlderSectionsIsRebuilt()
+    {
+        byte[] v1 = PdfBuilder.Simple("Old").Build();
+        string newContent = "<</Length 34>>\nstream\nBT /F1 24 Tf 72 700 Td (New) Tj ET\nendstream";
+        string text = Compat.Latin1.GetString(PdfBuilder.AppendUpdate(v1, new Dictionary<int, string> { [4] = newContent }, size: 6));
+        int at = text.LastIndexOf("startxref", StringComparison.Ordinal);
+        string own = text[(at + 9)..].Trim().Split('\n')[0].Trim();
+        int prev = text.LastIndexOf("/Prev ", StringComparison.Ordinal);
+        string looped = text[..(prev + 6)] + own + text[text.IndexOf(">>", prev, StringComparison.Ordinal)..];
+
+        byte[] pdf = Compat.Latin1.GetBytes(looped);
+        PdfFile file = PdfFile.Open(pdf, Limit);
+        Assert.IsTrue(file.WasReconstructed);
+        StringAssert.Contains(PageText(file, 5), "(New)");
+        Assert.AreEqual(1, PdfDocument.Open(pdf).Pages.Count);
+
+        (byte[] output, PdfOptimizationResult result) = PdfOptimizer.Optimize(pdf);
+        Assert.AreEqual(OptimizationDisposition.UnsupportedRetained, result.Disposition);
+        CollectionAssert.AreEqual(pdf, output);
+
+        (output, result) = PdfOptimizer.Optimize(pdf, new PdfOptimizerOptions { AllowRepairedFiles = true, MinSavingPercent = 0 });
+        Assert.AreEqual(OptimizationDisposition.Optimized, result.Disposition);
+        StringAssert.Contains(PdfDocument.Open(output).Pages[0].ExtractText(), "New");
+    }
+
     [TestMethod]
     public void BrokenOffsetsTriggerReconstruction()
     {

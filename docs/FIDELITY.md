@@ -159,6 +159,27 @@ bookmarks, and all of them in one file): 88 pages rendered at 100 DPI from the d
 and from the linearized output, zero differing pixels, identical text. Every linearized output
 passed qpdf 12.4's `--check-linearization`.
 
+### Public benchmark corpus
+
+The documents above are private. `eng/corpus/manifest.json` lists a public corpus anyone can
+download and check: 77 public domain and openly licensed PDFs, each with its URL, SHA-256, size,
+license and what it exercises (scans with JBIG2, JPEG 2000 and CCITT images, Chinese, Japanese
+and Korean text, forms, XFA, tagged, signed, encrypted, linearized, damaged and PDF 2.0 files).
+`tools/corpus_bench.py` optimizes each one with a lossless and a lossy profile, proves every
+rewrite again with `PdfEquivalence`, compares the text and decoded images the library reads
+before and after, and renders the first pages and the last page of both with PDFium:
+
+```bash
+python tools/fetch_corpus.py
+dotnet build tools/PdfNetStack.CorpusRunner -c Release
+python tools/corpus_bench.py --dpi 100 --pages 6
+```
+
+First run: 65 of 77 documents rewritten (the other 12 are signed or encrypted), 217 pages at
+100 DPI identical after the lossless rewrites, the same text and decoded images before and
+after, no rewrite failing its proof. Lossy rewrites lost at least 37.6 dB PSNR on any page but
+one: a 1.8 KiB ImageMagick test file of tiny images, at 30.4 dB.
+
 ## 3. Tests
 
 - Syntax: literal and hex string escapes, names with `#xx`, number canonicalization, references,

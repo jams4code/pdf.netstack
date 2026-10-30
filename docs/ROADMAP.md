@@ -32,6 +32,7 @@ Done and in the main branch:
 | Command line | Native AOT executables for linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64 on every GitHub release, with SHA-256 checksums |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) |
 | HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, variable fonts (`font-weight`, `font-stretch`, `font-style`, `font-optical-sizing` and `font-variation-settings` choosing the instance), tagged PDF |
+| Evidence | A public benchmark corpus of 77 openly licensed PDFs, listed by URL and SHA-256 in `eng/corpus/manifest.json` and never committed; `tools/corpus_bench.py` measures lossless and lossy optimization (size, time, peak memory), proves every rewrite again, compares extracted text and images and PDFium renders, weekly and on demand in CI |
 
 ## Next
 
@@ -46,15 +47,28 @@ Done and in the main branch:
 - Pages whose scan is made of several images.
 
 **Optimizer**
-- Lossy image options measured on the public benchmark corpus, once it exists.
+- Lossy image options for JPEG 2000, JBIG2 and CCITT images, which the corpus shows dominate
+  scanned documents (under 2% saved on the public domain book scans).
 
 **Scale and performance**
+- JPEG 2000 decoding into bytes tile by tile instead of 32 bit planes, so 600 dpi color scans fit
+  the default decode limit, and faster JBIG2 region composition.
 - An optimizer that streams its output, for files larger than memory (reading and incremental
   saving already work on demand).
 
 **Evidence**
-- A public benchmark corpus with redistributable licenses, with size, time, memory and render
-  checks in CI on every release.
+- Run the corpus benchmark on every release tag and keep its reports, so a regression in size,
+  time or memory shows against the previous release.
+
+The first corpus run (77 documents, 4,045 pages): the lossless profile rewrote 65 and saved
+12.1% (196.6 MiB to 172.9 MiB), the lossy profile 27.2%; the other 12 are signed or encrypted
+and were left alone. 217 pages rendered by PDFium were identical after the lossless rewrites,
+text and decoded images read the same before and after, and no rewrite failed its proof. The
+run found three bugs, fixed with synthetic regression tests: a looping `/Prev` chain that hid
+the page tree, compaction refusing streams with `%` inside strings, and a JBIG2 work budget too
+small for page sized symbols. JPEG 2000 images of 600 dpi book scans exceed the default decode
+limit when extracted, and JBIG2 and JPEG 2000 extraction is slow on such pages (about a second
+per page); both are listed under scale and performance.
 
 ## Out of scope
 

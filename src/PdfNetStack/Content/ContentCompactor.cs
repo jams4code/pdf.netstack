@@ -24,7 +24,7 @@ internal static class ContentCompactor
     public static byte[]? Compact(ReadOnlyMemory<byte> content)
     {
         ReadOnlySpan<byte> s = content.Span;
-        if (s.IsEmpty || EndsInComment(s)) return null;
+        if (s.IsEmpty) return null;
 
         bool leading = StartsWithSeparator(s);
         bool trailing = EndsWithSeparator(s);
@@ -32,7 +32,7 @@ internal static class ContentCompactor
         var sink = new ByteSink(s.Length);
         if (leading) sink.Write((byte)' ');
 
-        int lastStart = -1, lastSinkStart = -1, lastEnd = -1;
+        int lastStart = -1, lastSinkStart = -1, lastEnd = -1, consumed = 0;
         bool first = true;
         try
         {
@@ -42,7 +42,7 @@ internal static class ContentCompactor
                 if (t.Kind == TokenKind.EndOfInput) break;
                 lastSinkStart = sink.Length;
                 lastStart = t.Start;
-                lastEnd = t.End;
+                lastEnd = consumed = t.End;
                 ReadOnlySpan<byte> raw = s[t.Start..t.End];
                 if (first && !leading)
                 {
@@ -66,7 +66,7 @@ internal static class ContentCompactor
                         return Smaller(sink, s);
                     }
 
-                    parser.Position = resume.Value;
+                    parser.Position = consumed = resume.Value;
                     lastStart = -1;
                 }
             }
@@ -76,6 +76,7 @@ internal static class ContentCompactor
             return null;
         }
 
+        if (EndsInComment(s[consumed..])) return null;
         if (!trailing && lastStart >= 0)
         {
             // The last token may run into whatever a reader appends; keep its exact bytes.
@@ -185,12 +186,12 @@ internal static class ContentCompactor
         if (a.SequenceEqual(b)) return null;
         if (StartsWithSeparator(a) != StartsWithSeparator(b)) return "leading separator differs";
         if (EndsWithSeparator(a) != EndsWithSeparator(b)) return "trailing separator differs";
-        if (EndsInComment(a) || EndsInComment(b)) return "content ending in a comment changed";
 
         var pa = new PdfParser(original);
         var pb = new PdfParser(candidate);
         bool first = true;
         (int Start, int End) lastA = (-1, -1), lastB = (-1, -1);
+        int consumedA = 0, consumedB = 0;
         try
         {
             for (int index = 0; ; index++)
@@ -208,6 +209,8 @@ internal static class ContentCompactor
                 first = false;
                 lastA = (ta.Start, ta.End);
                 lastB = (tb.Start, tb.End);
+                consumedA = ta.End;
+                consumedB = tb.End;
                 if (!SameToken(ta.Kind, ra, tb.Kind, rb)) return $"token {index} differs";
                 if (ta.Kind != TokenKind.Keyword || !ra.SequenceEqual("BI"u8)) continue;
 
@@ -215,6 +218,8 @@ internal static class ContentCompactor
                 if (image is not null) return image;
                 if (restCompared) return null;
                 lastA = lastB = (-1, -1);
+                consumedA = pa.Position;
+                consumedB = pb.Position;
             }
         }
         catch (PdfFormatException)
@@ -222,6 +227,7 @@ internal static class ContentCompactor
             return "content does not tokenize";
         }
 
+        if (EndsInComment(a[consumedA..]) || EndsInComment(b[consumedB..])) return "content ending in a comment changed";
         if (!EndsWithSeparator(a) && lastA.Start >= 0 && !a[lastA.Start..lastA.End].SequenceEqual(b[lastB.Start..lastB.End]))
         {
             return "last token changed";
@@ -287,10 +293,15 @@ internal static class ContentCompactor
 
     internal static bool EndsWithSeparator(ReadOnlySpan<byte> s) => s.Length > 0 && PdfSyntax.IsWhitespace(s[^1]);
 
-    /// <summary>True when the stream's last line is a comment with no line break after it.</summary>
-    internal static bool EndsInComment(ReadOnlySpan<byte> s)
+    /// <summary>
+    /// True when <paramref name="tail"/>, the white space and comments after a stream's last
+    /// token, ends inside a comment with no line break after it, which would swallow the start of
+    /// a stream a reader joins on. Only the tail counts: a '%' inside a string or inline image
+    /// data is not a comment.
+    /// </summary>
+    private static bool EndsInComment(ReadOnlySpan<byte> tail)
     {
-        int lineStart = s.LastIndexOfAny((byte)'\n', (byte)'\r') + 1;
-        return s[lineStart..].IndexOf((byte)'%') >= 0;
+        int percent = tail.LastIndexOf((byte)'%');
+        return percent >= 0 && tail[percent..].IndexOfAny((byte)'\n', (byte)'\r') < 0;
     }
 }

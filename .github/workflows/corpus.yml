@@ -1,0 +1,90 @@
+name: Corpus benchmark
+
+# Downloads the public benchmark corpus (eng/corpus/manifest.json: public domain and openly
+# licensed documents, never committed), runs tools/corpus_bench.py over it and uploads the
+# Markdown and JSON report. Runs weekly and on demand only. There is no pull_request trigger, so
+# pull requests, from forks or not, never run it; the repository check keeps forks' schedules off.
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    if: github.repository == 'jams4code/pdf.netstack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      CORPUS_CACHE: ${{ github.workspace }}/artifacts/corpus/files
+      CORPUS_REPORT: ${{ github.workspace }}/artifacts/corpus/report
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the render check
+        run: python -m pip install pypdfium2==5.13.0 numpy==2.2.2
+
+      # The cache is keyed on the manifest, so a changed entry downloads again. Restore and save
+      # are separate steps so a run that reports failures still keeps its downloads.
+      - name: Restore the corpus
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CORPUS_CACHE }}
+          key: corpus-${{ hashFiles('eng/corpus/manifest.json') }}
+          restore-keys: corpus-
+
+      - name: Fetch the corpus
+        id: fetch
+        continue-on-error: true
+        run: python tools/fetch_corpus.py --cache "$CORPUS_CACHE"
+
+      - name: Save the corpus
+        if: steps.restore.outputs.cache-hit != 'true' && steps.fetch.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CORPUS_CACHE }}
+          key: corpus-${{ hashFiles('eng/corpus/manifest.json') }}
+
+      - name: Build the runner
+        run: dotnet build tools/PdfNetStack.CorpusRunner -c Release
+
+      - name: Run the benchmark
+        run: python tools/corpus_bench.py --cache "$CORPUS_CACHE" --out "$CORPUS_REPORT" --jobs 4
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f "$CORPUS_REPORT/report.md" ]; then cat "$CORPUS_REPORT/report.md" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-report
+          path: |
+            artifacts/corpus/report/report.md
+            artifacts/corpus/report/report.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Fail when a download failed
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo "::error::Some corpus files could not be fetched or changed upstream; see the Fetch the corpus step."
+          exit 1

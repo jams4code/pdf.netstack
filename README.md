@@ -740,8 +740,9 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 
 - Lossy image options handle 8 bit gray, RGB and CMYK images, raw or JPEG. JPEG 2000, JBIG2,
   CCITT, 16 bit, indexed, Lab, Separation and DeviceN images keep their resolution, and images
-  inside Type 3 glyphs are never downsampled. The quality gate measures luminance only. These
-  options were measured on synthetic files (`tools/make_lossy_corpus.py`), not on a real corpus.
+  inside Type 3 glyphs are never downsampled. The quality gate measures luminance only. On the
+  public benchmark corpus (`eng/corpus/manifest.json`, see docs/FIDELITY.md) the lossy options
+  took the saving from 12.1% to 27.2%; scanned books, coded in JBIG2 and JPEG 2000, gain little.
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - The optimizer does not subset fonts; it merges subsets of one font only when they keep the

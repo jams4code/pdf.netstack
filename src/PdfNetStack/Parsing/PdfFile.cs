@@ -413,7 +413,9 @@ internal sealed class PdfFile
         bool first = true;
         while (true)
         {
-            if (!visited.Add(offset)) break;
+            // A /Prev that leads back to a section already read hides every older section, the
+            // page tree among them. The chain is damaged, so the file is rebuilt from its objects.
+            if (!visited.Add(offset)) throw new PdfFormatException("The xref /Prev chain loops.");
             long actual = offset + _offsetBase;
             if (actual < 0 || actual >= _source.Length)
             {

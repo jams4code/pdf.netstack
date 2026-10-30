@@ -20,7 +20,9 @@ internal static class Jbig2Decoder
         if (width <= 0 || height <= 0) throw new Jbig2FormatException("The image has no size.");
 
         // Every bitmap, symbol, pattern and drawn pixel is paid for out of a few times the page.
-        var budget = new Jbig2Budget(Math.Max(1L << 24, 4L * width * height));
+        // Scanners that store the whole page as one symbol placed by a text region spend five
+        // pages: the symbol, the page, the region, and drawing the symbol and then the region.
+        var budget = new Jbig2Budget(Math.Max(1L << 24, 8L * width * height));
         var page = new Jbig2Page(width, height, budget);
         if (globals is not null) page.Run(globals, Start(globals));
         page.Run(data, Start(data));

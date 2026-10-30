@@ -294,4 +294,23 @@ public sealed class Jbig2DecoderTests
         // No page information at all.
         Assert.ThrowsExactly<PdfFormatException>(() => Placed([], null, 64, 64, mask: false).Decode());
     }
+
+    /// <summary>
+    /// Scanned pages often code the page as one symbol drawn by a text region, which costs five
+    /// times the page: the symbol, the page, the region and drawing both. Two full page regions
+    /// over a page cost the same and must decode. Each MMR row here is one V0 code, a white row.
+    /// </summary>
+    [TestMethod]
+    public void FullPageRegionsFitTheWorkBudget()
+    {
+        const int width = 2048, height = 1700;
+        byte[] page = [.. Be(width), .. Be(height), .. Be(0), .. Be(0), 0x04, 0, 0];
+        byte[] whiteRows = [.. Enumerable.Repeat((byte)0xFF, (height + 7) / 8)];
+        byte[] Region(int op) => [.. Be(width), .. Be(height), .. Be(0), .. Be(0), (byte)op, 1, .. whiteRows];
+        byte[] stream = [.. Segment(0, 48, page), .. Segment(1, 38, Region(Jbig2Bitmap.Replace)), .. Segment(2, 38, Region(Jbig2Bitmap.Or))];
+
+        byte[] packed = Jbig2Decoder.Decode(stream, null, width, height);
+        Assert.HasCount((width / 8) * height, packed);
+        Assert.IsTrue(packed.All(b => b == 0), "The black default page is replaced by white regions.");
+    }
 }

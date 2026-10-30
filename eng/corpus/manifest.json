@@ -1,0 +1,1237 @@
+{
+  "description": "Public benchmark corpus for PdfNetStack. Every file is downloaded from its public source by tools/fetch_corpus.py and checked against the SHA-256 and size recorded here. No file is ever committed to this repository. Each entry names the license under which its source publishes it and where that license is stated.",
+  "retrieved": "2026-10-29",
+  "files": [
+    {
+      "id": "us-plaw-117-167",
+      "file": "gov/plaw-117-167.pdf",
+      "url": "https://www.govinfo.gov/content/pkg/PLAW-117publ167/pdf/PLAW-117publ167.pdf",
+      "sha256": "d54282d575a016ea573ddffe5a40177362a3088720582ab750f15a5cd0ae3e65",
+      "bytes": 1191086,
+      "title": "Public Law 117-167, CHIPS and Science Act (2022)",
+      "source": "U.S. Government Publishing Office, govinfo",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.govinfo.gov/about/policies",
+      "exercises": [
+        "signed",
+        "incremental",
+        "many-pages",
+        "attachments"
+      ]
+    },
+    {
+      "id": "us-federal-register-2024-01-02",
+      "file": "gov/fr-2024-01-02.pdf",
+      "url": "https://www.govinfo.gov/content/pkg/FR-2024-01-02/pdf/FR-2024-01-02.pdf",
+      "sha256": "46b38e22fc0d71abc52428178620548fe7152e3ac1d099864a12965e7f39401b",
+      "bytes": 13257131,
+      "title": "Federal Register, Vol. 89, No. 1 (January 2, 2024)",
+      "source": "U.S. Government Publishing Office, govinfo",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.govinfo.gov/about/policies",
+      "exercises": [
+        "signed",
+        "incremental",
+        "multi-column",
+        "ccitt",
+        "large"
+      ]
+    },
+    {
+      "id": "us-cfr-2023-title21-vol1",
+      "file": "gov/cfr-2023-title21-vol1.pdf",
+      "url": "https://www.govinfo.gov/content/pkg/CFR-2023-title21-vol1/pdf/CFR-2023-title21-vol1.pdf",
+      "sha256": "6cf5859cb868a349d39053e4767338ec1b41eef95f953ddf932d9a1c6f38aaaa",
+      "bytes": 3229137,
+      "title": "Code of Federal Regulations, Title 21, Parts 1 to 99 (2023)",
+      "source": "U.S. Government Publishing Office, govinfo",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.govinfo.gov/about/policies",
+      "exercises": [
+        "signed",
+        "incremental",
+        "many-pages",
+        "ccitt"
+      ]
+    },
+    {
+      "id": "us-budget-fy2024",
+      "file": "gov/budget-fy2024.pdf",
+      "url": "https://www.govinfo.gov/content/pkg/BUDGET-2024-BUD/pdf/BUDGET-2024-BUD.pdf",
+      "sha256": "cfb0751f9ef9f60e356f4808f3231c03af802ae63a4fc0f391bdc174bd3fe28a",
+      "bytes": 2417116,
+      "title": "Budget of the U.S. Government, Fiscal Year 2024",
+      "source": "U.S. Government Publishing Office, govinfo",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.govinfo.gov/about/policies",
+      "exercises": [
+        "signed",
+        "incremental",
+        "jpeg",
+        "ccitt",
+        "tagged"
+      ]
+    },
+    {
+      "id": "us-irs-f1040-2023",
+      "file": "gov/irs-f1040-2023.pdf",
+      "url": "https://www.irs.gov/pub/irs-prior/f1040--2023.pdf",
+      "sha256": "a410ce39e1f9b75ab3ddd8c314b9e7dce022ed6e3aebde5418a58b88f1e0213c",
+      "bytes": 160747,
+      "title": "IRS Form 1040 (2023)",
+      "source": "Internal Revenue Service",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.copyright.gov/title17/92chap1.html#105",
+      "exercises": [
+        "forms",
+        "tagged",
+        "signed",
+        "linearized",
+        "xfa"
+      ]
+    },
+    {
+      "id": "us-irs-fw4-2023",
+      "file": "gov/irs-fw4-2023.pdf",
+      "url": "https://www.irs.gov/pub/irs-prior/fw4--2023.pdf",
+      "sha256": "317d5f830475bde6867554415b80c1c4eed94d21b6390fe7fcdc119d3b4e96d4",
+      "bytes": 188715,
+      "title": "IRS Form W-4 (2023)",
+      "source": "Internal Revenue Service",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.copyright.gov/title17/92chap1.html#105",
+      "exercises": [
+        "forms",
+        "tagged",
+        "signed",
+        "linearized",
+        "xfa"
+      ]
+    },
+    {
+      "id": "us-nist-fips-197",
+      "file": "gov/nist-fips-197.pdf",
+      "url": "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf",
+      "sha256": "251dfe0b5dc283abaf364adf586f7ec6dc4e495335d48dd5ee0fee6c5961da8a",
+      "bytes": 631927,
+      "title": "FIPS 197, Advanced Encryption Standard",
+      "source": "National Institute of Standards and Technology",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "exercises": [
+        "linearized",
+        "incremental",
+        "tagged"
+      ]
+    },
+    {
+      "id": "us-nist-sp-800-63-3",
+      "file": "gov/nist-sp-800-63-3.pdf",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-63-3.pdf",
+      "sha256": "915bb812cb705918461e642e84141c6ca2adc2ca0106e1d88f3884c61f07110a",
+      "bytes": 1599268,
+      "title": "NIST SP 800-63-3, Digital Identity Guidelines",
+      "source": "National Institute of Standards and Technology",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "exercises": [
+        "tagged",
+        "linearized",
+        "incremental",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "us-nist-sp-800-53r5",
+      "file": "gov/nist-sp-800-53r5.pdf",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r5.pdf",
+      "sha256": "fc63bcd61715d0181dd8e85998b1e6201ae3515fc6626102101cab1841e11ec6",
+      "bytes": 6073678,
+      "title": "NIST SP 800-53 Rev. 5, Security and Privacy Controls",
+      "source": "National Institute of Standards and Technology",
+      "license": "Public domain: work of the U.S. Government (17 U.S.C. 105)",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "exercises": [
+        "tagged",
+        "linearized",
+        "many-pages"
+      ]
+    },
+    {
+      "id": "us-nasa-ntrs-19700015108",
+      "file": "gov/nasa-ntrs-19700015108.pdf",
+      "url": "https://ntrs.nasa.gov/api/citations/19700015108/downloads/19700015108.pdf",
+      "sha256": "92b6cad832a83a28432bda17a74a2b4dd95ceb89f88c9afab71a64b2c5d621a7",
+      "bytes": 35316360,
+      "title": "Comparative analysis of acoustic testing techniques, exhibit A (1970 scan)",
+      "source": "NASA Technical Reports Server",
+      "license": "Public use permitted (NASA Technical Reports Server copyright determination)",
+      "license_url": "https://ntrs.nasa.gov/api/citations/19700015108",
+      "exercises": [
+        "scanned",
+        "jbig2",
+        "ccitt",
+        "jpeg",
+        "linearized",
+        "large"
+      ]
+    },
+    {
+      "id": "us-nasa-se-handbook",
+      "file": "gov/nasa-se-handbook.pdf",
+      "url": "https://ntrs.nasa.gov/api/citations/20170001761/downloads/20170001761.pdf",
+      "sha256": "3153ae2e53e29452d5997efafe280a5f05cd21b43a047e988a17e1dd5207a38e",
+      "bytes": 4122125,
+      "title": "NASA Systems Engineering Handbook, Rev. 2",
+      "source": "NASA Technical Reports Server",
+      "license": "Public use permitted (NASA Technical Reports Server copyright determination)",
+      "license_url": "https://ntrs.nasa.gov/api/citations/20170001761",
+      "exercises": [
+        "many-pages",
+        "jpeg",
+        "ccitt",
+        "linearized",
+        "tagged"
+      ]
+    },
+    {
+      "id": "us-cdc-mmwr-7201",
+      "file": "gov/cdc-mmwr-72-01.pdf",
+      "url": "https://www.cdc.gov/mmwr/volumes/72/wr/pdfs/mm7201-H.pdf",
+      "sha256": "237dbfe746ee0414fd771f5b0fd50c1fb5912f825f60d7175551232fd90e1948",
+      "bytes": 531900,
+      "title": "MMWR, Volume 72, Issue 1 (January 6, 2023)",
+      "source": "Centers for Disease Control and Prevention",
+      "license": "Public domain, as stated in the issue (page 20)",
+      "license_url": "https://www.cdc.gov/mmwr/volumes/72/wr/pdfs/mm7201-H.pdf",
+      "exercises": [
+        "tagged",
+        "linearized",
+        "multi-column"
+      ]
+    },
+    {
+      "id": "arxiv-2306.01681v2",
+      "file": "arxiv/2306.01681v2.pdf",
+      "url": "https://arxiv.org/pdf/2306.01681v2",
+      "sha256": "dfe484be6d3274019a0af5884c3cb141a507e704df5f774f612f66c8c10f0f6c",
+      "bytes": 36214490,
+      "title": "SOFIA/HAWC+ Far-InfraRed Polarimetric Large Area CMZ Exploration (FIREPLACE) Survey",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2306.01681v2",
+      "exercises": [
+        "latex",
+        "jpeg",
+        "large",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "arxiv-2311.06340v2",
+      "file": "arxiv/2311.06340v2.pdf",
+      "url": "https://arxiv.org/pdf/2311.06340v2",
+      "sha256": "e2042f4a892544ae32189b6e96083b11a61b3aee85ad27c0a08797d1f24b7a2a",
+      "bytes": 16728415,
+      "title": "Radio relics in massive galaxy cluster mergers in the TNG-Cluster simulation",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2311.06340v2",
+      "exercises": [
+        "latex",
+        "raw-images",
+        "large"
+      ]
+    },
+    {
+      "id": "arxiv-2312.14645v2",
+      "file": "arxiv/2312.14645v2.pdf",
+      "url": "https://arxiv.org/pdf/2312.14645v2",
+      "sha256": "5361f7619398827d4964b9f4028daa5483908b8f63a8133275db1ca7046798b3",
+      "bytes": 4700076,
+      "title": "A magnetar giant flare in the nearby starburst galaxy M82",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2312.14645v2",
+      "exercises": [
+        "latex",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "arxiv-2401.01875v1",
+      "file": "arxiv/2401.01875v1.pdf",
+      "url": "https://arxiv.org/pdf/2401.01875v1",
+      "sha256": "4f0da8e91cf0bede758a0accc32da9e4a3ff5fb4dfba048056202a623b9b588c",
+      "bytes": 6249352,
+      "title": "On the Mesoscale Structure of CMEs at Mercury's Orbit: BepiColombo and Parker Solar Probe Observations",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2401.01875v1",
+      "exercises": [
+        "latex",
+        "jpeg2000",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "arxiv-2104.00673v4",
+      "file": "arxiv/2104.00673v4.pdf",
+      "url": "https://arxiv.org/pdf/2104.00673v4",
+      "sha256": "537095165dbacb9ec02486aae70de1e90ded0c110b1883d0fdade6a0651d0ddb",
+      "bytes": 3342367,
+      "title": "Cross-validation: what does it estimate and how well does it do it?",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2104.00673v4",
+      "exercises": [
+        "latex",
+        "vector-graphics"
+      ]
+    },
+    {
+      "id": "arxiv-2109.00589v1",
+      "file": "arxiv/2109.00589v1.pdf",
+      "url": "https://arxiv.org/pdf/2109.00589v1",
+      "sha256": "b032455031e39d6a66074035d116bde5645f079198c597ea6e260864370c3ace",
+      "bytes": 881069,
+      "title": "Traced monoidal categories as algebraic structures in Prof",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2109.00589v1",
+      "exercises": [
+        "latex",
+        "type1-fonts",
+        "vector-graphics"
+      ]
+    },
+    {
+      "id": "arxiv-2104.12294v3",
+      "file": "arxiv/2104.12294v3.pdf",
+      "url": "https://arxiv.org/pdf/2104.12294v3",
+      "sha256": "1755efba28b05692f053305cbf053758070d7872294089eae73e6d781fb33beb",
+      "bytes": 2244819,
+      "title": "Wise-SrNet: a novel architecture for enhancing image classification",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2104.12294v3",
+      "exercises": [
+        "latex",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "arxiv-2208.01208v2",
+      "file": "arxiv/2208.01208v2.pdf",
+      "url": "https://arxiv.org/pdf/2208.01208v2",
+      "sha256": "c570059e4cb6d6dd21da8185276548025e3f01cdb65fe0ffd336431108c20a29",
+      "bytes": 4343525,
+      "title": "Communication network dynamics in a large organizational hierarchy",
+      "source": "arXiv",
+      "license": "CC BY 4.0",
+      "license_url": "https://arxiv.org/abs/2208.01208v2",
+      "exercises": [
+        "latex",
+        "vector-graphics"
+      ]
+    },
+    {
+      "id": "commons-ko-individual-consumption-tax-act",
+      "file": "commons/ko-individual-consumption-tax-act.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/3/3d/%EA%B0%9C%EB%B3%84%EC%86%8C%EB%B9%84%EC%84%B8%EB%B2%95%28%EB%B2%95%EB%A5%A0%29%28%EC%A0%9C12157%ED%98%B8%29.pdf",
+      "sha256": "d490e6f9a33f503434588472f09af11c135cdc63851ea88e30f007d22264af55",
+      "bytes": 713499,
+      "title": "Individual Consumption Tax Act, Act No. 12157 (Korean)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-KoreaGov)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:%EA%B0%9C%EB%B3%84%EC%86%8C%EB%B9%84%EC%84%B8%EB%B2%95(%EB%B2%95%EB%A5%A0)(%EC%A0%9C12157%ED%98%B8).pdf",
+      "exercises": [
+        "cjk",
+        "korean"
+      ]
+    },
+    {
+      "id": "commons-zh-nationality-law",
+      "file": "commons/zh-nationality-law.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/90/%E4%B8%AD%E5%8D%8E%E4%BA%BA%E6%B0%91%E5%85%B1%E5%92%8C%E5%9B%BD%E5%9B%BD%E7%B1%8D%E6%B3%95.pdf",
+      "sha256": "0a2b3d8ef2f71e411de578e40dc00c53c46ddf0607948d6419c8444b2de2ba7d",
+      "bytes": 534593,
+      "title": "Nationality Law of the People's Republic of China (scan)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-PRC-exempt)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:%E4%B8%AD%E5%8D%8E%E4%BA%BA%E6%B0%91%E5%85%B1%E5%92%8C%E5%9B%BD%E5%9B%BD%E7%B1%8D%E6%B3%95.pdf",
+      "exercises": [
+        "scanned",
+        "jpeg",
+        "linearized",
+        "tagged"
+      ]
+    },
+    {
+      "id": "commons-zh-state-council-notice",
+      "file": "commons/zh-state-council-notice.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/fd/%E5%9B%BD%E5%8A%A1%E9%99%A2%E5%8A%9E%E5%85%AC%E5%8E%85%E5%85%B3%E4%BA%8E%E6%94%B9%E8%BF%9B%E8%A1%8C%E6%94%BF%E6%B3%95%E8%A7%84%E5%8F%91%E5%B8%83%E5%B7%A5%E4%BD%9C%E7%9A%84%E9%80%9A%E7%9F%A5.pdf",
+      "sha256": "f594682c445c29910e3203e1fe643baed5b5dbd619a62ab84c93060aef73cacb",
+      "bytes": 1389514,
+      "title": "State Council General Office notice on publishing administrative regulations (Chinese)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-PRC-exempt)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:%E5%9B%BD%E5%8A%A1%E9%99%A2%E5%8A%9E%E5%85%AC%E5%8E%85%E5%85%B3%E4%BA%8E%E6%94%B9%E8%BF%9B%E8%A1%8C%E6%94%BF%E6%B3%95%E8%A7%84%E5%8F%91%E5%B8%83%E5%B7%A5%E4%BD%9C%E7%9A%84%E9%80%9A%E7%9F%A5.pdf",
+      "exercises": [
+        "cjk",
+        "chinese",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "commons-zh-tw-presidential-gazette-7449",
+      "file": "commons/zh-tw-presidential-gazette-7449.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b1/ROC2019-10-16%E7%B8%BD%E7%B5%B1%E5%BA%9C%E5%85%AC%E5%A0%B17449.pdf",
+      "sha256": "128e9a7f3d2dfec9659747921264604d7e96070b8f9682f0c524dc30f0d8d7b9",
+      "bytes": 197728,
+      "title": "Presidential Office Gazette No. 7449 (Traditional Chinese)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-ROC-Presidential Office Gazette)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:ROC2019-10-16%E7%B8%BD%E7%B5%B1%E5%BA%9C%E5%85%AC%E5%A0%B17449.pdf",
+      "exercises": [
+        "cjk",
+        "chinese",
+        "incremental",
+        "tagged"
+      ]
+    },
+    {
+      "id": "commons-ja-miyagi-gazette-662",
+      "file": "commons/ja-miyagi-gazette-662.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/11/%E4%BB%A4%E5%92%8C8%E5%B9%B4%E5%AE%AE%E5%9F%8E%E7%9C%8C%E5%85%AC%E5%A0%B1%E7%AC%AC662%E5%8F%B7.pdf",
+      "sha256": "483e02541abf92e264e5f5760b4168d00068e102c388daf7a7c6a2e9460bb288",
+      "bytes": 1466093,
+      "title": "Miyagi Prefecture Gazette No. 662 (Japanese)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-Japan-exempt)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:%E4%BB%A4%E5%92%8C8%E5%B9%B4%E5%AE%AE%E5%9F%8E%E7%9C%8C%E5%85%AC%E5%A0%B1%E7%AC%AC662%E5%8F%B7.pdf",
+      "exercises": [
+        "cjk",
+        "japanese",
+        "encrypted",
+        "linearized",
+        "tagged",
+        "optional-content"
+      ]
+    },
+    {
+      "id": "commons-ja-administrative-procedure-guideline",
+      "file": "commons/ja-administrative-procedure-guideline.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/f4/%E8%A1%8C%E6%94%BF%E6%89%8B%E7%B6%9A%E6%B3%95%E4%BA%8B%E5%8B%99%E5%8F%96%E6%89%B1%E3%82%AC%E3%82%A4%E3%83%89%E3%83%A9%E3%82%A4%E3%83%B3%EF%BC%88%EF%BC%B6%EF%BD%85%EF%BD%92%EF%BC%8E%EF%BC%91%EF%BC%89%EF%BC%88%E4%BB%A4%E5%92%8C%EF%BC%96%E5%B9%B4%EF%BC%93%E6%9C%88%E7%B7%8F%E5%8B%99%E7%9C%81%E8%A1%8C%E6%94%BF%E7%AE%A1%E7%90%86%E5%B1%80%EF%BC%89.pdf",
+      "sha256": "68878f4430736d8a7cdb4ac84009558be8d985ab34f8f8d49cdada4c587a0ab5",
+      "bytes": 3620571,
+      "title": "Administrative Procedure Act guideline, Ver. 1 (Japanese)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-Japan-exempt)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:%E8%A1%8C%E6%94%BF%E6%89%8B%E7%B6%9A%E6%B3%95%E4%BA%8B%E5%8B%99%E5%8F%96%E6%89%B1%E3%82%AC%E3%82%A4%E3%83%89%E3%83%A9%E3%82%A4%E3%83%B3%EF%BC%88%EF%BC%B6%EF%BD%85%EF%BD%92%EF%BC%8E%EF%BC%91%EF%BC%89%EF%BC%88%E4%BB%A4%E5%92%8C%EF%BC%96%E5%B9%B4%EF%BC%93%E6%9C%88%E7%B7%8F%E5%8B%99%E7%9C%81%E8%A1%8C%E6%94%BF%E7%AE%A1%E7%90%86%E5%B1%80%EF%BC%89.pdf",
+      "exercises": [
+        "cjk",
+        "japanese",
+        "incremental",
+        "linearized",
+        "many-pages",
+        "tagged",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "commons-ja-ndl-1093963",
+      "file": "commons/ja-ndl-1093963.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/4/41/NDL1093963_%E5%BB%BA%E7%99%BD%E6%9B%B8.pdf",
+      "sha256": "3815437eba1f8319c02232c3d7e50127204d1aca73f51f841d0b666b1a09c7fe",
+      "bytes": 2808423,
+      "title": "National Diet Library 1093963, Kenpakusho (scan)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-Japan)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:NDL1093963_%E5%BB%BA%E7%99%BD%E6%9B%B8.pdf",
+      "exercises": [
+        "scanned",
+        "jpeg",
+        "encrypted"
+      ]
+    },
+    {
+      "id": "commons-ia-letter00jone",
+      "file": "commons/ia-letter00jone.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/4/4d/Letter_%28IA_letter00jone%29.pdf",
+      "sha256": "e46de8d57928b9e6bfc200c6e17410e0f087d8c0876b198f01a3d438701f67f6",
+      "bytes": 2315406,
+      "title": "Letter (Internet Archive scan letter00jone)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-old-100-expired)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:Letter_(IA_letter00jone).pdf",
+      "exercises": [
+        "scanned",
+        "jbig2",
+        "jpeg2000",
+        "ocr-text",
+        "tagged"
+      ]
+    },
+    {
+      "id": "commons-ia-balijibril00iqba",
+      "file": "commons/ia-balijibril00iqba.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/e5/Bal-i_Jibril_%28IA_balijibril00iqba%29.pdf",
+      "sha256": "b9692b3fe0b80f0b9309d3c0e6e800e4943d613cf2ec0280d353c2ab2d4d1032",
+      "bytes": 10539784,
+      "title": "Bal-i Jibril (Internet Archive scan balijibril00iqba)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-old-100-expired)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:Bal-i_Jibril_(IA_balijibril00iqba).pdf",
+      "exercises": [
+        "scanned",
+        "jbig2",
+        "jpeg2000",
+        "ocr-text",
+        "arabic-script",
+        "large",
+        "tagged"
+      ]
+    },
+    {
+      "id": "commons-ia-intriguersorpeve01turn",
+      "file": "commons/ia-intriguersorpeve01turn.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/2f/The_intriguers%2C_or%2C_Pevensel_-_a_romance_of_the_Barons%27_War_%28IA_intriguersorpeve01turn%29.pdf",
+      "sha256": "1ac0003e1c0020b1d75dfc78ce704e5fb5fed163339c7c1a790382b9d9dbd841",
+      "bytes": 10908630,
+      "title": "The intriguers, or, Pevensel (Internet Archive scan intriguersorpeve01turn)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-old-100-expired)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:The_intriguers,_or,_Pevensel_-_a_romance_of_the_Barons'_War_(IA_intriguersorpeve01turn).pdf",
+      "exercises": [
+        "scanned",
+        "jbig2",
+        "jpeg2000",
+        "many-pages",
+        "large"
+      ]
+    },
+    {
+      "id": "commons-familia-1873-12",
+      "file": "commons/familia-1873-12.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/4/4c/Familia_1873-03-25%2C_nr._12.pdf",
+      "sha256": "e8d3175dcbd11cb084a82027d3c50196c432d421ae5b95397687325f1b343742",
+      "bytes": 1218123,
+      "title": "Familia, 1873-03-25, no. 12 (scan)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-Romania)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:Familia_1873-03-25,_nr._12.pdf",
+      "exercises": [
+        "scanned",
+        "ccitt",
+        "tagged"
+      ]
+    },
+    {
+      "id": "commons-new-orleans-bee-1890-0071",
+      "file": "commons/new-orleans-bee-1890-11-0071.pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/ef/The_New_Orleans_Bee_1890_November_0071.pdf",
+      "sha256": "b222d06aeadb84e5addbe23011f29b8a37fe7a418065241ce3aa9a265ca666d1",
+      "bytes": 705902,
+      "title": "The New Orleans Bee, November 1890, page 0071 (scan)",
+      "source": "Wikimedia Commons",
+      "license": "Public domain (PD-US)",
+      "license_url": "https://commons.wikimedia.org/wiki/File:The_New_Orleans_Bee_1890_November_0071.pdf",
+      "exercises": [
+        "scanned",
+        "ccitt",
+        "pdf-1.2"
+      ]
+    },
+    {
+      "id": "pypdf-003-pdflatex-image",
+      "file": "pypdf/003-pdflatex-image.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/003-pdflatex-image/pdflatex-image.pdf",
+      "sha256": "64c5bc35008015936ef3ff60f6ad268a713b5271727b72ef308f87b9b495646f",
+      "bytes": 74061,
+      "title": "pdflatex document with an image",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "latex",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "pypdf-005-libreoffice-password",
+      "file": "pypdf/005-libreoffice-writer-password.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/005-libreoffice-writer-password/libreoffice-writer-password.pdf",
+      "sha256": "3e333bff0196d0c5320f40cdd1b7a3abd21b316de79de3c0f9083accdaef9358",
+      "bytes": 12783,
+      "title": "LibreOffice Writer document with a user password",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "encrypted"
+      ]
+    },
+    {
+      "id": "pypdf-007-imagemagick-images",
+      "file": "pypdf/007-imagemagick-images.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/007-imagemagick-images/imagemagick-images.pdf",
+      "sha256": "0f2076573bfed1107300a2383b88bbbbc2b85a57f06b3ff478a0faa7ded57b4e",
+      "bytes": 16012,
+      "title": "ImageMagick images in every filter",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "lzw",
+        "run-length",
+        "ascii85",
+        "jpeg",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "pypdf-007-imagemagick-ccitt",
+      "file": "pypdf/007-imagemagick-ccittfaxdecode.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/007-imagemagick-images/imagemagick-CCITTFaxDecode.pdf",
+      "sha256": "cf6f94b533dc28974961fd62a67ebfc722224a0be8a4f0c4c91b26a522d5f70d",
+      "bytes": 1880,
+      "title": "ImageMagick CCITT fax image",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "ccitt"
+      ]
+    },
+    {
+      "id": "pypdf-008-reportlab-inline-image",
+      "file": "pypdf/008-reportlab-inline-image.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/008-reportlab-inline-image/inline-image.pdf",
+      "sha256": "db5c34fea270f38b152d8476e6f3bba855460958e957f69a0542002538cac1c2",
+      "bytes": 1537,
+      "title": "ReportLab inline image",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "inline-images",
+        "ascii85"
+      ]
+    },
+    {
+      "id": "pypdf-009-geotopo",
+      "file": "pypdf/009-geotopo.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/009-pdflatex-geotopo/GeoTopo.pdf",
+      "sha256": "a0b9242aef9b5a2c4850160cc9aaf64f5c7b8be705d6872ae28aebf5ab512540",
+      "bytes": 5321132,
+      "title": "Einfuehrung in die Geometrie und Topologie (pdflatex book)",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "latex",
+        "many-pages",
+        "links",
+        "outlines"
+      ]
+    },
+    {
+      "id": "pypdf-009-geotopo-komprimiert",
+      "file": "pypdf/009-geotopo-komprimiert.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/009-pdflatex-geotopo/GeoTopo-komprimiert.pdf",
+      "sha256": "20430e92d42bc06c606f5889d9832c8e5c4dde17f8333f99fbcba96b3a0cba14",
+      "bytes": 1793479,
+      "title": "The same book after a commercial optimizer",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "linearized",
+        "already-optimized",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "pypdf-011-google-docs",
+      "file": "pypdf/011-google-doc-document.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/011-google-doc-document/google-doc-document.pdf",
+      "sha256": "69f6b7f493b1bc55d518942976cbeadc4ec0a36f6d8a6dc24feffc516d35b2c9",
+      "bytes": 80100,
+      "title": "Google Docs export",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "truetype-fonts",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "pypdf-012-libreoffice-form",
+      "file": "pypdf/012-libreoffice-form.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/012-libreoffice-form/libreoffice-form.pdf",
+      "sha256": "9105eeef8c8cafdb141b7edd768a5e08adffe320d1d4f89e1a7112a2b37d1c57",
+      "bytes": 34186,
+      "title": "LibreOffice form",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "forms"
+      ]
+    },
+    {
+      "id": "pypdf-015-arabic",
+      "file": "pypdf/015-arabic-habibi.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/015-arabic/habibi.pdf",
+      "sha256": "1017c4559eb7d0ccf7d151a3f051c8c1da27a7c1dc8050b2b687e3d3228e1b6f",
+      "bytes": 14957,
+      "title": "Arabic text from WeasyPrint",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "arabic-script",
+        "rtl"
+      ]
+    },
+    {
+      "id": "pypdf-021-pdfa",
+      "file": "pypdf/021-crazyones-pdfa.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/021-pdfa/crazyones-pdfa.pdf",
+      "sha256": "f05f2738a1fa8c1d2e1147881fe1a62516a7f8caaf784067790731f56df626c4",
+      "bytes": 16368,
+      "title": "PDF/A from Ghostscript",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "pdfa"
+      ]
+    },
+    {
+      "id": "pypdf-023-cmyk-image",
+      "file": "pypdf/023-cmyk-image.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/023-cmyk-image/cmyk-image.pdf",
+      "sha256": "5a5f76a951e403a5b357992789afc5164fd6c2914583741de7a1dd08ec029ab2",
+      "bytes": 443953,
+      "title": "CMYK image",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "cmyk",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "pypdf-024-annotations",
+      "file": "pypdf/024-annotations.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/024-annotations/annotated_pdf.pdf",
+      "sha256": "c327f921abfba23a5c42d5c429ba99ded1cf5511521003aba6d2aff9c940d9cc",
+      "bytes": 1833,
+      "title": "Text, highlight and ink annotations",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "annotations"
+      ]
+    },
+    {
+      "id": "pypdf-025-attachment",
+      "file": "pypdf/025-attachment.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/025-attachment/with-attachment.pdf",
+      "sha256": "1c7e5f3bb3bbf9a2424cac84f46b17e5b62af0719d63b445c280c76634b316ba",
+      "bytes": 24296,
+      "title": "Document with a file attachment",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "attachments"
+      ]
+    },
+    {
+      "id": "pypdf-026-latex-multicolumn",
+      "file": "pypdf/026-latex-multicolumn.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/026-latex-multicolumn/multicolumn.pdf",
+      "sha256": "bdb495e95b3e1afae95013099dc59b0cea047f1fa70f677ee9cb33f10faa1c6c",
+      "bytes": 78657,
+      "title": "Two column pdflatex document",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "latex",
+        "multi-column"
+      ]
+    },
+    {
+      "id": "pypdf-027-cropped-rotated-scaled",
+      "file": "pypdf/027-cropped-rotated-scaled.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/027-cropped-rotated-scaled/cropped-rotated-scaled.pdf",
+      "sha256": "cc195eac510b81123de4f55ac9f8185f2120975a7b75a106460b98615737aacd",
+      "bytes": 272039,
+      "title": "Cropped, rotated and scaled pages with many annotations",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "rotation",
+        "annotations",
+        "forms",
+        "uncompressed"
+      ]
+    },
+    {
+      "id": "pypdf-029-optional-content",
+      "file": "pypdf/029-ocg-map-test.pdf",
+      "url": "https://raw.githubusercontent.com/py-pdf/sample-files/02aa148d618becd943a2a6bd78581de300fd75bc/029-optional-content-groups/ocg_map_test.pdf",
+      "sha256": "0d2b6fbcc9e58bda84d4f910d63499451b1825841572ef35616e24ab27f20182",
+      "bytes": 313834,
+      "title": "Map with optional content groups",
+      "source": "py-pdf/sample-files",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/py-pdf/sample-files/blob/02aa148d618becd943a2a6bd78581de300fd75bc/README.md",
+      "exercises": [
+        "optional-content",
+        "raw-images"
+      ]
+    },
+    {
+      "id": "verapdf-pdfa2b-jpeg2000",
+      "file": "verapdf/pdfa2b-6-2-8-3-t01-pass-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_A-2b/6.2%20Graphics/6.2.8%20Images/6.2.8.3%20JPEG2000/veraPDF%20test%20suite%206-2-8-3-t01-pass-a.pdf",
+      "sha256": "f515bbe126ec675ea0b41b905507e8e638b65c8d5e1d99a15264e3217bf15076",
+      "bytes": 21353,
+      "title": "PDF/A-2b JPEG 2000 image test",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "jpeg2000",
+        "pdfa"
+      ]
+    },
+    {
+      "id": "verapdf-pdfa2b-cmaps",
+      "file": "verapdf/pdfa2b-6-2-11-3-3-t02-pass-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_A-2b/6.2%20Graphics/6.2.11%20Fonts/6.2.11.3%20Composite%20fonts/6.2.11.3.3%20CMaps/veraPDF%20test%20suite%206-2-11-3-3-t02-pass-a.pdf",
+      "sha256": "8f57ee97e63e3b4d792a4016d3f2df85234d6616e6cf56b6800718d1afc9c8e2",
+      "bytes": 62235,
+      "title": "PDF/A-2b embedded CMap test",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "composite-fonts",
+        "cmaps",
+        "pdfa",
+        "tagged"
+      ]
+    },
+    {
+      "id": "verapdf-pdfa2b-xfa",
+      "file": "verapdf/pdfa2b-6-4-2-t01-fail-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_A-2b/6.4%20Interactive%20forms/6.4.2%20XFA%20forms/veraPDF%20test%20suite%206-4-2-t01-fail-a.pdf",
+      "sha256": "e54c874120938f53de8bf3e82d088d784eaa8f4fab32e7de7ee67ed2bf4f65b6",
+      "bytes": 78644,
+      "title": "Document with an XFA form",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "xfa",
+        "forms"
+      ]
+    },
+    {
+      "id": "verapdf-pdfua1-text",
+      "file": "verapdf/pdfua1-7-2-t25-pass-b.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_UA-1/7.2%20Text/7.2-t25-pass-b.pdf",
+      "sha256": "551eb2432a65c879efc70e7911cc57892b5035255cbd4ab5ff5e1360dc163a81",
+      "bytes": 2664191,
+      "title": "PDF/UA-1 text test with embedded fonts",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "tagged",
+        "pdfua",
+        "forms"
+      ]
+    },
+    {
+      "id": "verapdf-pdfua1-table",
+      "file": "verapdf/pdfua1-7-5-t01-pass-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_UA-1/7.5%20Tables/7.5-t01-pass-a.pdf",
+      "sha256": "d91d6aeb4203b6852a20aebbb2d1399f72ad5527e7056a2577168a2fde60eb4f",
+      "bytes": 37174,
+      "title": "PDF/UA-1 table test",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "tagged",
+        "pdfua"
+      ]
+    },
+    {
+      "id": "verapdf-pdfua1-annotations",
+      "file": "verapdf/pdfua1-7-18-1-t02-pass-h.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_UA-1/7.18%20Annotations/7.18.1%20General/7.18.1-t02-pass-h.pdf",
+      "sha256": "d39c58600f04eb80684ee007bf679d3d1a918c1605a7335ecfef4343c3823bc5",
+      "bytes": 1475131,
+      "title": "PDF/UA-1 annotations, saved in many revisions",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "tagged",
+        "annotations",
+        "incremental",
+        "linearized"
+      ]
+    },
+    {
+      "id": "verapdf-pdfa4e-3d",
+      "file": "verapdf/pdfa4e-6-3-1-t01-pass-d.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_A-4e/6.3%20Annotations/6.3.1%20Annotation%20types/veraPDF%20test%20suite%206-3-1-t01-pass-d.pdf",
+      "sha256": "9f3af0b42fc395be1fcd80499bf7cb6214488a512dbbd0b4ae604cd03ea6518c",
+      "bytes": 10873240,
+      "title": "PDF/A-4e with a 3D annotation",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "pdf-2.0",
+        "3d",
+        "annotations",
+        "large"
+      ]
+    },
+    {
+      "id": "verapdf-pdfa2b-optional-content",
+      "file": "verapdf/pdfa2b-6-9-t03-pass-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/PDF_A-2b/6.9%20Optional%20content/veraPDF%20test%20suite%206-9-t03-pass-a.pdf",
+      "sha256": "d186ec4942005768abc07e6d86669cf8ed10c0c979b1213824de2f6d0aa5fc9d",
+      "bytes": 14126,
+      "title": "PDF/A-2b optional content",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "optional-content",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "verapdf-twg-a008",
+      "file": "verapdf/twg-a008-pdfa1-pass-a.pdf",
+      "url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/bb75f4f0073d9350dfd058c0162a367e6fadf25e/TWG%20test%20files/TWG%20test%20suite%20A008-pdfa1-pass-a.pdf",
+      "sha256": "f30aa891e28a50f22e023c394d5c2b22cc799c0d51d20e07e935031447f5a6b6",
+      "bytes": 396692,
+      "title": "TWG test A008, Japanese text",
+      "source": "veraPDF corpus",
+      "license": "CC BY 4.0",
+      "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/bb75f4f0073d9350dfd058c0162a367e6fadf25e/README.md",
+      "exercises": [
+        "cjk",
+        "japanese",
+        "pdfa"
+      ]
+    },
+    {
+      "id": "qpdf-damaged-stream",
+      "file": "qpdf/damaged-stream.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/damaged-stream.pdf",
+      "sha256": "91e119f2db2e9f738f696ddacea90498d460b0afda0fcdf71bb6281fc5085819",
+      "bytes": 77635,
+      "title": "Stream with damaged LZW data",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "damaged",
+        "lzw"
+      ]
+    },
+    {
+      "id": "qpdf-bad-xref-entry",
+      "file": "qpdf/bad-xref-entry.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/bad-xref-entry.pdf",
+      "sha256": "1d3b6ed9362c92c3f24f6ee7650e1768387204b1bbb66327a4eba226ce801bb4",
+      "bytes": 1113,
+      "title": "Cross-reference entry pointing at the wrong offset",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "damaged",
+        "repair"
+      ]
+    },
+    {
+      "id": "qpdf-append-xref-loop",
+      "file": "qpdf/append-xref-loop.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/append-xref-loop.pdf",
+      "sha256": "7c67daccc433f574fbaf815d0d376cc79f40f95082ef1b231af436e9f7d27091",
+      "bytes": 17370,
+      "title": "Incremental update whose /Prev chain loops",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "damaged",
+        "incremental"
+      ]
+    },
+    {
+      "id": "qpdf-hybrid-xref",
+      "file": "qpdf/hybrid-xref.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/hybrid-xref.pdf",
+      "sha256": "df1ae8b9cb2378aaeda6fdc11146dd37328737fd050941390d2c6bd188eea0e4",
+      "bytes": 16902,
+      "title": "Hybrid reference file (table and XRefStm)",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "hybrid-xref",
+        "object-streams"
+      ]
+    },
+    {
+      "id": "qpdf-lin5",
+      "file": "qpdf/lin5.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/lin5.pdf",
+      "sha256": "4b716274089f173a1e2d826523e6e616182a1cafb267eff1e2bffa193440054b",
+      "bytes": 27464,
+      "title": "Linearized file with mixed filters",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "linearized",
+        "lzw",
+        "ascii85"
+      ]
+    },
+    {
+      "id": "qpdf-linearization-bounds-1",
+      "file": "qpdf/linearization-bounds-1.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/linearization-bounds-1.pdf",
+      "sha256": "02d4f2979c40e2bb1ab0dede28e7c7f8812d894f9a1ae04d68ddef2613910e68",
+      "bytes": 12302,
+      "title": "Linearized file with out of bounds hint data",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "linearized",
+        "damaged"
+      ]
+    },
+    {
+      "id": "qpdf-digitally-signed",
+      "file": "qpdf/digitally-signed.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/digitally-signed.pdf",
+      "sha256": "05e969415b03d9782b0b132f147b86cb42eafddf6176aaf2710334a9cc643c3c",
+      "bytes": 68846,
+      "title": "Signed form",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "signed",
+        "forms",
+        "linearized"
+      ]
+    },
+    {
+      "id": "qpdf-encrypted-with-images",
+      "file": "qpdf/encrypted-with-images.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/encrypted-with-images.pdf",
+      "sha256": "9f6c9ad93a462ad8a9c3c28debd5cf6ab80c60e7a8fe3b12e802b8e53aa0b1d4",
+      "bytes": 50219,
+      "title": "Encrypted file with images",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "encrypted",
+        "raw-images",
+        "jpeg"
+      ]
+    },
+    {
+      "id": "qpdf-fax-decode-parms",
+      "file": "qpdf/fax-decode-parms.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/fax-decode-parms.pdf",
+      "sha256": "6cf3a42a79698eb9a6649d51a78647dccb05dd88dbc0b384b843618963f8755e",
+      "bytes": 1565966,
+      "title": "CCITT images with varied decode parameters",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "ccitt",
+        "jpeg",
+        "scanned"
+      ]
+    },
+    {
+      "id": "qpdf-inline-images",
+      "file": "qpdf/inline-images.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/inline-images.pdf",
+      "sha256": "8ae2fc89f4edd5579c2b05a2b9678388b29515143252ac40f6ec97eb7d97e1df",
+      "bytes": 300684,
+      "title": "Large inline images from Ghostscript",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "inline-images",
+        "pdf-1.2"
+      ]
+    },
+    {
+      "id": "qpdf-damaged-inline-image",
+      "file": "qpdf/damaged-inline-image.pdf",
+      "url": "https://raw.githubusercontent.com/qpdf/qpdf/4eba95899886e851cc41d76886483b347612f2a8/qpdf/qtest/qpdf/damaged-inline-image.pdf",
+      "sha256": "18dae3c4253d30e262da786e7d238305dc2046f1c94d2b566d5589336106084c",
+      "bytes": 5558,
+      "title": "Damaged inline image",
+      "source": "qpdf test suite",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/qpdf/qpdf/blob/4eba95899886e851cc41d76886483b347612f2a8/README.md",
+      "exercises": [
+        "inline-images",
+        "damaged"
+      ]
+    },
+    {
+      "id": "pdfium-two-signatures",
+      "file": "pdfium/two_signatures.pdf",
+      "url": "https://raw.githubusercontent.com/chromium/pdfium/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/two_signatures.pdf",
+      "sha256": "47b9aa0d893f1f70a675a9d703fc072b0a435ad566ac789ff15b167e15443119",
+      "bytes": 2781,
+      "title": "Two signature fields",
+      "source": "PDFium test resources",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/LICENSE",
+      "exercises": [
+        "signed",
+        "forms"
+      ]
+    },
+    {
+      "id": "pdfium-vertical-text",
+      "file": "pdfium/vertical_text.pdf",
+      "url": "https://raw.githubusercontent.com/chromium/pdfium/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/vertical_text.pdf",
+      "sha256": "c3c1ce9243f3ebb8914fc7b5e8b78a4f4011f2d0d65382e3ba4cc312bea5f3e2",
+      "bytes": 1605,
+      "title": "Vertical writing",
+      "source": "PDFium test resources",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/LICENSE",
+      "exercises": [
+        "vertical-text"
+      ]
+    },
+    {
+      "id": "pdfium-simple-xfa",
+      "file": "pdfium/simple_xfa.pdf",
+      "url": "https://raw.githubusercontent.com/chromium/pdfium/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/simple_xfa.pdf",
+      "sha256": "82e0af732b472b023b3c50940cac0d76b6a84c25dab2b4a8de79fd0a6b7cdb89",
+      "bytes": 5801,
+      "title": "Minimal XFA form",
+      "source": "PDFium test resources",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/LICENSE",
+      "exercises": [
+        "xfa",
+        "forms"
+      ]
+    },
+    {
+      "id": "pdfium-linearized",
+      "file": "pdfium/linearized.pdf",
+      "url": "https://raw.githubusercontent.com/chromium/pdfium/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/linearized.pdf",
+      "sha256": "ab49d0fa2790cecc932a2130a675058ff80aaedb453a7f9321e560d171f6cfff",
+      "bytes": 11384,
+      "title": "Linearized three page file",
+      "source": "PDFium test resources",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/LICENSE",
+      "exercises": [
+        "linearized"
+      ]
+    },
+    {
+      "id": "pdfium-jpx-lzw",
+      "file": "pdfium/jpx_lzw.pdf",
+      "url": "https://raw.githubusercontent.com/chromium/pdfium/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/jpx_lzw.pdf",
+      "sha256": "ba14897a4139944e56674fefe176a56f29326e69ff2baf3e07ba096b520def78",
+      "bytes": 1152,
+      "title": "JPEG 2000 behind LZW and ASCIIHex filters",
+      "source": "PDFium test resources",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/LICENSE",
+      "exercises": [
+        "jpeg2000",
+        "lzw",
+        "filter-chain"
+      ]
+    },
+    {
+      "id": "pdf20-utf8",
+      "file": "pdf20/pdf20-utf8-test.pdf",
+      "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/pdf20-utf8-test.pdf",
+      "sha256": "a7ca717ef062df0a65e58487d26358c81424b76084a2000ca1c74b9e5776b7a1",
+      "bytes": 13926,
+      "title": "PDF 2.0 UTF-8 strings test",
+      "source": "PDF Association pdf20examples",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/pdf-association/pdf20examples/blob/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/LICENSE.md",
+      "exercises": [
+        "pdf-2.0",
+        "tagged",
+        "cjk",
+        "optional-content"
+      ]
+    },
+    {
+      "id": "pdf20-incremental",
+      "file": "pdf20/pdf20-via-incremental-save.pdf",
+      "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20via%20incremental%20save.pdf",
+      "sha256": "9b25d59d07034634a990e79db6ef82b9f86769d9b94d8d8635f20d06aaec9d18",
+      "bytes": 5607,
+      "title": "PDF 2.0 via incremental save",
+      "source": "PDF Association pdf20examples",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/pdf-association/pdf20examples/blob/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/LICENSE.md",
+      "exercises": [
+        "pdf-2.0",
+        "incremental"
+      ]
+    },
+    {
+      "id": "pdf20-offset-start",
+      "file": "pdf20/pdf20-with-offset-start.pdf",
+      "url": "https://raw.githubusercontent.com/pdf-association/pdf20examples/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/PDF%202.0%20with%20offset%20start.pdf",
+      "sha256": "a5b92313770f16ba1db649ccdc97d42f7744659c691897538734eebdc1bc9e9a",
+      "bytes": 5264,
+      "title": "PDF 2.0 with data before the header",
+      "source": "PDF Association pdf20examples",
+      "license": "CC BY-SA 4.0",
+      "license_url": "https://github.com/pdf-association/pdf20examples/blob/c20f2c17bfcc4baab7cfe62e70fae64caf14d5fa/LICENSE.md",
+      "exercises": [
+        "pdf-2.0",
+        "offset-header"
+      ]
+    }
+  ]
+}

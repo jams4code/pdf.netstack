@@ -104,6 +104,27 @@
   word stays in it ("To." rather than "To ."). Numbers in right to left lines follow the
   weak rules of UAX #9: after Arabic, "2026-114" (drawn 114-2026) reads in logical order, while
   dates, amounts and percentages stay whole.
+- Public benchmark corpus: `eng/corpus/manifest.json` lists 77 public domain and openly licensed
+  PDFs (U.S. government publications, arXiv papers under CC BY 4.0, public domain scans and
+  Chinese, Japanese and Korean documents from Wikimedia Commons, and test files of the veraPDF,
+  qpdf, PDFium, pypdf and PDF Association projects) by URL, SHA-256, size, license, where the
+  license is stated and what each file exercises. No file is committed. `tools/fetch_corpus.py`
+  downloads and verifies them; `tools/corpus_bench.py` runs `tools/PdfNetStack.CorpusRunner` on
+  each one, one process per measurement, for lossless and lossy optimization (size, time, peak
+  memory), checks every rewrite again with `PdfEquivalence`, compares the text and decoded images
+  the library reads before and after, compares PDFium renders, and writes a Markdown and a JSON
+  report. The `Corpus benchmark` workflow runs it weekly and on demand.
+- Fixed, found by the corpus:
+  - A cross-reference `/Prev` chain that loops is treated as damage and the file is rebuilt from
+    its objects. A newest section naming itself as `/Prev` used to hide every older section, so
+    the file opened without its page tree, and the optimizer (with `AllowRepairedFiles` or not)
+    could rewrite it as a document without pages.
+  - Content stream compaction judges whether a stream ends inside a comment from its tokens. A
+    `%` inside a string on the last line, common in the two byte codes of composite fonts, was
+    taken for a comment once the stream was compacted onto one line, so the proof rejected the
+    rewrite and the whole document was returned unchanged.
+  - JBIG2: the work budget is eight times the page instead of four. Scans that code the page as
+    one symbol placed by a text region spend five, and failed to decode.
 - Optimizer, lossless structural passes, each proven by the equivalence check against its own
   analysis of the source (docs/FIDELITY.md gives the rules):
   - `PruneUnusedResources` removes fonts, XObjects, graphics states, patterns, shadings, color
