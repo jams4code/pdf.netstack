@@ -220,11 +220,14 @@ public sealed class TrustedListTests
 
     private static PdfTrustedList National(params Svc[] services) => PdfTrustedList.Load(Sign(ListXml("XX", services), NationalSigner.Value), [NationalSigner.Value]);
 
-    private static PdfTrustedListQualification Qualify(X509Certificate2 leaf, X509Certificate2 issuer, params PdfTrustedList[] lists) => Validate(leaf, issuer, lists).TrustedListQualification!;
+    /// <summary>The qualification with the issuer given as a trust anchor, so the chain passes whatever the lists say about anchors.</summary>
+    private static PdfTrustedListQualification Qualify(X509Certificate2 leaf, X509Certificate2 issuer, params PdfTrustedList[] lists) => Validate(leaf, issuer, lists, anchors: [issuer]).TrustedListQualification!;
 
-    private static PdfCertificateValidation Validate(X509Certificate2 leaf, X509Certificate2 issuer, PdfTrustedList[] lists, bool asAnchors = true, DateTimeOffset? at = null) =>
-        new CertificateValidator(new PdfValidationOptions { TrustedLists = lists, CheckRevocation = false, TrustedListsAsTrustAnchors = asAnchors }, new SecurityStore())
-            .Validate(leaf, [issuer], CertificateRole.Signer, at ?? Now, PdfValidationTimeSource.Caller);
+    private static PdfCertificateValidation Validate(X509Certificate2 leaf, X509Certificate2 issuer, PdfTrustedList[] lists, bool asAnchors = true, DateTimeOffset? at = null, X509Certificate2[]? anchors = null, CertificateRole role = CertificateRole.Signer) =>
+        new CertificateValidator(new PdfValidationOptions { TrustAnchors = anchors ?? [], TrustedLists = lists, CheckRevocation = false, TrustedListsAsTrustAnchors = asAnchors }, new SecurityStore())
+            .Validate(leaf, [issuer], role, at ?? Now, PdfValidationTimeSource.Caller);
+
+    private static string Problems(PdfCertificateValidation v) => string.Join("\n", v.Problems);
 
     private static string Why(PdfTrustedListQualification q) => string.Join("\n", q.Reasons);
 
@@ -497,10 +500,12 @@ public sealed class TrustedListTests
         Assert.AreEqual(PdfQualification.AdES, plain.Qualification);
         StringAssert.Contains(Why(plain), "no QcCompliance");
 
-        // Without the lists as anchors, and without other anchors, the chain is not checked; the qualification still is.
+        // Without the lists as anchors, and without other anchors, the chain is not checked, so the lists are not consulted.
         PdfCertificateValidation unanchored = Validate(leaf, Ca.Value, [list], asAnchors: false);
         Assert.AreEqual(PdfCheckStatus.NotChecked, unanchored.Chain);
-        Assert.AreEqual(PdfQualification.QESig, unanchored.TrustedListQualification!.Qualification);
+        Assert.AreEqual(PdfQualification.Indeterminate, unanchored.TrustedListQualification!.Qualification);
+        StringAssert.Contains(Why(unanchored.TrustedListQualification), "did not pass (Indeterminate)");
+        Assert.AreEqual(PdfQualification.QESig, Validate(leaf, Ca.Value, [list], asAnchors: false, anchors: [Ca.Value]).TrustedListQualification!.Qualification);
 
         // No lists, no confirmation.
         Assert.IsNull(new CertificateValidator(new PdfValidationOptions { CheckRevocation = false }, new SecurityStore())
@@ -519,6 +524,11 @@ public sealed class TrustedListTests
         Assert.AreEqual(PdfQualification.QESig, late.AtIssuance);
         StringAssert.Contains(Why(late), "withdrawn");
         Assert.AreEqual(PdfQualification.QESig, Validate(leaf, Ca.Value, [withdrawn], at: Now.AddDays(-5)).TrustedListQualification!.Qualification);
+
+        // With the list as the only anchor, the withdrawn CA no longer anchors the chain now.
+        PdfCertificateValidation unanchored = Validate(leaf, Ca.Value, [withdrawn]);
+        Assert.AreEqual(PdfCheckStatus.Failed, unanchored.Chain);
+        Assert.AreEqual(PdfQualification.Indeterminate, unanchored.TrustedListQualification!.Qualification);
 
         // Granted only after the certificate was issued.
         PdfTrustedList recent = National(new Svc { Certificate = Ca.Value, Start = Now.AddDays(-3) });
@@ -642,12 +652,138 @@ public sealed class TrustedListTests
         Assert.AreEqual(PdfCheckStatus.Passed, chained.Status, string.Join("\n", chained.Problems));
         Assert.AreEqual(PdfQualification.QESig, chained.TrustedListQualification!.Qualification);
 
-        // A self-signed certificate, and one whose issuer is missing.
+        // A self-signed certificate trusted as its own anchor, and one whose issuer is missing.
         X509Certificate2 self = TestPki.Issue("Self", null, []);
         Assert.AreEqual(PdfQualification.AdES, Qualify(self, self, National(new Svc { Certificate = Ca.Value })).Qualification);
         PdfTrustedListQualification orphan = new CertificateValidator(new PdfValidationOptions { TrustedLists = [National(new Svc { Certificate = Ca.Value })], CheckRevocation = false }, new SecurityStore())
             .Validate(deep, [], CertificateRole.Signer, Now, PdfValidationTimeSource.Caller).TrustedListQualification!;
         Assert.AreEqual(PdfQualification.Indeterminate, orphan.Qualification);
+    }
+
+    [TestMethod]
+    public void OnlyApprovedCaServicesAnchorChains()
+    {
+        X509Certificate2 leaf = Leaf(Ca.Value, statements: [QcCompliance, QcSscd]);
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(leaf, Ca.Value, [National(new Svc { Certificate = Ca.Value })]).Chain);
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(leaf, Ca.Value, [National(new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.CaPkc, Status = "recognisedatnationallevel" })]).Chain);
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(leaf, Ca.Value, [National(new Svc { Certificate = Ca.Value, Status = "accredited" })]).Chain);
+
+        // Other services, statuses that are not approved, and critical extensions the library does not interpret anchor nothing.
+        Svc[] refused =
+        [
+            new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.TsaQtst },
+            new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.Tsa, Status = "recognisedatnationallevel" },
+            new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.OcspQc },
+            new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.CrlQc },
+            new Svc { Certificate = Ca.Value, Type = "http://uri.etsi.org/TrstSvc/Svctype/RA" },
+            new Svc { Certificate = Ca.Value, Status = "withdrawn" },
+            new Svc { Certificate = Ca.Value, Type = PdfTrustServiceTypes.CaPkc, Status = "deprecatedatnationallevel" },
+            new Svc { Certificate = Ca.Value, Status = "supervisionceased" },
+            new Svc { Certificate = Ca.Value, Status = "accreditationrevoked" },
+            new Svc { Certificate = Ca.Value, Status = "notyetdefined" },
+            new Svc { Certificate = Ca.Value, Extension = "<tsl:Extension Critical=\"true\"><tsl:FutureExtension/></tsl:Extension>" },
+        ];
+        foreach (Svc service in refused)
+        {
+            string what = service.Type + " " + service.Status;
+            PdfCertificateValidation v = Validate(leaf, Ca.Value, [National(service)]);
+            Assert.AreEqual(PdfCheckStatus.Failed, v.Chain, what);
+            Assert.AreEqual(PdfCheckStatus.Failed, v.Status, what);
+            StringAssert.Contains(Problems(v), "does not make it a trust anchor", what);
+            Assert.AreEqual(PdfQualification.Indeterminate, v.TrustedListQualification!.Qualification, what);
+            Assert.IsNull(v.TrustedListQualification.Service, what);
+        }
+
+        // A withdrawn service whose history was never approved, beside its own approved CA: only the approved one anchors.
+        X509Certificate2 otherCa = TestPki.Issue("Other CA", null, TestPki.Ca(null), Now.AddYears(-5));
+        PdfTrustedList mixed = National(
+            new Svc { Certificate = Ca.Value, Status = "withdrawn", History = [new Svc { Certificate = Ca.Value, Status = "deprecatedatnationallevel", Start = Now.AddYears(-4) }] },
+            new Svc { Certificate = otherCa });
+        Assert.AreEqual(PdfCheckStatus.Failed, Validate(leaf, Ca.Value, [mixed]).Chain);
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(Leaf(otherCa), otherCa, [mixed]).Chain);
+
+        // Turned off, the lists anchor nothing, and the supplied anchors still do.
+        Assert.AreEqual(PdfCheckStatus.NotChecked, Validate(leaf, Ca.Value, [National(new Svc { Certificate = Ca.Value })], asAnchors: false).Chain);
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(leaf, Ca.Value, [National(new Svc { Certificate = Ca.Value, Status = "withdrawn" })], anchors: [Ca.Value]).Chain);
+    }
+
+    [TestMethod]
+    public void TrustedListAnchorsHoldOnlyWhileTheServiceIsApproved()
+    {
+        X509Certificate2 leaf = Leaf(Ca.Value, notBefore: Now.AddDays(-30), statements: [QcCompliance, QcSscd]);
+
+        // Granted for three years, withdrawn ten days ago.
+        PdfTrustedList withdrawn = National(new Svc { Certificate = Ca.Value, Status = "withdrawn", Start = Now.AddDays(-10), History = [new Svc { Certificate = Ca.Value, Start = Now.AddYears(-3) }] });
+        PdfCertificateValidation before = Validate(leaf, Ca.Value, [withdrawn], at: Now.AddDays(-20));
+        Assert.AreEqual(PdfCheckStatus.Passed, before.Status, Problems(before));
+        Assert.IsTrue(before.Certificates[1].IsTrustAnchor);
+        Assert.AreEqual(PdfQualification.QESig, before.TrustedListQualification!.Qualification);
+        PdfCertificateValidation after = Validate(leaf, Ca.Value, [withdrawn]);
+        Assert.AreEqual(PdfCheckStatus.Failed, after.Chain);
+        StringAssert.Contains(Problems(after), "withdrawn");
+
+        // Granted only three days ago: not an anchor before that.
+        PdfTrustedList recent = National(new Svc { Certificate = Ca.Value, Start = Now.AddDays(-3) });
+        Assert.AreEqual(PdfCheckStatus.Failed, Validate(leaf, Ca.Value, [recent], at: Now.AddDays(-5)).Chain);
+        StringAssert.Contains(Problems(Validate(leaf, Ca.Value, [recent], at: Now.AddDays(-5))), "no status");
+        Assert.AreEqual(PdfCheckStatus.Passed, Validate(leaf, Ca.Value, [recent]).Chain);
+    }
+
+    [TestMethod]
+    public void TimeStampServicesAnchorOnlyTimeStampChains()
+    {
+        var pki = new TestPki();
+        var options = new PdfValidationOptions { TrustedLists = [National(new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Intermediate })], CheckRevocation = false };
+        var validator = new CertificateValidator(options, new SecurityStore());
+        PdfCertificateValidation tsa = validator.Validate(pki.Tsa, [pki.Intermediate], CertificateRole.TimestampAuthority, Now, PdfValidationTimeSource.Caller);
+        Assert.AreEqual(PdfCheckStatus.Passed, tsa.Status, Problems(tsa));
+        PdfCertificateValidation signer = validator.Validate(pki.Signer, [pki.Intermediate], CertificateRole.Signer, Now, PdfValidationTimeSource.Caller);
+        Assert.AreEqual(PdfCheckStatus.Failed, signer.Chain);
+        StringAssert.Contains(Problems(signer), "for a signer");
+
+        // A withdrawn TSA/QTST service anchors no time stamp chain either.
+        var withdrawn = new PdfValidationOptions { TrustedLists = [National(new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Tsa, Status = "withdrawn" })], CheckRevocation = false };
+        Assert.AreEqual(PdfCheckStatus.Failed, new CertificateValidator(withdrawn, new SecurityStore()).Validate(pki.Tsa, [], CertificateRole.TimestampAuthority, Now, PdfValidationTimeSource.Caller).Chain);
+    }
+
+    [TestMethod]
+    public void ServicesAreMatchedByTheKeyNotTheKeyIdentifierTheCertificateCarries()
+    {
+        // An impostor CA with its own key, carrying the listed CA's subject key identifier in its extension.
+        using RSA key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=Impostor CA, O=PdfNetStack Tests", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        foreach (X509Extension e in TestPki.Ca(null)) request.CertificateExtensions.Add(e);
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(SubjectKeyIdentifier(Ca.Value), false));
+        using X509Certificate2 impostor = request.CreateSelfSigned(Now.AddYears(-1), Now.AddYears(1));
+        CollectionAssert.AreEqual(SubjectKeyIdentifier(Ca.Value), SubjectKeyIdentifier(impostor));
+
+        // The list names the real CA by key identifier only; the application happens to trust the impostor.
+        PdfTrustedList list = National(new Svc { Ski = SubjectKeyIdentifier(Ca.Value) });
+        X509Certificate2 leaf = Leaf(impostor, statements: [QcCompliance, QcSscd]);
+        PdfCertificateValidation v = Validate(leaf, impostor, [list], anchors: [impostor]);
+        Assert.AreEqual(PdfCheckStatus.Passed, v.Status, Problems(v));
+        Assert.AreEqual(PdfQualification.AdES, v.TrustedListQualification!.Qualification, Why(v.TrustedListQualification));
+        StringAssert.Contains(Why(v.TrustedListQualification), "No CA/QC service");
+
+        // The real CA is found by the SHA-1 of its key, which its identifier happens to be.
+        Assert.AreEqual(PdfQualification.QESig, Qualify(Leaf(Ca.Value, statements: [QcCompliance, QcSscd]), Ca.Value, list).Qualification);
+    }
+
+    [TestMethod]
+    public void TheListsAreNotConsultedWhenTheCertificateChecksFail()
+    {
+        // The certificate is not yet valid at the validation time, though the CA was granted then.
+        X509Certificate2 leaf = Leaf(Ca.Value, notBefore: Now.AddDays(-30), statements: [QcCompliance, QcSscd]);
+        PdfTrustedList list = National(new Svc { Certificate = Ca.Value });
+        PdfCertificateValidation early = Validate(leaf, Ca.Value, [list], at: Now.AddDays(-40));
+        Assert.AreEqual(PdfCheckStatus.Passed, early.Chain);
+        Assert.AreEqual(PdfCheckStatus.Failed, early.Status);
+        PdfTrustedListQualification q = early.TrustedListQualification!;
+        Assert.AreEqual(PdfQualification.Indeterminate, q.Qualification);
+        Assert.AreEqual(PdfQualification.Indeterminate, q.AtIssuance);
+        Assert.IsNull(q.Service);
+        StringAssert.Contains(Why(q), "did not pass (Failed)");
+        Assert.AreEqual(PdfQualification.QESig, Validate(leaf, Ca.Value, [list]).TrustedListQualification!.Qualification);
     }
 
     [TestMethod]
@@ -676,15 +812,57 @@ public sealed class TrustedListTests
         PdfTrustedList without = National(new Svc { Certificate = pki.Intermediate, Start = Now.AddYears(-2) });
         PdfTimestampInfo unnamed = PdfSigner.Verify(signed, options with { TrustedLists = [without] }).Single().Timestamp!;
         Assert.AreEqual(PdfCheckStatus.Failed, unnamed.QualifiedTimestamp);
-        PdfTrustedList withdrawn = National(new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Tsa, Status = "withdrawn", Start = Now.AddDays(-1), History = [new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Tsa, Start = Now.AddYears(-2) }] });
+        // The CA/QC service anchors the authority's chain; the TSA/QTST service was withdrawn yesterday.
+        var tsaWithdrawn = new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Tsa, Status = "withdrawn", Start = Now.AddDays(-1), History = [new Svc { Type = PdfTrustServiceTypes.TsaQtst, Certificate = pki.Tsa, Start = Now.AddYears(-2) }] };
+        PdfTrustedList withdrawn = National(new Svc { Certificate = pki.Intermediate, Start = Now.AddYears(-2) }, tsaWithdrawn);
         PdfTimestampInfo gone = PdfSigner.Verify(signed, options with { TrustedLists = [withdrawn] }).Single().Timestamp!;
+        Assert.AreEqual(PdfCheckStatus.Passed, gone.Validation!.Status, string.Join("\n", gone.Validation.Problems));
         Assert.AreEqual(PdfCheckStatus.Failed, gone.QualifiedTimestamp);
         StringAssert.Contains(string.Join("\n", gone.QualifiedTimestampReasons), "withdrawn");
+
+        // With the withdrawn TSA/QTST service as the only list, nothing anchors the authority, so nothing is confirmed.
+        PdfTimestampInfo alone = PdfSigner.Verify(signed, options with { TrustedLists = [National(tsaWithdrawn)] }).Single().Timestamp!;
+        Assert.AreEqual(PdfCheckStatus.Failed, alone.Validation!.Chain);
+        Assert.AreEqual(PdfCheckStatus.Indeterminate, alone.QualifiedTimestamp);
+
+        // The authority found by the SHA-1 of its key in an X509SKI.
+        PdfTrustedList byKeyId = National(new Svc { Certificate = pki.Intermediate, Start = Now.AddYears(-2) }, new Svc { Type = PdfTrustServiceTypes.TsaQtst, Name = "Test QTST", Ski = SubjectKeyIdentifier(pki.Tsa), Start = Now.AddYears(-2) });
+        Assert.AreEqual(PdfCheckStatus.Passed, PdfSigner.Verify(signed, options with { TrustedLists = [byKeyId] }).Single().Timestamp!.QualifiedTimestamp);
 
         // Without lists nothing is checked.
         PdfTimestampInfo plain = PdfSigner.Verify(signed, new PdfValidationOptions { TrustAnchors = [pki.Root], CheckRevocation = false }).Single().Timestamp!;
         Assert.AreEqual(PdfCheckStatus.NotChecked, plain.QualifiedTimestamp);
         Assert.IsEmpty(plain.QualifiedTimestampReasons);
+    }
+
+    [TestMethod]
+    public void AQualifiedTimestampNeedsAnAuthorityThatValidated()
+    {
+        var pki = new TestPki();
+        PdfDocument doc = PdfDocument.Create();
+        using (PdfGraphics g = doc.Pages.Add(PdfRectangle.A4).CreateGraphics()) g.DrawString("Contract", PdfStandardFont.Helvetica, 20, PdfColor.Black, 72, 72);
+        byte[] signed = PdfSigner.Sign(doc.ToArray(new PdfSaveOptions { Optimize = false }), pki.Signer, new PdfSignatureOptions { Chain = [pki.Intermediate], Timestamp = pki.TimestampClient() });
+
+        // The list names the authority as a TSA/QTST granted two years ago, but its certificate was issued yesterday.
+        PdfTrustedList list = National(
+            new Svc { Certificate = pki.Intermediate, Start = Now.AddYears(-2) },
+            new Svc { Type = PdfTrustServiceTypes.TsaQtst, Name = "Test QTST", Certificate = pki.Tsa, Start = Now.AddYears(-2) });
+        var options = new PdfValidationOptions { TrustedLists = [list], CheckRevocation = false, ValidationTime = Now.AddDays(-5) };
+        PdfTimestampInfo stamp = PdfSigner.Verify(signed, options).Single().Timestamp!;
+        Assert.AreEqual(PdfCheckStatus.Failed, stamp.Validation!.Status);
+        Assert.AreEqual(PdfCheckStatus.Indeterminate, stamp.QualifiedTimestamp);
+        Assert.IsNull(stamp.QualifiedTimestampService);
+        StringAssert.Contains(string.Join("\n", stamp.QualifiedTimestampReasons), "did not pass (Failed)");
+
+        // A timestamp that does not verify is not confirmed either, whatever its authority's checks say.
+        var validator = new CertificateValidator(options with { ValidationTime = null }, new SecurityStore());
+        PdfCertificateValidation authority = validator.Validate(pki.Tsa, [pki.Intermediate], CertificateRole.TimestampAuthority, Now, PdfValidationTimeSource.Timestamp);
+        Assert.AreEqual(PdfCheckStatus.Passed, authority.Status, Problems(authority));
+        Assert.AreEqual(PdfCheckStatus.Passed, validator.TrustedLists!.Timestamp(authority, intact: true).Status);
+        (PdfCheckStatus status, PdfTrustService? service, IReadOnlyList<string> reasons) = validator.TrustedLists.Timestamp(authority, intact: false);
+        Assert.AreEqual(PdfCheckStatus.Indeterminate, status);
+        Assert.IsNull(service);
+        StringAssert.Contains(string.Join("\n", reasons), "does not verify");
     }
 
     /// <summary>A self-signed certificate whose public key algorithm is id-RSASSA-PSS. Its own signature no longer verifies, which the list check does not need.</summary>

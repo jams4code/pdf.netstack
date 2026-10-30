@@ -120,7 +120,11 @@ public class PdfTrustServiceInformation
     /// <summary>The certificates in the service digital identity.</summary>
     public IReadOnlyList<X509Certificate2> Certificates { get; internal set; } = [];
 
-    /// <summary>The subject key identifiers in the service digital identity (X509SKI).</summary>
+    /// <summary>
+    /// The subject key identifiers in the service digital identity (X509SKI). Validation matches
+    /// them against the SHA-1 of a certificate's subjectPublicKey (RFC 5280, 4.2.1.2, method 1),
+    /// never against the subject key identifier extension the certificate carries.
+    /// </summary>
     public IReadOnlyList<byte[]> SubjectKeyIdentifiers { get; internal set; } = [];
 
     /// <summary>The subject names in the service digital identity (X509SubjectName), as written; reported, not used to match.</summary>

@@ -38,14 +38,32 @@
 - `PdfValidationOptions.TrustedLists` and `TrustedListsAsTrustAnchors`; every signer gets
   `PdfCertificateValidation.TrustedListQualification` (`Qualification` at the signing time,
   `AtIssuance`, the deciding `Service`, `Reasons`) as ETSI TS 119 615 decides it: the CA/QC
-  service found by public key or subject key identifier anywhere above the certificate, its
-  status from the history at issuance and at the signing time (granted, or supervised or
-  accredited before eIDAS), the qualifiers its criteria select (key usage, policies, extended key
-  usage, subject attributes, nested lists) and the certificate's QCStatements. Conflicts,
-  criteria or critical extensions the library cannot evaluate, and missing or expired lists give
-  the new `PdfQualification.Indeterminate`. Timestamps get `PdfTimestampInfo.QualifiedTimestamp`
-  from TSA/QTST services. `tools/PdfNetStack.TrustedListCheck` reads and verifies the live EU
-  lists for a manual check; the tests generate every list and PKI.
+  service whose identity is the public key of a CA above the certificate, its status from the
+  history at issuance and at the signing time (granted, or supervised or accredited before
+  eIDAS), the qualifiers its criteria select (key usage, policies, extended key usage, subject
+  attributes, nested lists) and the certificate's QCStatements. Conflicts, criteria or critical
+  extensions the library cannot evaluate, and missing or expired lists give the new
+  `PdfQualification.Indeterminate`. So does a certificate whose own checks did not pass: the
+  lists are then not consulted. Services are matched by public key only: a listed certificate
+  with the same key, or a listed X509SKI equal to the SHA-1 of the certificate's subjectPublicKey
+  (RFC 5280 method 1). The subject key identifier extension a certificate carries is never used.
+- Trusted list anchors (`TrustedListsAsTrustAnchors`, default true) are restricted. Only the
+  identities of CA/QC and CA/PKC services anchor a chain, and only for a validation time at which
+  the service's entry in force has an approved status (granted, recognised at national level,
+  or before eIDAS under supervision, in cessation or accredited) and no critical extension the
+  library does not interpret. TSA/QTST and TSA services anchor time stamp authority chains under
+  the same rules, never a signer's. OCSP, CRL and other services, and withdrawn, deprecated or
+  never approved ones, anchor nothing. The default stays true: lists are only used when their
+  signature verified against certificates the application supplied, and without anchors the
+  qualification could never be confirmed. A chain that reaches none of these anchors fails, and
+  the problems say what the list names its top certificate as.
+- Timestamps get `PdfTimestampInfo.QualifiedTimestamp`: Passed only when the authority's
+  certificate checks passed, the token is intact, and a TSA/QTST service granted at the
+  validation time has as its identity the authority's own key, or the key of a CA of its chain
+  that the list names as that TSA/QTST service. Otherwise Failed when no such service was
+  granted, or Indeterminate when the authority's checks did not pass.
+  `tools/PdfNetStack.TrustedListCheck` reads and verifies the live EU lists for a manual check;
+  the tests generate every list and PKI.
 - JPEG 2000 images decode tile by tile, a band of rows at a time, straight into 8 bit pixels.
   Only a window of rows per resolution and a few rows of code-blocks per subband are held in
   32 bits, so the decode limit has to cover the pixels and those rows instead of 32 bit planes

@@ -84,9 +84,22 @@ public sealed record PdfValidationOptions
     public IReadOnlyList<PdfTrustedList> TrustedLists { get; init; } = [];
 
     /// <summary>
-    /// Count the certificates of every service in the usable <see cref="TrustedLists"/> as trust
-    /// anchors, beside <see cref="TrustAnchors"/>, as the EU trust model does. Default true.
+    /// Count certificates of the usable <see cref="TrustedLists"/> as trust anchors, beside
+    /// <see cref="TrustAnchors"/>, as the EU trust model does. Default true.
     /// </summary>
+    /// <remarks>
+    /// Only the identities of CA services (CA/QC and CA/PKC) anchor a chain, and only for a
+    /// validation time at which the service's entry in force (its current information or a
+    /// history entry) has an approved status: granted, recognised at national level, or before
+    /// eIDAS under supervision, in cessation or accredited, with no critical extension the
+    /// library does not interpret. TSA/QTST and TSA services anchor a time stamp authority's
+    /// chain under the same rules, never a signer's. OCSP, CRL and other services, and services
+    /// that are withdrawn, deprecated or were never approved, anchor nothing. The default stays
+    /// true because a list is only used when its XML signature verified against certificates the
+    /// application supplied for it, and because without anchors chains are not checked, so the
+    /// trusted list qualification would always be Indeterminate. Set it to false to anchor
+    /// chains on <see cref="TrustAnchors"/> alone and use the lists only for qualification.
+    /// </remarks>
     public bool TrustedListsAsTrustAnchors { get; init; } = true;
 }
 
@@ -171,8 +184,11 @@ public sealed class PdfCertificateValidation
     public PdfValidationTimeSource TimeSource { get; internal set; }
 
     /// <summary>
-    /// The chain reaches a supplied trust anchor and every link's signature verifies. Not checked
-    /// when no trust anchors were supplied; the chain is still built as far as it goes.
+    /// The chain reaches a supplied trust anchor, or a trusted list anchor at the validation time
+    /// (see <see cref="PdfValidationOptions.TrustedListsAsTrustAnchors"/>), and every link's
+    /// signature verifies. Not checked when no trust anchors were supplied and no usable trusted
+    /// list serves as anchors; the chain is still built as far as it goes. Failed when usable
+    /// lists serve as anchors but none of their services anchors the chain at the validation time.
     /// </summary>
     public PdfCheckStatus Chain { get; internal set; }
 
@@ -202,7 +218,8 @@ public sealed class PdfCertificateValidation
     /// <summary>
     /// The qualification confirmed against <see cref="PdfValidationOptions.TrustedLists"/> at the
     /// validation time; null when no trusted lists were supplied, and for a time stamp authority.
-    /// Meaningful only when <see cref="Status"/> is Passed.
+    /// Indeterminate, with the reason, when <see cref="Status"/> is not Passed: the lists are only
+    /// consulted for a certificate whose checks passed.
     /// </summary>
     public PdfTrustedListQualification? TrustedListQualification { get; internal set; }
 
@@ -249,11 +266,14 @@ public sealed class PdfTimestampInfo
 
     /// <summary>
     /// Whether the authority is a qualified time stamp service by
-    /// <see cref="PdfValidationOptions.TrustedLists"/>: Passed when a TSA/QTST service whose
-    /// identity is the authority's certificate, or a certificate above it, was granted at the
-    /// validation time; Failed when none was; Indeterminate when no list can be used or the
-    /// service has critical extensions the library does not interpret; NotChecked without
-    /// trusted lists or without the authority's certificate.
+    /// <see cref="PdfValidationOptions.TrustedLists"/>. Passed only when the authority's
+    /// certificate checks (<see cref="Validation"/>) passed, the timestamp is intact, and a
+    /// TSA/QTST service was granted at the validation time whose identity is the public key of
+    /// the authority's certificate, or of a CA of its chain that the list names as that TSA/QTST
+    /// service (a CA listed only as a CA service does not count). Failed when no such service was
+    /// granted; Indeterminate when the authority's checks did not pass, the timestamp is not
+    /// intact, no list can be used, or the service has critical extensions the library does not
+    /// interpret; NotChecked without trusted lists or without the authority's certificate.
     /// </summary>
     public PdfCheckStatus QualifiedTimestamp { get; internal set; }
 

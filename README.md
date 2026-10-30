@@ -475,10 +475,15 @@ RSA-PSS and ECDSA with SHA-2) against the certificates given for it, and only li
 and have not expired are used. Qualification follows ETSI TS 119 615: the CA/QC service whose
 identity is a CA of the chain, its status from the history at the certificate's issuance and at
 the signing time, the qualifiers its criteria select (QCWithQSCD, QCForESeal, NotQualified and
-the rest) and the certificate's QCStatements. Conflicting qualifiers or services, criteria the
-library cannot evaluate and missing lists give Indeterminate, with the reasons. The services'
-certificates also count as trust anchors (`TrustedListsAsTrustAnchors`). A manual check that
-reads and verifies the live lists is in `tools/PdfNetStack.TrustedListCheck`.
+the rest) and the certificate's QCStatements. Services are matched by public key, never by the
+subject key identifier a certificate carries. Conflicting qualifiers or services, criteria the
+library cannot evaluate, missing lists and certificates whose own checks did not pass give
+Indeterminate, with the reasons. CA services with an approved status at the validation time
+also count as trust anchors (`TrustedListsAsTrustAnchors`), and TSA services for time stamp
+authorities only; OCSP, CRL, withdrawn and never approved services anchor nothing. A timestamp
+is qualified only when its authority validated and a granted TSA/QTST service names its key (or
+a CA of its chain as that TSA/QTST service). A
+manual check that reads and verifies the live lists is in `tools/PdfNetStack.TrustedListCheck`.
 
 ### Encryption
 

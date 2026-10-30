@@ -20,7 +20,8 @@ public sealed class PdfTrustedListQualification
     /// The qualification at the signing time: what the lists confirm, with the certificate's
     /// QCStatements where the lists leave a point to them. AdES when the certificate is not an EU
     /// qualified certificate at its issuance or at the signing time; Indeterminate when the lists
-    /// do not decide. Meaningful only when the certificate checks passed.
+    /// do not decide. Always Indeterminate when the certificate checks
+    /// (<see cref="PdfCertificateValidation.Status"/>) did not pass: the lists are then not consulted.
     /// </summary>
     public PdfQualification Qualification { get; internal set; }
 
@@ -39,11 +40,24 @@ public sealed class PdfTrustedListQualification
 /// it for signatures). Only lists whose signature passed and that have not expired are used.
 /// </summary>
 /// <remarks>
-/// A service is found by its digital identity: a certificate with the same public key as a CA
-/// certificate of the chain, or a subject key identifier equal to that certificate's (from its
-/// extension, or the SHA-1 of its public key). History entries count, so a CA whose key the list
-/// now names differently is still found. At a time, the entry in force is the one with the latest
-/// starting time not after it. It decides when it is a CA/QC entry with status granted (or, before
+/// A service is found by its digital identity, compared with the public key of a CA certificate
+/// of the chain: a listed certificate with the same subjectPublicKey, or a listed subject key
+/// identifier equal to the SHA-1 of that subjectPublicKey (RFC 5280, 4.2.1.2, method 1). The
+/// subject key identifier extension a certificate carries is never used, since whoever makes the
+/// certificate chooses it. Every entry of a service, its history included, names the same
+/// service, so a CA that an older entry names by key identifier is still found. At a time, the
+/// entry in force is the one with the latest starting time not after it.
+/// <para>
+/// Trust anchors: a certificate of a service counts as an anchor at a validation time only when
+/// the entry in force then is a CA/QC or CA/PKC service (also TSA/QTST or TSA for a time stamp
+/// authority's chain) with an approved status (granted, recognised at national level, or before
+/// eIDAS under supervision, in cessation or accredited) and no critical extension the library
+/// does not interpret. OCSP, CRL and other services, and withdrawn, deprecated, ceased or revoked
+/// ones, never anchor a chain.
+/// </para>
+/// <para>
+/// Qualification is only decided for a certificate whose checks passed. The entry in force
+/// decides when it is a CA/QC entry with status granted (or, before
 /// eIDAS, under supervision, in cessation or accredited) and no critical extension the library
 /// does not interpret. Its qualifiers apply when their criteria select the certificate: NotQualified
 /// and QCStatement settle whether it is qualified (otherwise QcCompliance does), QCWithSSCD,
@@ -55,6 +69,13 @@ public sealed class PdfTrustedListQualification
 /// time; type and device are those at the signing time. Services that decide must agree;
 /// conflicting qualifiers, conflicting services and criteria that cannot be evaluated give
 /// Indeterminate. Without a deciding service the certificate is not qualified (AdES).
+/// </para>
+/// <para>
+/// A time stamp authority is qualified when its certificate checks passed, the token is intact,
+/// and a TSA/QTST service whose identity is the authority's own key, or the key of a CA of its
+/// chain that the list names as that TSA/QTST service, was granted at the validation time. A CA
+/// listed only as a CA service does not make a time stamp authority qualified.
+/// </para>
 /// </remarks>
 internal sealed class TrustedListQualifier
 {
@@ -65,10 +86,10 @@ internal sealed class TrustedListQualifier
     private readonly bool _anyUsable;
     private readonly Dictionary<string, List<PdfTrustService>> _byKey = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<PdfTrustService>> _byKeyId = new(StringComparer.Ordinal);
+    private readonly List<(X509Certificate2 Certificate, PdfTrustService Service)> _certificates = [];
 
     public TrustedListQualifier(IReadOnlyList<PdfTrustedList> lists, DateTimeOffset now)
     {
-        var anchors = new Dictionary<string, X509Certificate2>(StringComparer.Ordinal);
         foreach (PdfTrustedList list in lists)
         {
             if (list.Unusable(now) is string why)
@@ -84,7 +105,7 @@ internal sealed class TrustedListQualifier
                 {
                     foreach (X509Certificate2 c in entry.Certificates)
                     {
-                        anchors[Compat.ToHex(c.RawData)] = c;
+                        _certificates.Add((c, service));
                         if (Key(c) is string key) Add(_byKey, key, service);
                     }
 
@@ -92,12 +113,45 @@ internal sealed class TrustedListQualifier
                 }
             }
         }
-
-        Anchors = [.. anchors.Values];
     }
 
-    /// <summary>The certificates of every service in the usable lists, which count as trust anchors when the options say so.</summary>
-    public IReadOnlyList<X509Certificate2> Anchors { get; }
+    /// <summary>Whether any list can be used: its signature passed and it has not expired.</summary>
+    public bool AnyUsable => _anyUsable;
+
+    /// <summary>
+    /// The certificates of the usable lists that anchor a chain for <paramref name="role"/> at
+    /// <paramref name="time"/>: those of services whose entry in force then may anchor it.
+    /// </summary>
+    public IReadOnlyList<X509Certificate2> Anchors(CertificateRole role, DateTimeOffset time)
+    {
+        var anchors = new Dictionary<string, X509Certificate2>(StringComparer.Ordinal);
+        foreach ((X509Certificate2 c, PdfTrustService service) in _certificates)
+        {
+            if (service.At(time) is PdfTrustServiceInformation entry && MayAnchor(entry, role)) anchors[Compat.ToHex(c.RawData)] = c;
+        }
+
+        return [.. anchors.Values];
+    }
+
+    /// <summary>Why a certificate the lists name is not a trust anchor at a time, or null when they do not name it.</summary>
+    public string? NotAnAnchor(X509Certificate2 certificate, CertificateRole role, DateTimeOffset time)
+    {
+        List<PdfTrustService> services = [.. Find(certificate).Distinct()];
+        if (services.Count == 0) return null;
+        IEnumerable<string> states = services.Select(s => "\"" + s.Name + "\" (" + (s.At(time) is PdfTrustServiceInformation e ? e.TypeIdentifier + ", " + e.StatusUri : "no status") + ")");
+        return "The trusted lists name it as " + string.Join(", ", states) + " at " + Format(time) + ", which does not make it a trust anchor for "
+            + (role == CertificateRole.Signer ? "a signer" : "a time stamp authority") + ".";
+    }
+
+    /// <summary>The qualification when the certificate checks did not pass: Indeterminate, without consulting the lists.</summary>
+    public PdfTrustedListQualification NotConfirmed(PdfCheckStatus status)
+    {
+        var reasons = new List<string>(_unusable)
+        {
+            "The certificate checks did not pass (" + status + "), so qualification is not confirmed.",
+        };
+        return new PdfTrustedListQualification { Qualification = PdfQualification.Indeterminate, AtIssuance = PdfQualification.Indeterminate, Reasons = reasons };
+    }
 
     /// <summary>The qualification of a signature made with the first certificate of <paramref name="path"/> at <paramref name="time"/>.</summary>
     public PdfTrustedListQualification Signer(IReadOnlyList<X509Certificate2> path, PdfQcStatements? statements, DateTimeOffset time)
@@ -162,20 +216,36 @@ internal sealed class TrustedListQualifier
     }
 
     /// <summary>
-    /// Whether a time stamp authority is a qualified time stamp service at the timestamp's time:
-    /// a TSA/QTST service, granted then, whose identity is the authority's certificate or a
-    /// certificate above it.
+    /// Whether a time stamp authority is a qualified time stamp service at the validation time of
+    /// its certificate checks: only when those passed and the token is intact, a TSA/QTST service,
+    /// granted then, whose identity is the authority's key or the key of a CA of its chain that
+    /// the list names as that TSA/QTST service.
     /// </summary>
-    public (PdfCheckStatus Status, PdfTrustService? Service, IReadOnlyList<string> Reasons) Timestamp(IReadOnlyList<X509Certificate2> path, DateTimeOffset time)
+    public (PdfCheckStatus Status, PdfTrustService? Service, IReadOnlyList<string> Reasons) Timestamp(PdfCertificateValidation authority, bool intact)
     {
         var reasons = new List<string>(_unusable);
+        if (!intact)
+        {
+            reasons.Add("The timestamp does not verify, so its authority is not confirmed as qualified.");
+            return (PdfCheckStatus.Indeterminate, null, reasons);
+        }
+
+        if (authority.Status != PdfCheckStatus.Passed)
+        {
+            reasons.Add("The time stamp authority's certificate checks did not pass (" + authority.Status + "), so it is not confirmed as qualified.");
+            return (PdfCheckStatus.Indeterminate, null, reasons);
+        }
+
         if (!_anyUsable)
         {
             reasons.Add("No usable trusted list was supplied, so the time stamp authority cannot be confirmed as qualified.");
             return (PdfCheckStatus.Indeterminate, null, reasons);
         }
 
-        List<PdfTrustService> services = [.. path.SelectMany(Find).Distinct().Where(s => s.History.Prepend(s).Any(e => e.TypeIdentifier == PdfTrustServiceTypes.TsaQtst))];
+        // The authority's own key first; a CA above it counts only as the identity of a TSA/QTST service.
+        DateTimeOffset time = authority.ValidationTime;
+        List<PdfTrustService> services = [.. authority.Certificates.Select(c => c.Certificate).SelectMany(Find).Distinct()
+            .Where(s => s.History.Prepend(s).Any(e => e.TypeIdentifier == PdfTrustServiceTypes.TsaQtst))];
         if (services.Count == 0)
         {
             reasons.Add("No TSA/QTST service of the trusted lists is the time stamp authority.");
@@ -334,16 +404,28 @@ internal sealed class TrustedListQualifier
         return PdfQualification.Indeterminate;
     }
 
-    /// <summary>The services whose identity is this certificate: the same public key, or its subject key identifier.</summary>
+    /// <summary>Whether a service entry may anchor a chain for a role: an approved CA service, or for a time stamp authority also a TSA service.</summary>
+    private static bool MayAnchor(PdfTrustServiceInformation entry, CertificateRole role) =>
+        entry.UnknownCriticalExtensions.Count == 0
+        && (entry.IsQualifiedStatus || entry.Status == PdfTrustServiceStatus.RecognisedAtNationalLevel)
+        && entry.TypeIdentifier switch
+        {
+            PdfTrustServiceTypes.CaQc or PdfTrustServiceTypes.CaPkc => true,
+            PdfTrustServiceTypes.TsaQtst or PdfTrustServiceTypes.Tsa => role == CertificateRole.TimestampAuthority,
+            _ => false,
+        };
+
+    /// <summary>
+    /// The services whose identity is this certificate's public key: a listed certificate with the
+    /// same key, or a listed subject key identifier equal to the SHA-1 of the key. The
+    /// certificate's own subject key identifier extension is not trusted.
+    /// </summary>
     private IEnumerable<PdfTrustService> Find(X509Certificate2 certificate)
     {
         var found = new List<PdfTrustService>();
-        if (Key(certificate) is string key && _byKey.TryGetValue(key, out List<PdfTrustService>? byKey)) found.AddRange(byKey);
-        foreach (string id in KeyIdentifiers(certificate))
-        {
-            if (_byKeyId.TryGetValue(id, out List<PdfTrustService>? byId)) found.AddRange(byId);
-        }
-
+        if (Key(certificate) is not string key) return found;
+        if (_byKey.TryGetValue(key, out List<PdfTrustService>? byKey)) found.AddRange(byKey);
+        if (KeyIdentifier(certificate) is string id && _byKeyId.TryGetValue(id, out List<PdfTrustService>? byId)) found.AddRange(byId);
         return found;
     }
 
@@ -359,21 +441,18 @@ internal sealed class TrustedListQualifier
         }
     }
 
-    /// <summary>The certificate's subject key identifier from its extension, and the SHA-1 of its public key (RFC 5280, 4.2.1.2, method 1).</summary>
-    private static List<string> KeyIdentifiers(X509Certificate2 certificate)
+    /// <summary>The SHA-1 of the certificate's subjectPublicKey (RFC 5280, 4.2.1.2, method 1), computed here, never read from its extension.</summary>
+    private static string? KeyIdentifier(X509Certificate2 certificate)
     {
-        var ids = new List<string>();
         try
         {
-            if (certificate.Extensions["2.5.29.14"] is X509Extension e) ids.Add(Compat.ToHex(DerNode.Parse(e.RawData).Content.ToArray()));
-            ids.Add(Compat.ToHex(Pkix.Hash(HashAlgorithmName.SHA1, Pkix.SubjectPublicKey(certificate))));
+            return Compat.ToHex(Pkix.Hash(HashAlgorithmName.SHA1, Pkix.SubjectPublicKey(certificate)));
         }
         catch (Exception e) when (e is FormatException or CryptographicException)
         {
-            // An identifier that cannot be read matches nothing.
+            // A key that cannot be read matches nothing.
+            return null;
         }
-
-        return ids;
     }
 
     private static void Add(Dictionary<string, List<PdfTrustService>> index, string key, PdfTrustService service)

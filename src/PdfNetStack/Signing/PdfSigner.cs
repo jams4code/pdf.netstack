@@ -481,8 +481,7 @@ public static class PdfSigner
             stamp.Validation = authority;
             if (validator.TrustedLists is TrustedListQualifier lists)
             {
-                (stamp.QualifiedTimestamp, stamp.QualifiedTimestampService, stamp.QualifiedTimestampReasons) =
-                    lists.Timestamp([.. authority.Certificates.Select(c => c.Certificate)], time);
+                (stamp.QualifiedTimestamp, stamp.QualifiedTimestampService, stamp.QualifiedTimestampReasons) = lists.Timestamp(authority, stamp.IsIntact);
             }
         }
 

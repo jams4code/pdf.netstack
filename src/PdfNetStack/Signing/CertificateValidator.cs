@@ -21,18 +21,12 @@ internal sealed class CertificateValidator
     private readonly SecurityStore _store;
     private readonly Dictionary<string, PdfRevocationValues> _supplied = new();
     private readonly SignatureChecks _checks = new();
-    private readonly IReadOnlyList<X509Certificate2> _anchors;
 
     public CertificateValidator(PdfValidationOptions options, SecurityStore store)
     {
         _options = options;
         _store = store;
-        _anchors = options.TrustAnchors;
-        if (options.TrustedLists.Count > 0)
-        {
-            TrustedLists = new TrustedListQualifier(options.TrustedLists, DateTimeOffset.UtcNow);
-            if (options.TrustedListsAsTrustAnchors) _anchors = [.. options.TrustAnchors, .. TrustedLists.Anchors];
-        }
+        if (options.TrustedLists.Count > 0) TrustedLists = new TrustedListQualifier(options.TrustedLists, DateTimeOffset.UtcNow);
     }
 
     /// <summary>The usable trusted lists of the options, or null when none were supplied.</summary>
@@ -73,13 +67,16 @@ internal sealed class CertificateValidator
                 Certificates = [new PdfCertificateCheck(leaf) { Validity = PdfCheckStatus.NotChecked, KeyUsage = PdfCheckStatus.NotChecked, Revocation = PdfCheckStatus.NotChecked, Problem = e.Message }],
                 Problems = [e.Message],
                 Status = PdfCheckStatus.Indeterminate,
+                TrustedListQualification = role == CertificateRole.Signer ? TrustedLists?.NotConfirmed(PdfCheckStatus.Indeterminate) : null,
             };
         }
     }
 
     private PdfCertificateValidation Check(X509Certificate2 leaf, IEnumerable<X509Certificate2> embedded, CertificateRole role, DateTimeOffset time, PdfValidationTimeSource source)
     {
-        IReadOnlyList<X509Certificate2> anchors = _anchors;
+        // Trusted list anchors depend on the role and on the services' status at the validation time.
+        bool listAnchors = _options.TrustedListsAsTrustAnchors && TrustedLists is not null;
+        IReadOnlyList<X509Certificate2> anchors = listAnchors ? [.. _options.TrustAnchors, .. TrustedLists!.Anchors(role, time)] : _options.TrustAnchors;
         List<X509Certificate2> pool = [.. embedded, .. _options.Certificates, .. _store.Certificates];
         bool IsAnchor(X509Certificate2 c) => anchors.Any(a => Same(a, c));
         List<X509Certificate2> path = BuildChain(leaf, pool, IsAnchor, anchors, _checks);
@@ -87,7 +84,8 @@ internal sealed class CertificateValidator
 
         var result = new PdfCertificateValidation { ValidationTime = time, TimeSource = source };
         var problems = new List<string>();
-        if (anchors.Count == 0)
+        // Usable lists given as anchors count as anchors supplied, even when none of their services anchors at this time.
+        if (_options.TrustAnchors.Count == 0 && !(listAnchors && TrustedLists!.AnyUsable))
         {
             result.Chain = PdfCheckStatus.NotChecked;
             problems.Add("No trust anchors were supplied, so the chain was not checked.");
@@ -100,6 +98,7 @@ internal sealed class CertificateValidator
         {
             result.Chain = PdfCheckStatus.Failed;
             problems.Add("No chain leads from " + Name(path[path.Count - 1]) + " to a trust anchor.");
+            if (listAnchors && TrustedLists!.NotAnAnchor(path[path.Count - 1], role, time) is string why) problems.Add(why);
         }
 
         (PdfCheckStatus[] nameStatus, string?[] nameProblem) = CheckNames(path, problems);
@@ -162,7 +161,6 @@ internal sealed class CertificateValidator
         result.Certificates = checks;
         result.Problems = problems;
         result.Qualification = checks[0].QcStatements?.Qualification ?? PdfQualification.AdES;
-        if (role == CertificateRole.Signer && TrustedLists is not null) result.TrustedListQualification = TrustedLists.Signer(path, checks[0].QcStatements, time);
         var statuses = new List<PdfCheckStatus> { result.Chain, result.Policy };
         foreach (PdfCertificateCheck c in checks)
         {
@@ -176,6 +174,13 @@ internal sealed class CertificateValidator
         result.Status = statuses.Contains(PdfCheckStatus.Failed) ? PdfCheckStatus.Failed
             : statuses.Any(s => s is PdfCheckStatus.Indeterminate or PdfCheckStatus.NotChecked) ? PdfCheckStatus.Indeterminate
             : PdfCheckStatus.Passed;
+
+        // The lists only confirm the qualification of a certificate whose own checks passed.
+        if (role == CertificateRole.Signer && TrustedLists is not null)
+        {
+            result.TrustedListQualification = result.Status == PdfCheckStatus.Passed ? TrustedLists.Signer(path, checks[0].QcStatements, time) : TrustedLists.NotConfirmed(result.Status);
+        }
+
         return result;
     }
 
