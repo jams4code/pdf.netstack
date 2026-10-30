@@ -55,6 +55,12 @@ public sealed record OptimizationStatistics(
     /// <summary>Images left as they were because their lossy change failed <see cref="PdfOptimizerOptions.MinImageSsim"/>.</summary>
     public int ImagesKeptByQualityGate { get; init; }
 
+    /// <summary>
+    /// Bilevel images re-encoded as CCITT Group 4 with exactly the same pixels by
+    /// <see cref="PdfOptimizerOptions.OptimizeBilevelImages"/>, counted in <see cref="StreamsRecompressed"/> as well.
+    /// </summary>
+    public int ImagesRecodedAsGroup4 { get; init; }
+
     /// <summary>Resource entries removed because no content stream could name them.</summary>
     public int ResourcesPruned { get; init; }
 

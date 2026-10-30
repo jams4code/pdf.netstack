@@ -133,6 +133,7 @@ namespace PdfNetStack.CorpusRunner
             w.WriteNumber("images_downsampled", s.ImagesDownsampled);
             w.WriteNumber("images_converted_to_jpeg", s.ImagesConvertedToJpeg);
             w.WriteNumber("images_kept_by_quality_gate", s.ImagesKeptByQualityGate);
+            w.WriteNumber("images_recoded_as_group4", s.ImagesRecodedAsGroup4);
             w.WriteNumber("resources_pruned", s.ResourcesPruned);
             w.WriteNumber("content_streams_compacted", s.ContentStreamsCompacted);
             w.WriteNumber("font_programs_merged", s.FontProgramsMerged);

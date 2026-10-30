@@ -86,6 +86,33 @@
   changes, a synthetic 600 dpi text page comes out of `Decode` four to five times faster.
 - `tools/make_jpx_fixtures.py --large` writes a large synthetic page for measuring memory and
   time; it is not committed.
+- Optimizer: bilevel images are coded as CCITT Group 4 when that is smaller
+  (`PdfOptimizerOptions.OptimizeBilevelImages`, on by default; `--no-group4` turns it off). It
+  takes 1 bit images stored as samples under any general filters, and CCITT Group 3 data that
+  decodes without a flaw and whose parameters leave nothing to a reader's defaults. The encoder
+  follows ITU-T T.6 and writes the same bytes as libtiff. The proof decodes both versions and
+  requires every pixel to match, and `PdfEquivalence` accepts such a recoding from any tool on
+  the same terms. `OptimizationStatistics.ImagesRecodedAsGroup4` counts them.
+- Lossy optimizer options reach scanned documents. `MaxImageDpi` reduces bilevel images (raw,
+  CCITT or JBIG2) and keeps them bilevel: each new pixel takes the share of the source that covers
+  it, the less common value wins past half, and a stroke thinner than the new pixels keeps its
+  middle, so text stays legible; the result is Group 4 or Flate. It also reduces gray and RGB
+  JPEG 2000 images, which become JPEG at `JpegQuality` (or lossless samples without it), and
+  `ConvertImagesToJpeg` turns photographic JPEG 2000 images into JPEG. The proof decodes JPEG 2000,
+  JBIG2 and CCITT sources, compares a bilevel output with the same reduction of its source, and
+  allows a JPEG 2000 image without /BitsPerComponent to gain /BitsPerComponent 8. A JBIG2Globals
+  stream no image uses any more is dropped.
+- Optimizer: every JPEG the lossy options make is checked against the proof's color and coarse
+  scale bounds before it is chosen, so a small image a JPEG would shift too far stays as it was
+  instead of failing the proof of the whole file.
+- The lossy image pass shares a memory budget of twice `MaxDecodedStreamBytes` between its
+  workers, so a document of large JPEG 2000 scans no longer decodes one per thread at once: peak
+  memory on two scanned books of the benchmark corpus fell from 5.7 and 7.0 GiB to 2.2 and 2.7.
+- CCITT decoding: a row whose every pixel changes color (a 1 or 2 pixel wide image, for one)
+  no longer ends decoding there.
+- `tools/scan_bench.py` writes synthetic scans of each kind a scanner produces (1 bit under Flate
+  and LZW, Group 3 fax, Group 4, JBIG2, gray and color JPEG 2000) and measures both optimizer
+  profiles on them.
 - HTML: absurd sizes no longer exhaust memory. A font size such as 1e300px laid out one line
   across an unbounded number of pages. Computed lengths are now clamped to a million px either
   way (percentages to a million percent), font sizes to 10000px, unitless line heights to 1000

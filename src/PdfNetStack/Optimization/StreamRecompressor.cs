@@ -39,6 +39,9 @@ internal sealed record RecompressionCounts(int Streams, int JpegImages, HashSet<
     /// <summary>Content streams rewritten by <see cref="ContentCompactor"/>.</summary>
     public int Compacted { get; init; }
 
+    /// <summary>Bilevel images re-encoded as CCITT Group 4 with the same pixels.</summary>
+    public int Group4 { get; init; }
+
     /// <summary>
     /// For each stream that was decoded, a hash of what it holds: the bytes left after the
     /// decodable layers, the predictor still to undo and the filters still to apply, or the
@@ -63,16 +66,19 @@ internal sealed record RecompressionScope(bool Recompress, HashSet<int> Compact,
 /// Re-encodes streams. Text based encodings (ASCIIHex, ASCII85) are removed, LZW and RunLength
 /// become Flate, Flate is recompressed at the configured level, and raw 8-bit or lower images get
 /// PNG prediction when it helps. JPEG images are re-encoded at the coefficient level, losslessly
-/// unless a quality is set. Content streams may also be compacted. A new encoding is kept only
-/// when it is smaller. JPX, JBIG2 and CCITT data is never decoded.
+/// unless a quality is set. Bilevel images stored as samples or as CCITT Group 3 may become CCITT
+/// Group 4 with the same pixels. Content streams may also be compacted. A new encoding is kept
+/// only when it is smaller. JPX and JBIG2 data, and CCITT data other than Group 3, is decoded
+/// only by the lossy image pass.
 /// </summary>
 internal static class StreamRecompressor
 {
     private const int FlateOverhead = 19; // "/Filter/FlateDecode"
 
     /// <param name="exhaustive">Also run the exhaustive Flate encoder on each stream's winning data.</param>
+    /// <param name="group4">Try CCITT Group 4 on bilevel images.</param>
     /// <param name="images">The lossy image pass, or null to leave image samples alone.</param>
-    public static RecompressionCounts Run(PdfFile file, ObjectGraph graph, RecompressionScope scope, CompressionLevel level, bool exhaustive, bool imagePredictors, JpegSettings? jpeg, ImageSettings? images, long decodeLimit, int parallelism, CancellationToken ct)
+    public static RecompressionCounts Run(PdfFile file, ObjectGraph graph, RecompressionScope scope, CompressionLevel level, bool exhaustive, bool imagePredictors, bool group4, JpegSettings? jpeg, ImageSettings? images, long decodeLimit, int parallelism, CancellationToken ct)
     {
         var streams = new List<PdfStream>();
         var numbers = new List<int>();
@@ -89,6 +95,16 @@ internal static class StreamRecompressor
         {
             jpeg = null;
             images = null;
+            group4 = false;
+        }
+
+        // Pages of one document usually share their JBIG2Globals; each is decoded once.
+        var globals = new Dictionary<int, byte[]?>();
+        byte[]? Globals(PdfObject? reference)
+        {
+            if (reference is not PdfReference r) return LossyImages.ReadGlobals(file, reference, decodeLimit);
+            if (!globals.TryGetValue(r.Number, out byte[]? data)) globals[r.Number] = data = LossyImages.ReadGlobals(file, r, decodeLimit);
+            return data;
         }
 
         // Pre-resolve everything a worker may need so that workers never touch the parser.
@@ -101,27 +117,44 @@ internal static class StreamRecompressor
         {
             bool mask = masks.Contains(numbers[i]);
             JpegSettings? settings = jpeg is { } j && mask ? j with { Quality = null } : jpeg;
-            plans[i] = Prepare(file, streams[i], settings, mask ? null : images, placed.TryGetValue(numbers[i], out PlacedSize size) ? size : null)
+            plans[i] = Prepare(file, streams[i], settings, mask ? null : images, placed.TryGetValue(numbers[i], out PlacedSize size) ? size : null, group4, Globals)
                 is { } plan ? plan with { Recompress = scope.Recompress, Compact = scope.Compact.Contains(numbers[i]) } : null;
         }
 
         // Largest first, handed out one at a time, so one big image never runs alone at the end.
         int[] schedule = Enumerable.Range(0, streams.Count).OrderByDescending(i => streams[i].Data.Length).ToArray();
-        int changed = 0, jpegImages = 0, keptByGate = 0, compacted = 0;
+        int changed = 0, jpegImages = 0, keptByGate = 0, compacted = 0, group4Images = 0;
         var requantized = new bool[streams.Count];
         var hashes = new byte[]?[streams.Count];
         var lossyKinds = new LossyKind[streams.Count];
         var partitioner = System.Collections.Concurrent.Partitioner.Create(schedule, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+
+        // Decoding images for the lossy pass takes several times their samples in memory; workers
+        // share a budget of twice the decode limit, so a document of large scans cannot multiply
+        // that by the number of threads.
+        var gate = new MemoryGate(2 * decodeLimit);
         Parallel.ForEach(partitioner, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, i =>
         {
             Plan? plan = plans[i];
             if (plan is null) return;
-            Result? result = Recompress(streams[i], plan, new Flate(level, exhaustive, ct), imagePredictors, decodeLimit,
-                scope.HashContent ? hash => hashes[i] = hash : null, out bool rejected);
+            long weight = gate.Enter(plan.Image is { } image ? LossyImages.Footprint(image) : 0, ct);
+            Result? result;
+            bool rejected;
+            try
+            {
+                result = Recompress(streams[i], plan, new Flate(level, exhaustive, ct), imagePredictors, decodeLimit,
+                    scope.HashContent ? hash => hashes[i] = hash : null, out rejected);
+            }
+            finally
+            {
+                gate.Exit(weight);
+            }
+
             if (rejected) Interlocked.Increment(ref keptByGate);
             if (result is null) return;
             if (result.Jpeg) Interlocked.Increment(ref jpegImages);
             if (result.Compacted) Interlocked.Increment(ref compacted);
+            if (result.Group4) Interlocked.Increment(ref group4Images);
             requantized[i] = result.Requantized;
             lossyKinds[i] = result.Lossy;
             PdfDictionary d = streams[i].Dictionary;
@@ -132,6 +165,9 @@ internal static class StreamRecompressor
                 d.Set("Width", PdfNumber.FromInteger(result.Width));
                 d.Set("Height", PdfNumber.FromInteger(result.Height));
             }
+
+            // A JPEG 2000 image may leave its depth to the data; samples and JPEG must state it.
+            if (result.SetsBits) d.Set("BitsPerComponent", PdfNumber.FromInteger(8));
 
             if (result.Filter is null)
             {
@@ -165,15 +201,63 @@ internal static class StreamRecompressor
             ConvertedToJpeg = lossyKinds.Count(k => (k & LossyKind.ConvertedToJpeg) != 0),
             KeptByGate = keptByGate,
             Compacted = compacted,
+            Group4 = group4Images,
             ContentHashes = contentHashes,
         };
+    }
+
+    /// <summary>
+    /// A budget of bytes shared by workers. A worker waits until its share fits beside the others;
+    /// a share larger than the whole budget is cut to it, so it runs, alone.
+    /// </summary>
+    private sealed class MemoryGate(long budget)
+    {
+        private readonly object _lock = new();
+        private long _inUse;
+
+        /// <returns>The share taken, to give back to <see cref="Exit"/>.</returns>
+        public long Enter(long bytes, CancellationToken ct)
+        {
+            long share = Math.Min(Math.Max(0, bytes), budget);
+            if (share == 0) return 0;
+            lock (_lock)
+            {
+                while (_inUse > 0 && _inUse + share > budget)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Monitor.Wait(_lock, 100);
+                }
+
+                _inUse += share;
+            }
+
+            return share;
+        }
+
+        public void Exit(long share)
+        {
+            if (share == 0) return;
+            lock (_lock)
+            {
+                _inUse -= share;
+                Monitor.PulseAll(_lock);
+            }
+        }
     }
 
     /// <param name="Jpeg">Set for a JPEG image the JPEG pass may re-encode.</param>
     /// <param name="Image">Set for an image the lossy image pass may change, with <paramref name="Images"/>.</param>
     /// <param name="Recompress">Re-encoding is allowed; without it only a compacted content stream may replace the data.</param>
     /// <param name="Compact">The stream is a content stream to compact.</param>
-    private sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg, ImagePlan? Image, ImageSettings? Images, bool Recompress = true, bool Compact = false);
+    private sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg, ImagePlan? Image, ImageSettings? Images, bool Recompress = true, bool Compact = false)
+    {
+        /// <summary>Set for a bilevel image that may become Group 4.</summary>
+        public BilevelPlan? Bilevel { get; init; }
+    }
+
+    /// <summary>A bilevel image the Group 4 pass may re-encode.</summary>
+    /// <param name="Ccitt">The parameters of Group 3 data, or null for samples.</param>
+    private sealed record BilevelPlan(int Width, int Height, CcittParameters? Ccitt);
 
     /// <param name="Quality">Requantization target, or null to stay lossless.</param>
     /// <param name="ColorTransform">The DCTDecode /ColorTransform parameter, when present.</param>
@@ -189,6 +273,12 @@ internal static class StreamRecompressor
         public int Width { get; init; }
 
         public int Height { get; init; }
+
+        /// <summary>The image is now CCITT Group 4 with the same pixels.</summary>
+        public bool Group4 { get; init; }
+
+        /// <summary>The image needs /BitsPerComponent 8, which its dictionary leaves out.</summary>
+        public bool SetsBits { get; init; }
     }
 
     /// <summary>
@@ -208,7 +298,7 @@ internal static class StreamRecompressor
         return targets;
     }
 
-    private static Plan? Prepare(PdfFile file, PdfStream stream, JpegSettings? jpeg, ImageSettings? images, PlacedSize? placed)
+    private static Plan? Prepare(PdfFile file, PdfStream stream, JpegSettings? jpeg, ImageSettings? images, PlacedSize? placed, bool group4, Func<PdfObject?, byte[]?> globals)
     {
         PdfDictionary d = stream.Dictionary;
 
@@ -226,8 +316,9 @@ internal static class StreamRecompressor
         }
 
         JpegPlan? jpegPlan = jpeg is { } settings ? JpegPlanFor(file, d, filters, settings) : null;
-        ImagePlan? imagePlan = images is null ? null : LossyImages.PlanFor(file, d, filters, images, jpegPlan is not null, placed);
-        if (filters.Count > 0 && !StreamCodec.IsDecodable(filters[0].Name) && jpegPlan is null) return null;
+        ImagePlan? imagePlan = images is null ? null : LossyImages.PlanFor(file, d, filters, images, jpegPlan is not null, placed, globals);
+        BilevelPlan? bilevel = group4 ? BilevelPlanFor(file, d, filters) : null;
+        if (filters.Count > 0 && !StreamCodec.IsDecodable(filters[0].Name) && jpegPlan is null && imagePlan is null && bilevel?.Ccitt is null) return null;
         if (filters.Exists(f => f.Name == "Crypt")) return null;
 
         // Resolve predictor parameters now; workers must not call back into the parser.
@@ -258,7 +349,27 @@ internal static class StreamRecompressor
             serializer.Write(probe, dp);
         }
 
-        return new Plan(resolved, probe.Length, ImageLayout(file, d), keepUnfiltered, jpegPlan, imagePlan, images);
+        return new Plan(resolved, probe.Length, ImageLayout(file, d), keepUnfiltered, jpegPlan, imagePlan, images) { Bilevel = bilevel };
+    }
+
+    /// <summary>
+    /// A plan for a bilevel image (<see cref="BilevelImages.Size"/>) stored as samples under
+    /// general filters, or as Group 3 data with parameters every reader takes alike. Null otherwise.
+    /// </summary>
+    private static BilevelPlan? BilevelPlanFor(PdfFile file, PdfDictionary d, List<FilterSpec> filters)
+    {
+        if (BilevelImages.Size(file, d) is not { } size) return null;
+        bool coded = filters.Count > 0 && !StreamCodec.IsDecodable(filters[^1].Name);
+        for (int i = 0; i < filters.Count - (coded ? 1 : 0); i++)
+        {
+            if (!StreamCodec.IsDecodable(filters[i].Name)) return null;
+        }
+
+        if (!coded) return new BilevelPlan(size.Width, size.Height, null);
+        if (filters[^1].Name != "CCITTFaxDecode") return null;
+        return BilevelImages.Parameters(filters[^1].Parms, size.Width, size.Height, file.Resolve) is { K: >= 0 } ccitt
+            ? new BilevelPlan(size.Width, size.Height, ccitt)
+            : null;
     }
 
     /// <summary>
@@ -481,9 +592,9 @@ internal static class StreamRecompressor
         BoundedBuffer? unpredicted = null;
         try
         {
-            if (image.Jpeg)
+            if (image.Coding != ImageCoding.Raw)
             {
-                if (decoded.PendingPredictor is not null || decoded.Remaining is not [{ Name: "DCTDecode" }]) return null;
+                if (decoded.PendingPredictor is not null || decoded.Remaining is not [{ } only] || only.Name != LossyImages.Filter(image.Coding)) return null;
             }
             else
             {
@@ -507,6 +618,7 @@ internal static class StreamRecompressor
                     Lossy = c.Kind,
                     Width = c.Width,
                     Height = c.Height,
+                    SetsBits = image.NeedsBits,
                 };
             }
 
@@ -538,21 +650,28 @@ internal static class StreamRecompressor
     private static Result? Choose(DecodedStream decoded, Plan plan, int originalCost, Flate flate, bool imagePredictors, long decodeLimit, out bool rejected)
     {
         rejected = false;
-        if (decoded.LayersDecoded == 0 && plan.Filters.Count > 0 && plan.Jpeg is null) return null;
+        if (decoded.LayersDecoded == 0 && plan.Filters.Count > 0 && plan.Jpeg is null && plan.Bilevel?.Ccitt is null) return null;
 
         CompressionLevel level = flate.Level;
         Result? best = null;
         int bestCost = originalCost;
 
         // Candidates that point into the pooled decode buffer are copied only if they win.
-        void Consider(ReadOnlyMemory<byte> data, PdfObject? filter, PdfObject? parms, bool borrowed = false, bool jpeg = false, bool requantized = false)
+        void Consider(ReadOnlyMemory<byte> data, PdfObject? filter, PdfObject? parms, bool borrowed = false, bool jpeg = false, bool requantized = false, bool group4 = false)
         {
             int cost = data.Length + Overhead(filter, parms);
             if (cost < bestCost)
             {
                 bestCost = cost;
-                best = new Result(borrowed ? data.ToArray() : data, filter, parms, jpeg, requantized);
+                best = new Result(borrowed ? data.ToArray() : data, filter, parms, jpeg, requantized) { Group4 = group4 };
             }
+        }
+
+        // The same pixels as Group 4, from packed rows; nothing when they could not be had exactly.
+        void ConsiderGroup4(byte[]? rows)
+        {
+            if (rows is null || plan.Bilevel is not { } b) return;
+            if (BilevelImages.Group4(rows, b.Width, b.Height, bestCost) is { } g4) Consider(g4.Data, new PdfName("CCITTFaxDecode"), g4.Parms, group4: true);
         }
 
         List<FilterSpec> remaining = decoded.Remaining;
@@ -562,12 +681,19 @@ internal static class StreamRecompressor
             byte[] deflated = flate.Encode(decoded.Data.Span);
             (PdfObject filter, PdfObject? parms) = BuildChain(remaining, StreamCodec.PredictorDictionary(pending));
             Consider(deflated, filter, parms);
+            if (plan.Bilevel is { Ccitt: null } bilevel && remaining.Count == 0 && Predictors.TryDecode(decoded.Data.Span, pending, decodeLimit, out BoundedBuffer? samples))
+            {
+                using BoundedBuffer unpredicted = samples!;
+                ConsiderGroup4(BilevelImages.Pixels(unpredicted.Span, null, bilevel.Width, bilevel.Height, decodeLimit));
+            }
+
             return best;
         }
 
         if (remaining.Count == 0)
         {
             Consider(decoded.Data, null, null, borrowed: true);
+            if (plan.Bilevel is { Ccitt: null } bilevel) ConsiderGroup4(BilevelImages.Pixels(decoded.Data.Span, null, bilevel.Width, bilevel.Height, decodeLimit));
 
             bool predictable = imagePredictors && plan.ImageLayout is { RowBytes: > 0 } &&
                 decoded.Data.Length % plan.ImageLayout.Value.RowBytes == 0 &&
@@ -601,6 +727,12 @@ internal static class StreamRecompressor
         // Undecodable inner filters (DCT, JPX, ...) remain. Drop the decodable outer layers,
         // and also try a Flate wrapper in case the inner data still compresses.
         (PdfObject innerFilter, PdfObject? innerParms) = BuildChain(remaining, null);
+        if (plan.Bilevel is { Ccitt: { } ccitt } g3 && remaining is [{ Name: "CCITTFaxDecode" }])
+        {
+            ConsiderGroup4(BilevelImages.Pixels(decoded.Data.Span, ccitt, g3.Width, g3.Height, decodeLimit));
+            if (decoded.LayersDecoded == 0) return best;
+        }
+
         if (plan.Jpeg is { } jpeg && remaining.Count == 1)
         {
             byte[]? transcoded = JpegTranscoder.TryTranscode(decoded.Data.Span, jpeg.Quality, jpeg.ColorTransform, jpeg.Components, decodeLimit, out bool requantized, jpeg.Progressive);

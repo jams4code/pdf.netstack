@@ -49,13 +49,14 @@ namespace PdfNetStack.Cli
               --no-font-merge           Do not merge subsets of one TrueType font
               --linearize               Write a linearized file (fast web view)
               --no-recompress           Do not re-encode streams
+              --no-group4               Do not re-encode bilevel images as CCITT Group 4
               --no-image-predictors     Do not try PNG prediction on raw images
               --no-jpeg                 Do not re-encode JPEG images
               --jpeg-quality <1-100>    Requantize JPEG images to this quality (lossy);
                                         verify: accept images requantized this way
               --max-dpi <n>             Downsample images drawn above 1.5 times n dpi to n (lossy)
-              --to-jpeg                 Re-encode photographic raw images as JPEG at
-                                        --jpeg-quality (lossy)
+              --to-jpeg                 Re-encode photographic raw and JPEG 2000 images as
+                                        JPEG at --jpeg-quality (lossy)
               --min-ssim <0-1>          Perceptual gate: keep any image whose lossy change
                                         falls below this SSIM; verify: accept downsampled
                                         and converted images that meet it
@@ -162,7 +163,7 @@ namespace PdfNetStack.Cli
                 {
                     Console.WriteLine($"pages {result.PageCount}, objects {s.ObjectsInFile} -> {s.ObjectsWritten} " +
                                       $"(unreachable {s.UnreachableRemoved}, merged {s.ObjectsDeduplicated}), " +
-                                      $"streams re-encoded {s.StreamsRecompressed} (JPEG {s.JpegImagesRecompressed}, requantized {s.JpegImagesRequantized}), " +
+                                      $"streams re-encoded {s.StreamsRecompressed} (JPEG {s.JpegImagesRecompressed}, requantized {s.JpegImagesRequantized}, Group 4 {s.ImagesRecodedAsGroup4}), " +
                                       $"objects verified {s.ObjectsVerified}");
                     if (s.ImagesDownsampled + s.ImagesConvertedToJpeg + s.ImagesKeptByQualityGate > 0)
                     {
@@ -545,6 +546,7 @@ namespace PdfNetStack.Cli
                     case "--no-font-merge": o = o with { MergeFontSubsets = false }; break;
                     case "--linearize": o = o with { Linearize = true }; break;
                     case "--no-recompress": o = o with { RecompressStreams = false }; break;
+                    case "--no-group4": o = o with { OptimizeBilevelImages = false }; break;
                     case "--no-image-predictors": o = o with { UseImagePredictors = false }; break;
                     case "--no-jpeg": o = o with { OptimizeJpegImages = false }; break;
                     case "--jpeg-quality": o = o with { JpegQuality = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;

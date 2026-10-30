@@ -27,7 +27,7 @@ Done and in the main branch:
 | Document features | Viewer preferences, page labels, language, custom properties, file attachments |
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA (RSA and ECDSA): RFC 3161 signature and document timestamps, the document security store with OCSP and CRLs; verification with chain building to trust anchors, validity, key usage and revocation; the X.509 checks of ETSI EN 319 102-1: certificate policies with mappings and constraints (RFC 5280 on the RFC 9618 policy graph), name constraints, and the qualified status QCStatements claim, confirmed against EU trusted lists the application supplies (ETSI TS 119 612 lists with their XML signatures verified, qualification as ETSI TS 119 615 decides it, qualified time stamp services); PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output validated by veraPDF in CI; Factur-X and ZUGFeRD invoices |
 | Content extraction | Text in reading order with column detection and vertical writing; Adobe's CJK CMaps and CID to Unicode tables; built-in encodings of embedded Type 1 and CFF fonts; letters and words with geometry; images with placement, decoded from JPEG, JPEG 2000, CCITT fax and JBIG2 to PNG |
-| Optimizer | Opt-in lossy image profile: downsampling by placed resolution, photographs to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
+| Optimizer | Opt-in lossy image profile: downsampling by placed resolution, scans included (JPEG 2000 to JPEG, CCITT and JBIG2 kept bilevel with strokes preserved), photographs (raw or JPEG 2000) to JPEG, a perceptual SSIM gate, progressive JPEG; an exhaustive Zopfli style Flate encoder. Bilevel images coded as CCITT Group 4 (ITU-T T.6) with every pixel proven. Lossless structural passes: unused resource pruning, content stream compaction, merging of font subsets, deduplication by decoded content, and opt-in linearized output (fast web view), each proven by the equivalence check |
 | Scale and performance | Documents read on demand from a seekable stream, with incremental saving; text extraction and HTML conversion profiled and made faster with unchanged output, measured by a benchmark project under `tools/`; JPEG 2000 decoded tile by tile and a band of rows at a time straight into 8 bit pixels, so 600 dpi color scans fit the default decode limit; JBIG2 regions combined a byte at a time, page sized text regions drawn straight onto the page, and bilevel images expanded to pixels by lookup |
 | Command line | Native AOT executables for linux-x64, linux-arm64, win-x64, osx-x64 and osx-arm64 on every GitHub release, with SHA-256 checksums |
 | Searchable scans | `DrawInvisibleText` in the core; the `PdfNetStack.Ocr` add-on (PP-OCRv5 on ONNX Runtime, Latin and Arabic) with its models in `PdfNetStack.Ocr.Models`, scans stored in one image or in several (strips, tiles, a text mask over a background), pages scanned sideways or upside down found and read turned back, an `IPdfPageRasterizer` hook for pages an application renders; the `pdfnetstack-ocr` command line tool (`PdfNetStack.Ocr.Tool`, also run as `pdfnetstack ocr`) |
@@ -42,10 +42,6 @@ Done and in the main branch:
 **OCR**
 - A Tesseract engine behind `IOcrEngine`, once a maintained .NET wrapper ships builds for Linux
   and macOS.
-
-**Optimizer**
-- Lossy image options for JPEG 2000, JBIG2 and CCITT images, which the corpus shows dominate
-  scanned documents (under 2% saved on the public domain book scans).
 
 **Scale and performance**
 - An optimizer that streams its output, for files larger than memory (reading and incremental
@@ -66,6 +62,11 @@ limit when extracted, and JBIG2 and JPEG 2000 extraction was slow on such pages 
 per page). Both are fixed: a 4812 by 7541 color page now decodes within 256 MiB (about 190 MB at
 peak, the 109 MB of pixels included, against about 1 GB before), and JBIG2 text pages come out
 of `PdfPageImage.Decode` four to five times faster.
+
+With JPEG 2000, JBIG2 and CCITT images in the lossy profile, a later run saved 29.5% lossy, and
+24.0% on the nine scanned documents (4.1% lossless): 37% on a 309 page JBIG2 report, 42% to 88%
+on CCITT pages. The two Internet Archive books, a JPEG 2000 picture over a JBIG2 soft mask on
+every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minutes per book.
 
 ## Out of scope
 

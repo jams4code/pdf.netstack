@@ -11,7 +11,8 @@ namespace PdfNetStack.Optimization;
 /// the trailer and compares every reachable value. Streams are compared by decoded content, so
 /// a different compression of the same bytes is equal, while any change to page content, fonts,
 /// images, annotations, metadata or structure is reported with its path. JPEG data is compared
-/// by DCT coefficients, so a re-encoding of the same image is equal too. Lossy image changes are
+/// by DCT coefficients, so a re-encoding of the same image is equal too, and bilevel images by
+/// their pixels, so samples or Group 3 data coded again as Group 4 are equal. Lossy image changes are
 /// accepted only where <see cref="VerificationRules.Images"/> allows them. The lossless structural
 /// passes are accepted when <see cref="VerificationRules"/> allows them, each checked against an
 /// analysis of the source: resource entries no content can name may be missing, content streams
@@ -37,6 +38,7 @@ internal sealed class EquivalenceVerifier
     private readonly Dictionary<int, int> _bToA = new();
     private readonly Queue<(int A, int B, string Path)> _pending = new();
     private readonly List<StreamJob> _streams = new();
+    private readonly Dictionary<(bool, int), byte[]?> _globals = new();
 
     private EquivalenceVerifier(PdfFile a, PdfFile b, VerificationRules rules, long decodeLimit, CancellationToken ct)
     {
@@ -67,7 +69,18 @@ internal sealed class EquivalenceVerifier
     }
 
     /// <param name="Images">Source and output geometry, set when the image may have been resampled.</param>
-    private sealed record StreamJob(PdfStream A, PdfStream B, int NumberA, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB, (ImageGeometry A, ImageGeometry B)? Images);
+    private sealed record StreamJob(PdfStream A, PdfStream B, int NumberA, string Path, List<FilterSpec>? FiltersA, List<FilterSpec>? FiltersB, (ImageGeometry A, ImageGeometry B)? Images)
+    {
+        /// <summary>Set for a bilevel image whose output is CCITT data, to be compared by pixels.</summary>
+        public BilevelJob? Bilevel { get; init; }
+
+        /// <summary>The decoded JBIG2Globals of the source and of the output, for a resampled JBIG2 image.</summary>
+        public (byte[]? A, byte[]? B) Globals { get; init; }
+    }
+
+    /// <summary>A bilevel image coded again, with the CCITT parameters the walk read from each side.</summary>
+    /// <param name="Source">The source's parameters, or null when it is stored as samples.</param>
+    private sealed record BilevelJob(int Width, int Height, CcittParameters? Source, CcittParameters Output);
 
     public int ObjectsCompared { get; private set; }
 
@@ -209,28 +222,47 @@ internal sealed class EquivalenceVerifier
                     // A soft mask with /Matte must keep its image's size (ISO 32000-1, 11.6.5.3).
                     bool resized = ga.Width != gb.Width || ga.Height != gb.Height;
                     if (resized && LossyImages.HasMatteSoftMask(_b, bStream.Dictionary)) return path + ": image with a /Matte soft mask changed size";
-                    images = (ga, gb);
+
+                    // The lossy pass changes a bilevel image only by reducing it, and never writes
+                    // JPEG 2000 or JBIG2: at the same size these must match exactly (bilevel images
+                    // by their pixels).
+                    bool exact = !resized && (ga.Bits == 1 || (ga.Coding == gb.Coding && ga.Coding is ImageCoding.Jpx or ImageCoding.Jbig2));
+                    if (!exact) images = (ga, gb);
                 }
 
-                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, numberA, isStream: true, sizeMayChange: images is not null);
+                // A JPEG 2000 image may leave /BitsPerComponent to its data; samples or a JPEG made from it state 8.
+                bool bitsMayAppear = images is { Item1.Coding: ImageCoding.Jpx, Item2.Coding: not ImageCoding.Jpx };
+                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, numberA, isStream: true, sizeMayChange: images is not null, bitsMayAppear: bitsMayAppear);
                 if (d is not null) return d;
 
-                // Parameters of filters that stay encoded (JBIG2Globals, DCT settings) are part of
-                // the content, and may reference other objects, so they go through the full walk.
+                BilevelJob? bilevel = null;
+                (byte[]?, byte[]?) globals = default;
                 if (fa is not null && fb is not null && images is null)
                 {
                     var ka = fa.SkipWhile(f => StreamCodec.IsDecodable(f.Name)).ToList();
                     var kb = fb.SkipWhile(f => StreamCodec.IsDecodable(f.Name)).ToList();
-                    if (ka.Count != kb.Count) return path + ": encoded filter chain differs";
-                    for (int i = 0; i < ka.Count; i++)
+                    bilevel = BilevelRecoding(aStream, ka, kb);
+
+                    // Parameters of filters that stay encoded (JBIG2Globals, DCT settings) are part of
+                    // the content, and may reference other objects, so they go through the full walk.
+                    // Bilevel images coded again are compared by their pixels instead.
+                    if (bilevel is null)
                     {
-                        if (ka[i].Name != kb[i].Name) return path + ": encoded filter differs";
-                        d = Compare(ka[i].Parms ?? PdfNull.Instance, kb[i].Parms ?? PdfNull.Instance, path + "/DecodeParms", depth + 1);
-                        if (d is not null) return d;
+                        if (ka.Count != kb.Count) return path + ": encoded filter chain differs";
+                        for (int i = 0; i < ka.Count; i++)
+                        {
+                            if (ka[i].Name != kb[i].Name) return path + ": encoded filter differs";
+                            d = Compare(ka[i].Parms ?? PdfNull.Instance, kb[i].Parms ?? PdfNull.Instance, path + "/DecodeParms", depth + 1);
+                            if (d is not null) return d;
+                        }
                     }
                 }
+                else if (images is { } g && fa is not null && fb is not null)
+                {
+                    globals = (Globals(_a, fa, g.Item1), Globals(_b, fb, g.Item2));
+                }
 
-                _streams.Add(new StreamJob(aStream, bStream, numberA, path, fa, fb, images));
+                _streams.Add(new StreamJob(aStream, bStream, numberA, path, fa, fb, images) { Bilevel = bilevel, Globals = globals });
                 return null;
             }
 
@@ -239,8 +271,34 @@ internal sealed class EquivalenceVerifier
         }
     }
 
+    /// <summary>
+    /// A bilevel image the rules allow to be coded again, whose output is CCITT data and whose
+    /// source is samples or CCITT data, with parameters every reader takes alike on both sides.
+    /// Null when the encoded filters must be compared as they are.
+    /// </summary>
+    private BilevelJob? BilevelRecoding(PdfStream a, List<FilterSpec> ka, List<FilterSpec> kb)
+    {
+        if (!_rules.AllowBilevelRecoding || BilevelImages.Size(_a, a.Dictionary) is not { } size) return null;
+        if (kb is not [{ Name: "CCITTFaxDecode" } output] || BilevelImages.Parameters(output.Parms, size.Width, size.Height, _b.Resolve) is not { } outputParameters) return null;
+        if (ka.Count == 0) return new BilevelJob(size.Width, size.Height, null, outputParameters);
+        return ka is [{ Name: "CCITTFaxDecode" } source] && BilevelImages.Parameters(source.Parms, size.Width, size.Height, _a.Resolve) is { } sourceParameters
+            ? new BilevelJob(size.Width, size.Height, sourceParameters, outputParameters)
+            : null;
+    }
+
+    /// <summary>The decoded JBIG2Globals of a JBIG2 image, read once per stream and side; null without them.</summary>
+    private byte[]? Globals(PdfFile file, List<FilterSpec> filters, ImageGeometry geometry)
+    {
+        if (geometry.Coding != ImageCoding.Jbig2 || file.Resolve(filters[^1].Parms) is not PdfDictionary parms || parms["JBIG2Globals"] is not { } globals) return null;
+        if (globals is not PdfReference r) return LossyImages.ReadGlobals(file, globals, _decodeLimit);
+        var key = (file == _a, r.Number);
+        if (!_globals.TryGetValue(key, out byte[]? data)) _globals[key] = data = LossyImages.ReadGlobals(file, r, _decodeLimit);
+        return data;
+    }
+
     /// <param name="numberA">Object number of the source stream whose dictionary this is, else -1.</param>
-    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, int numberA, bool isStream = false, bool sizeMayChange = false)
+    /// <param name="bitsMayAppear">/BitsPerComponent 8 may be in the output only.</param>
+    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, int numberA, bool isStream = false, bool sizeMayChange = false, bool bitsMayAppear = false)
     {
         // A merged TrueType program has a new length; /Length1 describes the encoding of the data.
         bool mergedProgram = isStream && _rules.AllowFontMerging && numberA >= 0 && a["Length1"] is not null && _fontPrograms.Value.ContainsKey(numberA);
@@ -277,6 +335,7 @@ internal sealed class EquivalenceVerifier
             if (mergedProgram && key == "Length1") continue;
             if ((page || node) && Inheritable(key)) continue;
             if (a.ContainsKey(key)) continue;
+            if (bitsMayAppear && key == "BitsPerComponent" && _b.Resolve(b[key]) is PdfNumber { IsInteger: true, IntegerValue: 8 }) continue;
             if (_b.Resolve(b[key]) is not PdfNull) return path + "/" + key + ": key only in output";
         }
 
@@ -357,13 +416,15 @@ internal sealed class EquivalenceVerifier
                 && SameFilterChain(da.Remaining, db.Remaining) && da.Data.Span.SequenceEqual(db.Data.Span);
             if (unchanged) return null;
 
-            // Each side must decode as its own dictionary says: samples, or one JPEG.
+            // Each side must decode as its own dictionary says: samples, or one coded image.
             static bool Coded(DecodedStream d, ImageGeometry g) =>
-                d.PendingPredictor is null && (g.Jpeg ? d.Remaining is [{ Name: "DCTDecode" }] : d.Remaining.Count == 0);
+                d.PendingPredictor is null && (g.Filter is { } codec ? d.Remaining is [{ } only] && only.Name == codec : d.Remaining.Count == 0);
             if (!Coded(da, images.A) || !Coded(db, images.B)) return path + ": resampled image is not coded as its dictionary says";
-            string? failure = LossyImages.Verify(da.Data.Span, images.A, db.Data.Span, images.B, _allowance.MinSsim, _decodeLimit);
+            string? failure = LossyImages.Verify(da.Data.Span, images.A, job.Globals.A, db.Data.Span, images.B, job.Globals.B, _allowance.MinSsim, _decodeLimit);
             return failure is null ? null : path + ": " + failure;
         }
+
+        if (job.Bilevel is { } bilevel) return CompareBilevel(da, db, bilevel, path);
 
         if (da.PendingPredictor != db.PendingPredictor) return path + ": predictor differs";
         if (!SameFilterChain(da.Remaining, db.Remaining)) return path + ": remaining filters differ";
@@ -399,6 +460,29 @@ internal sealed class EquivalenceVerifier
         }
 
         return path + ": decoded stream content differs";
+    }
+
+    /// <summary>
+    /// A bilevel image whose output is CCITT data: equal when both sides decode to the same pixels.
+    /// A source that is not plain samples or flawless CCITT data must have been carried over as it was.
+    /// </summary>
+    private string? CompareBilevel(DecodedStream da, DecodedStream db, BilevelJob job, string path)
+    {
+        // Each side decodes as the walk read it: samples or CCITT data, nothing pending.
+        if (da.PendingPredictor is not null || db.PendingPredictor is not null || da.Remaining.Count != (job.Source is null ? 0 : 1) || db.Remaining.Count != 1)
+        {
+            return path + ": bilevel image is not coded as its dictionary says";
+        }
+
+        if (job.Source == job.Output && da.Data.Span.SequenceEqual(db.Data.Span)) return null;
+
+        // Strict decoding: data a reader could take differently proves nothing.
+        int width = job.Width, height = job.Height;
+        byte[]? before = BilevelImages.Pixels(da.Data.Span, job.Source, width, height, _decodeLimit);
+        byte[]? after = BilevelImages.Pixels(db.Data.Span, job.Output, width, height, _decodeLimit);
+        if (before is null) return path + ": bilevel image changed but its source does not decode exactly";
+        if (after is null) return path + ": recoded bilevel image does not decode exactly";
+        return BilevelImages.SamePixels(before, after, width, height) ? null : path + ": bilevel image pixels differ";
     }
 
     private DecodedStream? TryDecode(PdfStream s, List<FilterSpec>? filters)
@@ -472,6 +556,9 @@ internal sealed record VerificationRules
     /// <summary>Inheritable page attributes may move from page tree nodes onto the pages that inherit them.</summary>
     public bool AllowInheritedAttributes { get; init; }
 
+    /// <summary>Bilevel images stored as samples or CCITT data may be coded again as CCITT data with the same pixels.</summary>
+    public bool AllowBilevelRecoding { get; init; }
+
     /// <summary>Every lossless structural change the optimizer makes, and no lossy image change.</summary>
-    public static VerificationRules Lossless { get; } = new() { AllowResourcePruning = true, AllowContentCompaction = true, AllowFontMerging = true, AllowInheritedAttributes = true };
+    public static VerificationRules Lossless { get; } = new() { AllowResourcePruning = true, AllowContentCompaction = true, AllowFontMerging = true, AllowInheritedAttributes = true, AllowBilevelRecoding = true };
 }

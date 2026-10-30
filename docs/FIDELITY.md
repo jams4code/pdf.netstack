@@ -22,10 +22,11 @@ The source bytes and the candidate bytes are parsed independently. Starting at t
   bytes must match exactly; filters that stay encoded (DCT, JPX, JBIG2, CCITT) must be identical,
   including their parameters and any objects they reference such as `/JBIG2Globals`,
 - JPEG data whose bytes changed is decoded to DCT coefficients on both sides (see below),
+- a bilevel image whose output is CCITT data is decoded to pixels on both sides (see below),
 - streams that cannot be decoded must be byte identical with an identical filter chain.
 
-Apart from the structural changes below and the opt-in image changes described under JPEG
-images, the only accepted differences are the encoding entries of streams: `/Length`, `/Filter`, `/DecodeParms` and `/DL`. With opt-in stripping
+Apart from the structural changes below, bilevel images coded again, and the opt-in image
+changes described under JPEG images, the only accepted differences are the encoding entries of streams: `/Length`, `/Filter`, `/DecodeParms` and `/DL`. With opt-in stripping
 enabled, `/Thumb` and `/PieceInfo` may be missing from the output.
 
 ### Structural changes
@@ -99,6 +100,30 @@ tables against the real offsets and lengths of the objects. `tools/measure_optim
 its bundled libqpdf, is installed. The objects are assigned to the parts of Annex F the way qpdf
 assigns them, so its check computes the same layout.
 
+### Bilevel images
+
+The Group 4 pass (`OptimizeBilevelImages`) codes 1 bit images again as CCITT Group 4: stencil
+masks and 1 bit gray, palette and single colorant images, stored as samples under any general
+filters (predictors included) or as CCITT Group 3. The encoder follows ITU-T T.6 and chooses its
+modes by the coding procedure of T.4, so it writes the same bytes as libtiff (a test checks this
+on libtiff's own output). /BlackIs1 is set when the 0 bits are the more common value, which keeps
+the samples as they were while long runs use the short white codes.
+
+The proof accepts an output coded as CCITT data in place of samples or CCITT data only by its
+pixels. Both sides are decoded, every pixel of every row must match, and the padding bits at
+the end of a row, which are not pixels, are ignored. Readers recover from flawed fax data in
+different ways, so only data every reader takes alike counts, on both sides:
+
+- parameters of their own type (integers, booleans), /Columns equal to the width (left out it
+  means 1728 to some readers and the width to others), /Rows unset or equal to the height,
+- data that decodes without a flaw: every code exists, no run overshoots its row, the changes
+  on a row are strictly ordered (an empty run only where a row starts black or ends), no pass
+  reaches past the reference row, and every row is there before the data ends or stops,
+- samples at least as long as the image.
+
+Anything else must match as it was, encoded bytes and parameters included. Group 3 data with a
+flaw, or with parameters a reader could take differently, is never coded again.
+
 ### JPEG images
 
 The JPEG pass re-encodes DCTDecode data without ever producing pixels, so the proof works at the
@@ -119,15 +144,31 @@ The lossy image options (`MaxImageDpi`, `ConvertImagesToJpeg`) change pixels, so
 works on pixels and is a bound, not an identity. Only images the optimizer changed get it, and
 `PdfEquivalence` grants it only to images the optimizer could have changed: soft masks, masks,
 stencil and color keyed images must match exactly, and so must the size of images with a /Mask
-or a /Matte soft mask. An image whose data is unchanged must keep its size. Every other
-dictionary entry must still match; the output must have the same components, no larger a
-size, the same aspect within a pixel, and decode as its dictionary says (raw samples or one
-JPEG). Both images are decoded and the source is resampled to the output's size with the same
-filter. Then each channel's mean may move by at most 4 steps, 32 pixel thumbnails may differ by
-at most 12 steps on average, which catches mirrored, shifted or swapped pictures, and luminance
-SSIM must reach `MinImageSsim`, or 0.5 when no gate is set. With a gate, requantized JPEGs must
-also reach it. `pdfnetstack verify --min-ssim` and `PdfEquivalence.FindDifference(..., minImageSsim)`
-apply the same checks to any two files.
+or a /Matte soft mask. An image whose data is unchanged must keep its size, and so must a
+bilevel image, a JPEG 2000 image that stays JPEG 2000 and a JBIG2 image that stays JBIG2: the
+optimizer changes those only by reducing them. Every other dictionary entry must still match,
+except that a JPEG 2000 image without /BitsPerComponent gains /BitsPerComponent 8 as samples or
+a JPEG; the output must have the same components and bit depth, no larger a size, the same
+aspect within a pixel, and decode as its dictionary says (raw samples, or one JPEG, JPEG 2000,
+JBIG2 or CCITT image). Both images are decoded and the source is resampled to the output's size
+with the same filter: Lanczos, or for bilevel images the reduction described below. Then each
+channel's mean may move by at most 4 steps, 32 pixel thumbnails may differ by at most 12 steps
+on average, which catches mirrored, shifted or swapped pictures, and luminance SSIM must reach
+`MinImageSsim`, or 0.5 when no gate is set. With a gate, requantized JPEGs must also reach it.
+The optimizer checks the same bounds on every JPEG it makes before choosing it, so it never
+writes an image the proof would reject. `pdfnetstack verify --min-ssim` and
+`PdfEquivalence.FindDifference(..., minImageSsim)` apply the same checks to any two files.
+
+A JPEG 2000 image counts only when its dictionary describes it fully: a gray or RGB /ColorSpace,
+no /Decode, no /SMaskInData, /BitsPerComponent 8 or none, and data with exactly that many color
+channels, no opacity channel and colors that are not sYCC. A bilevel image (raw, CCITT data
+every reader takes alike, or JBIG2) stays bilevel when reduced. Each new pixel takes the share
+of its area that the 1 bits cover in the source, an exact box filter. The less common value
+wins a pixel it covers more than half of, and also a pixel it covers at least a quarter of that
+is a ridge across or along the image (covered more than the neighbour before it and at least as
+much as the one after it): the middle of a stroke thinner than the new pixels, which plain
+thresholding would erase. The arithmetic is exact and in a fixed order, so the proof reproduces
+the reduction bit for bit and the optimizer's own output reaches SSIM 1 against it.
 
 The coefficient reader is itself checked against libjpeg: test fixtures written by libjpeg-turbo
 in baseline, optimized, progressive and restart marker layouts of the same image must decode to
@@ -180,6 +221,12 @@ First run: 65 of 77 documents rewritten (the other 12 are signed or encrypted), 
 after, no rewrite failing its proof. Lossy rewrites lost at least 37.6 dB PSNR on any page but
 one: a 1.8 KiB ImageMagick test file of tiny images, at 30.4 dB.
 
+Run with bilevel, JBIG2 and JPEG 2000 images in the lossy profile: again no failure, lossless
+rewrites identical, lossy saving 29.5% (27.2% before). Pages of CCITT scans reduced to 150 dpi
+bilevel measure 22.8 to 22.9 dB PSNR against the source at 100 DPI, and a 1.8 KiB ImageMagick
+fax test at 17.2 dB: a bilevel page differs from its source along every stroke edge, so its
+PSNR says little. Read side by side, the reduced pages keep every stroke, rule and serif.
+
 ## 3. Tests
 
 - Syntax: literal and hex string escapes, names with `#xx`, number canonicalization, references,
@@ -203,6 +250,14 @@ one: a 1.8 KiB ImageMagick test file of tiny images, at 30.4 dB.
   sizes) in baseline, optimized, progressive and restart marker layouts; lossless and requantized
   round trips; soft masks, Flate wrapped JPEG, color space mismatches, palettes, damaged and
   truncated data, unsupported coding processes, and mutated inputs that must never throw.
+- Bilevel images: the Group 4 encoder byte for byte against libtiff, round trips of random rows
+  at widths from 1 to 9000 pixels with runs past 2560 in both polarities, the libtiff Group 3
+  fixtures coded again as Group 4, stencil masks, palettes, /Decode and predictors; Group 3 with
+  flaws or parameters readers take differently left alone; a changed pixel, an inverted
+  reading, short data and ambiguous parameters each caught by the proof; reductions of CCITT,
+  JBIG2 and raw scans with thin strokes kept, and bad reductions (another page, too dark, plain
+  subsampling, gray output) rejected; JPEG 2000 converted and reduced, and the JPEG 2000 images
+  the dictionary cannot describe left alone; mutated fax and JBIG2 data that must never throw.
 - Fuzzing: mutated inputs (byte flips, deletions, truncation, injected tokens, duplicated
   regions) must never throw and must produce either the exact input or a verified rewrite.
   CI runs 600 cases; set `PDFNETSTACK_FUZZ_ITERATIONS` for a long soak. 20,000 cases pass locally.

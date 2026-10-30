@@ -144,7 +144,9 @@ public sealed class ImageExtractionTests
         PdfDocument doc = PdfDocument.Create();
         using (PdfGraphics g = doc.Pages.Add(PdfRectangle.A4).CreateGraphics()) g.DrawImage(PdfImage.Load(Fixture("Images", file)), 0, 0);
         PdfPageImage image = Reopen(doc).Pages[0].GetImages().Single();
-        Assert.IsNull(image.Encoding);
+
+        // Saving optimizes, which codes 1 bit images as Group 4 with the same pixels.
+        Assert.AreEqual(file is "gray1.png" or "palette1.png" ? "CCITTFaxDecode" : null, image.Encoding, file);
         PdfBitmap bitmap = image.Decode()!;
 
         (int channels, byte[] expected) = Expected(file);

@@ -37,7 +37,7 @@ internal static class CcittDecoder
     private const int Invalid = -1;
 
     // ITU-T T.4, Table 2: terminating codes for runs 0 to 63, by run length.
-    private static readonly string[] WhiteTerminating =
+    internal static readonly string[] WhiteTerminating =
     [
         "00110101", "000111", "0111", "1000", "1011", "1100", "1110", "1111", "10011", "10100", "00111", "01000", "001000", "000011", "110100", "110101",
         "101010", "101011", "0100111", "0001100", "0001000", "0010111", "0000011", "0000100", "0101000", "0101011", "0010011", "0100100", "0011000", "00000010", "00000011", "00011010",
@@ -45,7 +45,7 @@ internal static class CcittDecoder
         "00001011", "01010010", "01010011", "01010100", "01010101", "00100100", "00100101", "01011000", "01011001", "01011010", "01011011", "01001010", "01001011", "00110010", "00110011", "00110100",
     ];
 
-    private static readonly string[] BlackTerminating =
+    internal static readonly string[] BlackTerminating =
     [
         "0000110111", "010", "11", "10", "011", "0011", "0010", "00011", "000101", "000100", "0000100", "0000101", "0000111", "00000100", "00000111", "000011000",
         "0000010111", "0000011000", "0000001000", "00001100111", "00001101000", "00001101100", "00000110111", "00000101000", "00000010111", "00000011000", "000011001010", "000011001011", "000011001100", "000011001101", "000001101000", "000001101001",
@@ -54,20 +54,20 @@ internal static class CcittDecoder
     ];
 
     // ITU-T T.4, Table 3: make-up codes for runs 64 to 1728 in steps of 64.
-    private static readonly string[] WhiteMakeup =
+    internal static readonly string[] WhiteMakeup =
     [
         "11011", "10010", "010111", "0110111", "00110110", "00110111", "01100100", "01100101", "01101000", "01100111", "011001100", "011001101", "011010010", "011010011",
         "011010100", "011010101", "011010110", "011010111", "011011000", "011011001", "011011010", "011011011", "010011000", "010011001", "010011010", "011000", "010011011",
     ];
 
-    private static readonly string[] BlackMakeup =
+    internal static readonly string[] BlackMakeup =
     [
         "0000001111", "000011001000", "000011001001", "000001011011", "000000110011", "000000110100", "000000110101", "0000001101100", "0000001101101", "0000001001010", "0000001001011", "0000001001100", "0000001001101", "0000001110010",
         "0000001110011", "0000001110100", "0000001110101", "0000001110110", "0000001110111", "0000001010010", "0000001010011", "0000001010100", "0000001010101", "0000001011010", "0000001011011", "0000001100100", "0000001100101",
     ];
 
     // Extended make-up codes for runs 1792 to 2560, shared by both colors.
-    private static readonly string[] ExtendedMakeup =
+    internal static readonly string[] ExtendedMakeup =
     [
         "00000001000", "00000001100", "00000001101", "000000010010", "000000010011", "000000010100", "000000010101", "000000010110", "000000010111", "000000011100", "000000011101", "000000011110", "000000011111",
     ];
@@ -100,7 +100,18 @@ internal static class CcittDecoder
     /// <param name="p">The decode parameters.</param>
     /// <param name="height">Rows to produce when <see cref="CcittParameters.Rows"/> is 0: the image's height.</param>
     /// <exception cref="ArgumentOutOfRangeException">Columns or rows are out of range.</exception>
-    public static byte[] Decode(ReadOnlySpan<byte> data, CcittParameters p, int height)
+    public static byte[] Decode(ReadOnlySpan<byte> data, CcittParameters p, int height) => Decode(data, p, height, strict: false)!;
+
+    /// <summary>
+    /// Decodes data that holds every row without a flaw, or returns null: a code that does not
+    /// exist, runs that overshoot their row, a pass beyond the reference row, or data that ends or
+    /// stops before the last row. Readers recover from such flaws in different ways, so only data
+    /// decoded this way is known to show the same pixels in every reader.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Columns or rows are out of range.</exception>
+    public static byte[]? DecodeExact(ReadOnlySpan<byte> data, CcittParameters p, int height) => Decode(data, p, height, strict: true);
+
+    private static byte[]? Decode(ReadOnlySpan<byte> data, CcittParameters p, int height, bool strict)
     {
         int columns = p.Columns, rows = p.Rows > 0 ? p.Rows : height;
         if (columns is <= 0 or > MaxColumns) throw new ArgumentOutOfRangeException(nameof(p), "Columns are out of range.");
@@ -115,7 +126,7 @@ internal static class CcittDecoder
         var bits = new BitReader(data);
         var reference = new int[columns + 2];
         var coding = new int[columns + 2];
-        int referenceCount = 0;
+        int referenceCount = 0, decoded = 0;
         for (int row = 0; row < rows; row++)
         {
             if (p.EncodedByteAlign && !(p.K >= 0 && p.EndOfLine)) bits.Align();
@@ -135,16 +146,17 @@ internal static class CcittDecoder
 
             if (bits.AtEnd) break;
             int count = twoDimensional
-                ? ReadRow2D(ref bits, reference, referenceCount, coding, columns)
-                : ReadRow1D(ref bits, coding, columns);
+                ? ReadRow2D(ref bits, reference, referenceCount, coding, columns, strict)
+                : ReadRow1D(ref bits, coding, columns, strict);
             if (count < 0) break;
 
             Fill(output.AsSpan(row * rowBytes, rowBytes), coding, count, columns, p.BlackIs1);
             (reference, coding) = (coding, reference);
             referenceCount = count;
+            decoded++;
         }
 
-        return output;
+        return strict && decoded < rows ? null : output;
     }
 
     /// <summary>Skips fill bits and one EOL (eleven or more zeros, then a one). False, consuming nothing, when none is there.</summary>
@@ -157,14 +169,16 @@ internal static class CcittDecoder
     }
 
     /// <summary>A one dimensional (Modified Huffman) row: alternating white and black runs. Returns the changing elements, or -1.</summary>
-    private static int ReadRow1D(ref BitReader bits, int[] changes, int columns)
+    private static int ReadRow1D(ref BitReader bits, int[] changes, int columns, bool strict)
     {
         int count = 0, position = 0;
         bool white = true;
         while (position < columns)
         {
             int run = ReadRun(ref bits, white);
-            if (run < 0) return -1;
+
+            // Only the first run may be empty: a white run of 0 when the row starts black.
+            if (run < 0 || (strict && (position + run > columns || (run == 0 && position > 0)))) return -1;
             position = Math.Min(columns, position + run);
             if (position < columns) changes[count++] = position;
             white = !white;
@@ -178,7 +192,7 @@ internal static class CcittDecoder
     /// A two dimensional row (ITU-T T.4, 4.2; T.6): each changing element coded against the
     /// reference row above as pass, horizontal or vertical. Returns the changing elements, or -1.
     /// </summary>
-    private static int ReadRow2D(ref BitReader bits, int[] reference, int referenceCount, int[] coding, int columns)
+    private static int ReadRow2D(ref BitReader bits, int[] reference, int referenceCount, int[] coding, int columns, bool strict)
     {
         // Sentinels: past the last change the reference row has changes at the right edge.
         reference[referenceCount] = columns;
@@ -198,16 +212,16 @@ internal static class CcittDecoder
             switch (mode)
             {
                 case Pass:
-                    if (b2 <= a0) return -1;
+                    if (b2 <= a0 || (strict && b2 >= columns)) return -1;
                     a0 = b2;
                     break;
                 case Horizontal:
                 {
                     int start = Math.Max(a0, 0);
                     int first = ReadRun(ref bits, color == 0), second = first < 0 ? -1 : ReadRun(ref bits, color != 0);
-                    if (second < 0) return -1;
+                    if (second < 0 || (strict && !Ordered(a0, start + (long)first, start + (long)first + second, columns))) return -1;
                     int a1 = Math.Min(columns, start + first), a2 = Math.Min(columns, a1 + second);
-                    if (count + 2 > columns) return -1;
+                    if (count + 2 > coding.Length) return -1;
                     coding[count++] = a1;
                     coding[count++] = a2;
                     a0 = a2;
@@ -217,7 +231,7 @@ internal static class CcittDecoder
                 case >= -3 and <= 3:
                 {
                     int a1 = b1 + mode;
-                    if (a1 < Math.Max(a0, 0) || a1 > columns || count + 1 > columns) return -1;
+                    if (a1 < Math.Max(a0, 0) || a1 > columns || count + 1 > coding.Length || (strict && a1 <= a0)) return -1;
                     coding[count++] = a1;
                     a0 = a1;
                     color ^= 1;
@@ -233,6 +247,14 @@ internal static class CcittDecoder
         while (count > 0 && coding[count - 1] >= columns) count--;
         return count;
     }
+
+    /// <summary>
+    /// True when a horizontal mode's changes a1 and a2 lie within the row, a1 strictly right of
+    /// a0 and a2 strictly right of a1, except that a2 may equal a1 at the right edge, where the
+    /// row ends with the first run.
+    /// </summary>
+    private static bool Ordered(int a0, long a1, long a2, int columns) =>
+        a2 <= columns && a1 > a0 && (a2 > a1 || a2 == columns);
 
     internal const int Pass = 10;
     internal const int Horizontal = 11;

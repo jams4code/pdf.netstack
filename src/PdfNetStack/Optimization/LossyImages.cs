@@ -7,7 +7,7 @@ namespace PdfNetStack.Optimization;
 
 /// <summary>What the lossy image pass may do. Null <see cref="MaxDpi"/> and false <see cref="ConvertToJpeg"/> turn it off.</summary>
 /// <param name="MaxDpi">Downsample images drawn above 1.5 times this resolution to it.</param>
-/// <param name="ConvertToJpeg">Re-encode raw continuous tone images as JPEG.</param>
+/// <param name="ConvertToJpeg">Re-encode raw and JPEG 2000 continuous tone images as JPEG.</param>
 /// <param name="Quality">JPEG quality for new encodings; null keeps a JPEG source's own.</param>
 /// <param name="MinSsim">The perceptual gate, or null for none.</param>
 /// <param name="Progressive">Also try progressive JPEG coding.</param>
@@ -22,20 +22,68 @@ internal enum LossyKind
     ConvertedToJpeg = 2,
 }
 
+/// <summary>How an image's samples are coded under its general filters.</summary>
+internal enum ImageCoding
+{
+    /// <summary>Samples, with nothing but general filters.</summary>
+    Raw,
+
+    /// <summary>DCTDecode.</summary>
+    Jpeg,
+
+    /// <summary>JPXDecode.</summary>
+    Jpx,
+
+    /// <summary>JBIG2Decode.</summary>
+    Jbig2,
+
+    /// <summary>CCITTFaxDecode.</summary>
+    Ccitt,
+}
+
 /// <summary>
 /// Everything a worker needs to change one image lossily, resolved up front.
 /// </summary>
 /// <param name="Width">Image width in samples.</param>
 /// <param name="Height">Image height in samples.</param>
 /// <param name="Components">Color components, 1, 3 or 4.</param>
-/// <param name="Jpeg">True when the data, after general filters, is a JPEG.</param>
+/// <param name="Coding">The image codec under the general filters.</param>
 /// <param name="ColorTransform">The DCTDecode /ColorTransform, when set.</param>
 /// <param name="Target">Size to downsample to, or null to keep the size.</param>
-/// <param name="MayConvert">Raw samples may become a JPEG.</param>
-internal sealed record ImagePlan(int Width, int Height, int Components, bool Jpeg, int? ColorTransform, (int Width, int Height)? Target, bool MayConvert);
+/// <param name="MayConvert">Raw or JPEG 2000 samples may become a JPEG.</param>
+internal sealed record ImagePlan(int Width, int Height, int Components, ImageCoding Coding, int? ColorTransform, (int Width, int Height)? Target, bool MayConvert)
+{
+    /// <summary>True when the data, after general filters, is a JPEG.</summary>
+    public bool Jpeg => Coding == ImageCoding.Jpeg;
+
+    /// <summary>Bits per sample: 1 for a bilevel image, else 8.</summary>
+    public int Bits { get; init; } = 8;
+
+    /// <summary>The CCITT parameters of CCITT data.</summary>
+    public CcittParameters? Ccitt { get; init; }
+
+    /// <summary>The decoded JBIG2Globals of JBIG2 data, when it has them.</summary>
+    public byte[]? Globals { get; init; }
+
+    /// <summary>The dictionary has no /BitsPerComponent, which a JPEG 2000 image may leave out and any other coding needs.</summary>
+    public bool NeedsBits { get; init; }
+}
 
 /// <summary>An image's size and coding, as the proof reads it from the dictionary.</summary>
-internal sealed record ImageGeometry(int Width, int Height, int Components, bool Jpeg, int? ColorTransform);
+internal sealed record ImageGeometry(int Width, int Height, int Components, ImageCoding Coding, int? ColorTransform)
+{
+    /// <summary>True when the data, after general filters, is a JPEG.</summary>
+    public bool Jpeg => Coding == ImageCoding.Jpeg;
+
+    /// <summary>Bits per sample: 1 for a bilevel image, else 8.</summary>
+    public int Bits { get; init; } = 8;
+
+    /// <summary>The CCITT parameters of CCITT data.</summary>
+    public CcittParameters? Ccitt { get; init; }
+
+    /// <summary>The filter that decodes the coding, or null for samples.</summary>
+    public string? Filter => LossyImages.Filter(Coding);
+}
 
 /// <summary>What the proof accepts beyond exact equivalence, by source object number.</summary>
 /// <param name="MayRequantize">Accept a JPEG whose coefficients are exactly the source's requantized.</param>
@@ -54,7 +102,10 @@ internal sealed record LossyCandidate(byte[] Data, PdfObject Filter, PdfObject? 
 /// tone images to JPEG, each behind the perceptual gate when one is set. The gate decodes every
 /// candidate and compares its luminance with the reference by SSIM: the source itself, or for a
 /// downsampled image the exact resample of the source, so the gate judges the encoding at the
-/// size the image is delivered and never second-guesses the resolution target.
+/// size the image is delivered and never second-guesses the resolution target. Bilevel images
+/// (raw, CCITT or JBIG2) are reduced by <see cref="BilevelResampler"/> and stay bilevel, coded
+/// as Group 4 or Flate, both lossless at the new size. JPEG 2000 images, which the optimizer does
+/// not write, become JPEG or, downsampled, Flate.
 /// </summary>
 internal static class LossyImages
 {
@@ -66,36 +117,61 @@ internal static class LossyImages
 
     /// <summary>
     /// The plan for one image, or null when the pass must leave it alone: masks, images with a
-    /// mask of their own that must match their size, anything not 8 bits per component, indexed,
-    /// Lab, separation and DeviceN images, and encodings other than raw samples and JPEG.
+    /// mask of their own that must match their size, and anything <see cref="Geometry"/> does not
+    /// describe. Bilevel images are only ever downsampled.
     /// </summary>
-    public static ImagePlan? PlanFor(PdfFile file, PdfDictionary d, List<FilterSpec> filters, ImageSettings settings, bool jpegAllowed, PlacedSize? placed)
+    /// <param name="globals">Reads a JBIG2Globals stream, or returns null when it cannot.</param>
+    public static ImagePlan? PlanFor(PdfFile file, PdfDictionary d, List<FilterSpec> filters, ImageSettings settings, bool jpegAllowed, PlacedSize? placed, Func<PdfObject?, byte[]?> globals)
     {
-        if (d.GetName("Subtype") != "Image" || !MayResample(file, d)) return null;
-        if (Int(file, d["BitsPerComponent"]) != 8) return null;
-        int width = Int(file, d["Width"]), height = Int(file, d["Height"]);
-        if (width <= 0 || height <= 0 || (long)width * height > ImageSamples.MaxPixels) return null;
+        if (!MayResample(file, d) || Geometry(file, d, filters) is not { } g) return null;
+        if (g.Jpeg && !jpegAllowed) return null;
 
-        int components = Components(file, d["ColorSpace"]);
-        if (components is not (1 or 3 or 4)) return null;
-
-        bool jpeg = filters.Count > 0 && filters[^1].Name == "DCTDecode";
-        for (int i = 0; i < filters.Count - (jpeg ? 1 : 0); i++)
+        (int, int)? target = settings.MaxDpi is { } dpi && placed is { } size && !HasMatteSoftMask(file, d) ? Target(g.Width, g.Height, size, dpi) : null;
+        if (g.Bits == 1)
         {
-            if (!StreamCodec.IsDecodable(filters[i].Name)) return null;
+            if (target is null) return null;
+            byte[]? shared = null;
+            if (g.Coding == ImageCoding.Jbig2 && file.Resolve(filters[^1].Parms) is PdfDictionary parms && file.Resolve(parms["JBIG2Globals"]) is not (null or PdfNull))
+            {
+                // Globals that cannot be read leave the page without the segments it refers to.
+                shared = globals(parms["JBIG2Globals"]);
+                if (shared is null) return null;
+            }
+
+            return new ImagePlan(g.Width, g.Height, 1, g.Coding, null, target, false) { Bits = 1, Ccitt = g.Ccitt, Globals = shared };
         }
 
-        if (jpeg && !jpegAllowed) return null;
-        int? colorTransform = jpeg && file.Resolve(filters[^1].Parms) is PdfDictionary parms &&
-            file.Resolve(parms["ColorTransform"]) is PdfNumber { IsInteger: true } t && t.IntegerValue is 0 or 1
-                ? (int)t.IntegerValue
-                : null;
-
-        (int, int)? target = settings.MaxDpi is { } dpi && placed is { } size && !HasMatteSoftMask(file, d) ? Target(width, height, size, dpi) : null;
-        bool mayConvert = settings.ConvertToJpeg && !jpeg && components is 1 or 3 && settings.Quality is not null;
+        bool mayConvert = settings.ConvertToJpeg && g.Coding is ImageCoding.Raw or ImageCoding.Jpx && g.Components is 1 or 3 && settings.Quality is not null;
         if (target is null && !mayConvert) return null;
-        return new ImagePlan(width, height, components, jpeg, colorTransform, target, mayConvert);
+        return new ImagePlan(g.Width, g.Height, g.Components, g.Coding, g.ColorTransform, target, mayConvert) { NeedsBits = d["BitsPerComponent"] is null or PdfNull };
     }
+
+    /// <summary>
+    /// About the most memory the lossy pass holds at once for an image: JPEG 2000 decodes into 32
+    /// bit planes, JPEG into 16 bit coefficients, and every coding into 8 bit samples that are
+    /// resampled and encoded; a bilevel image keeps its bits and the coverage of its target.
+    /// </summary>
+    public static long Footprint(ImagePlan plan)
+    {
+        long samples = (long)plan.Width * plan.Height * plan.Components;
+        if (plan.Bits == 1) return (samples / 2) + (plan.Target is { } t ? (long)t.Width * t.Height * 10 : 0);
+        return samples * plan.Coding switch
+        {
+            ImageCoding.Jpx => 7,
+            ImageCoding.Jpeg => 4,
+            _ => 3,
+        };
+    }
+
+    /// <summary>The filter that decodes a coding, or null for samples.</summary>
+    public static string? Filter(ImageCoding coding) => coding switch
+    {
+        ImageCoding.Jpeg => "DCTDecode",
+        ImageCoding.Jpx => "JPXDecode",
+        ImageCoding.Jbig2 => "JBIG2Decode",
+        ImageCoding.Ccitt => "CCITTFaxDecode",
+        _ => null,
+    };
 
     /// <summary>
     /// False for images the lossy pass never changes, whatever their format: stencil masks, and
@@ -162,11 +238,13 @@ internal static class LossyImages
 
     /// <summary>
     /// The lossy candidates for an image, gated. <paramref name="data"/> is the image after its
-    /// general filters: samples, or a JPEG.
+    /// general filters: samples, or the coded image.
     /// </summary>
     /// <param name="rejected">Set when a candidate failed the perceptual gate.</param>
     public static List<LossyCandidate> Candidates(ReadOnlySpan<byte> data, ImagePlan plan, ImageSettings settings, Flate level, bool imagePredictors, long decodeLimit, out bool rejected)
     {
+        if (plan.Bits == 1) return BilevelCandidates(data, plan, level, decodeLimit, out rejected);
+
         rejected = false;
         var candidates = new List<LossyCandidate>();
         Raster? source = Source(data, plan, decodeLimit, out int? sourceQuality, out bool sourceSubsampled, out bool adobe);
@@ -181,17 +259,22 @@ internal static class LossyImages
             candidates.Add(new LossyCandidate(flate, new PdfName("FlateDecode"), parms, reference.Width, reference.Height, resized));
         }
 
-        // A JPEG source stays a JPEG, never finer than it was; raw samples become one when allowed and photographic.
-        int? quality = plan.Jpeg
-            ? Math.Min(settings.Quality ?? 100, sourceQuality ?? 100)
-            : plan.MayConvert && ImageClassifier.IsContinuousTone(reference) ? settings.Quality : null;
+        // A JPEG source stays a JPEG, never finer than it was. Raw samples become one when allowed
+        // and photographic; so does a JPEG 2000 image, which also becomes one whenever it is
+        // downsampled and a quality is set.
+        int? quality = plan.Coding switch
+        {
+            ImageCoding.Jpeg => Math.Min(settings.Quality ?? 100, sourceQuality ?? 100),
+            ImageCoding.Jpx when plan.Target is not null => settings.Quality,
+            _ => plan.MayConvert && ImageClassifier.IsContinuousTone(reference) ? settings.Quality : null,
+        };
         if (quality is { } q && (!plan.Jpeg || plan.Components != 4 || adobe))
         {
             bool subsample = plan.Jpeg ? sourceSubsampled : q < 90;
             byte[]? jpeg = EncodeJpeg(reference, q, subsample, settings.Progressive);
             if (jpeg is not null)
             {
-                if (settings.MinSsim is { } gate && !Passes(reference, jpeg, plan.Components, gate, decodeLimit))
+                if (!Passes(reference, jpeg, plan.Components, settings.MinSsim, decodeLimit))
                 {
                     rejected = true;
                 }
@@ -206,8 +289,67 @@ internal static class LossyImages
         return candidates;
     }
 
-    /// <summary>True when the decoded <paramref name="jpeg"/> matches <paramref name="reference"/> by SSIM at least <paramref name="gate"/>.</summary>
-    public static bool Passes(Raster reference, ReadOnlySpan<byte> jpeg, int components, double gate, long decodeLimit)
+    /// <summary>
+    /// A bilevel image reduced to its target by <see cref="BilevelResampler"/> and coded
+    /// losslessly, as Group 4 and as Flate. The result is exactly the reference the proof
+    /// computes, so the gate has nothing to judge.
+    /// </summary>
+    private static List<LossyCandidate> BilevelCandidates(ReadOnlySpan<byte> data, ImagePlan plan, Flate level, long decodeLimit, out bool rejected)
+    {
+        rejected = false;
+        var candidates = new List<LossyCandidate>();
+        (int tw, int th) = plan.Target!.Value;
+        byte[]? pixels = BilevelPixels(data, plan.Coding, plan.Ccitt, plan.Globals, plan.Width, plan.Height, decodeLimit);
+        if (pixels is null || (long)tw * th * sizeof(double) > decodeLimit) return candidates;
+
+        double[] coverage = BilevelResampler.Coverage(pixels, plan.Width, plan.Height, tw, th);
+        byte[] reduced = BilevelResampler.Threshold(coverage, tw, th, BilevelResampler.OnesAreForeground(pixels, plan.Width, plan.Height));
+        candidates.Add(new LossyCandidate(level.Encode(reduced), new PdfName("FlateDecode"), null, tw, th, LossyKind.Downsampled));
+        if (BilevelImages.Group4(reduced, tw, th, reduced.Length) is { } g4)
+        {
+            candidates.Add(new LossyCandidate(g4.Data, new PdfName("CCITTFaxDecode"), g4.Parms, tw, th, LossyKind.Downsampled));
+        }
+
+        return candidates;
+    }
+
+    /// <summary>
+    /// The pixels of a bilevel image as packed rows, 0 where the sample is 0: samples as they are,
+    /// CCITT data decoded without a flaw, JBIG2 data decoded and turned to samples (T.88 codes black
+    /// as 1, the filter's samples have 0 for black). Null when that fails or exceeds the limit.
+    /// </summary>
+    private static byte[]? BilevelPixels(ReadOnlySpan<byte> data, ImageCoding coding, CcittParameters? ccitt, byte[]? globals, int width, int height, long decodeLimit)
+    {
+        switch (coding)
+        {
+            case ImageCoding.Raw:
+                return BilevelImages.Pixels(data, null, width, height, decodeLimit);
+            case ImageCoding.Ccitt when ccitt is not null:
+                return BilevelImages.Pixels(data, ccitt, width, height, decodeLimit);
+            case ImageCoding.Jbig2:
+                if ((long)width * height > Math.Min(decodeLimit, Compat.MaxArrayLength)) return null;
+                try
+                {
+                    byte[] page = Jbig2Decoder.Decode(data.ToArray(), globals, width, height);
+                    for (int i = 0; i < page.Length; i++) page[i] = (byte)~page[i];
+                    return page;
+                }
+                catch (Jbig2FormatException)
+                {
+                    return null;
+                }
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// True when the decoded <paramref name="jpeg"/> keeps the proof's color and coarse scale
+    /// bounds against <paramref name="reference"/>, and with a gate its SSIM is at least the gate.
+    /// The proof checks the same again, so a candidate that would fail it is never chosen.
+    /// </summary>
+    public static bool Passes(Raster reference, ReadOnlySpan<byte> jpeg, int components, double? gate, long decodeLimit)
     {
         Raster decoded;
         try
@@ -220,7 +362,8 @@ internal static class LossyImages
         }
 
         return decoded.Channels == components && decoded.Width == reference.Width && decoded.Height == reference.Height
-            && Ssim.Compare(reference, decoded) >= gate;
+            && Ssim.MeanShift(reference, decoded) <= MaxMeanShift && CoarseDifference(reference, decoded) <= MaxCoarseDifference
+            && (gate is not { } g || Ssim.Compare(reference, decoded) >= g);
     }
 
     /// <summary>
@@ -242,19 +385,59 @@ internal static class LossyImages
 
     /// <summary>
     /// What the proof needs to know about an image to decode it, or null when it is not one the
-    /// lossy pass handles (8 bit gray, RGB or CMYK; raw samples or a JPEG under general filters).
+    /// lossy pass handles: 8 bit gray, RGB or CMYK as samples or a JPEG; gray or RGB JPEG 2000
+    /// with its own /ColorSpace, no /Decode, no opacity of its own (/SMaskInData) and /BitsPerComponent
+    /// 8 or none; or a bilevel image (see <see cref="BilevelImages.Size"/>) as samples, CCITT data
+    /// every reader decodes alike, or JBIG2. General filters may come first. Stencil masks are not
+    /// described.
     /// </summary>
     public static ImageGeometry? Geometry(PdfFile file, PdfDictionary d, List<FilterSpec> filters)
     {
-        if (d.GetName("Subtype") != "Image" || Int(file, d["BitsPerComponent"]) != 8) return null;
+        if (d.GetName("Subtype") != "Image" || file.Resolve(d["ImageMask"]) is PdfBoolean { Value: true }) return null;
+        string? codec = filters.Count > 0 && !StreamCodec.IsDecodable(filters[^1].Name) ? filters[^1].Name : null;
+        ImageCoding? coding = codec switch
+        {
+            null => ImageCoding.Raw,
+            "DCTDecode" => ImageCoding.Jpeg,
+            "JPXDecode" => ImageCoding.Jpx,
+            "JBIG2Decode" => ImageCoding.Jbig2,
+            "CCITTFaxDecode" => ImageCoding.Ccitt,
+            _ => null,
+        };
+        if (coding is not { } c) return null;
+        for (int i = 0; i < filters.Count - (codec is null ? 0 : 1); i++)
+        {
+            if (!StreamCodec.IsDecodable(filters[i].Name)) return null;
+        }
+
+        if (BilevelImages.Size(file, d) is { } bilevel)
+        {
+            if (c is not (ImageCoding.Raw or ImageCoding.Ccitt or ImageCoding.Jbig2)) return null;
+            CcittParameters? ccitt = null;
+            if (c == ImageCoding.Ccitt && (ccitt = BilevelImages.Parameters(filters[^1].Parms, bilevel.Width, bilevel.Height, file.Resolve)) is null) return null;
+            return new ImageGeometry(bilevel.Width, bilevel.Height, 1, c, null) { Bits = 1, Ccitt = ccitt };
+        }
+
+        if (c is ImageCoding.Jbig2 or ImageCoding.Ccitt) return null;
         int width = Int(file, d["Width"]), height = Int(file, d["Height"]), components = Components(file, d["ColorSpace"]);
-        if (width <= 0 || height <= 0 || (long)width * height > ImageSamples.MaxPixels || components is not (1 or 3 or 4)) return null;
-        bool jpeg = filters.Count > 0 && filters[^1].Name == "DCTDecode";
-        int? colorTransform = jpeg && file.Resolve(filters[^1].Parms) is PdfDictionary parms &&
+        if (width <= 0 || height <= 0 || (long)width * height > ImageSamples.MaxPixels) return null;
+        if (c == ImageCoding.Jpx)
+        {
+            // The data's own bit depth and opacity count for JPEG 2000 unless the dictionary says otherwise.
+            if (components is not (1 or 3) || d["Decode"] is not (null or PdfNull)) return null;
+            if (file.Resolve(d["SMaskInData"]) is not (null or PdfNull or PdfNumber { IsInteger: true, IntegerValue: 0 })) return null;
+            if (d["BitsPerComponent"] is not (null or PdfNull) && Int(file, d["BitsPerComponent"]) != 8) return null;
+        }
+        else if (Int(file, d["BitsPerComponent"]) != 8 || components is not (1 or 3 or 4))
+        {
+            return null;
+        }
+
+        int? colorTransform = c == ImageCoding.Jpeg && file.Resolve(filters[^1].Parms) is PdfDictionary parms &&
             file.Resolve(parms["ColorTransform"]) is PdfNumber { IsInteger: true } t && t.IntegerValue is 0 or 1
                 ? (int)t.IntegerValue
                 : null;
-        return new ImageGeometry(width, height, components, jpeg, colorTransform);
+        return new ImageGeometry(width, height, components, c, colorTransform);
     }
 
     /// <summary>
@@ -262,28 +445,59 @@ internal static class LossyImages
     /// and of the same aspect, a mean color within <see cref="MaxMeanShift"/> per channel and
     /// luminance SSIM at least <paramref name="gate"/> against the source resampled to the new size.
     /// Without a gate the floor is <see cref="StructuralFloor"/>, which only catches broken output.
+    /// A bilevel image must stay bilevel; its reference is the reduction of the source by
+    /// <see cref="BilevelResampler"/>, as the Lanczos resample is for other images.
     /// </summary>
-    /// <param name="source">The source image after its general filters: samples, or a JPEG.</param>
+    /// <param name="source">The source image after its general filters: samples, or the coded image.</param>
     /// <param name="output">The output image after its general filters.</param>
+    /// <param name="globalsA">The source's decoded JBIG2Globals, if any.</param>
+    /// <param name="globalsB">The output's decoded JBIG2Globals, if any.</param>
     /// <returns>Null when the proof holds, otherwise the reason it does not.</returns>
-    public static string? Verify(ReadOnlySpan<byte> source, ImageGeometry a, ReadOnlySpan<byte> output, ImageGeometry b, double? gate, long decodeLimit)
+    public static string? Verify(ReadOnlySpan<byte> source, ImageGeometry a, byte[]? globalsA, ReadOnlySpan<byte> output, ImageGeometry b, byte[]? globalsB, double? gate, long decodeLimit)
     {
         if (a.Components != b.Components) return "resampled image changed its components";
+        if (a.Bits != b.Bits) return "resampled image changed its bit depth";
         if (b.Width > a.Width || b.Height > a.Height) return "resampled image is larger than its source";
         if (Math.Abs(((long)b.Width * a.Height) - ((long)b.Height * a.Width)) >= Math.Max(a.Width, a.Height)) return "resampled image changed its aspect ratio";
+        double floor = gate ?? StructuralFloor;
+        Raster? reference, after;
+        if (a.Bits == 1)
+        {
+            (reference, after) = DecodeBilevel(source, a, globalsA, output, b, globalsB, decodeLimit);
+        }
+        else
+        {
+            Raster? before = Decode(source, a, decodeLimit);
+            after = Decode(output, b, decodeLimit);
+            reference = before is null || after is null ? before
+                : after.Width == before.Width && after.Height == before.Height ? before : Resampler.Downsample(before, after.Width, after.Height);
+        }
 
-        Raster? before = Decode(source, a, decodeLimit), after = Decode(output, b, decodeLimit);
-        if (before is null) return "source image cannot be decoded";
+        if (reference is null) return "source image cannot be decoded";
         if (after is null) return "resampled image cannot be decoded";
-        Raster reference = after.Width == before.Width && after.Height == before.Height ? before : Resampler.Downsample(before, after.Width, after.Height);
         if (Ssim.MeanShift(reference, after) > MaxMeanShift) return "resampled image changed its colors";
 
         // SSIM stays well above zero on flat, noisy windows whatever the content, so the picture
         // as a whole is also compared at a scale every faithful encoding keeps: a mirrored,
         // shifted or swapped image fails here.
         if (CoarseDifference(reference, after) > MaxCoarseDifference) return "resampled image differs from its source at coarse scale";
-        double ssim = Ssim.Compare(reference, after), floor = gate ?? StructuralFloor;
+        double ssim = Ssim.Compare(reference, after);
         return ssim >= floor ? null : Compat.Format("resampled image has SSIM {0:F4}, below {1}", ssim, floor);
+    }
+
+    /// <summary>
+    /// A bilevel source reduced to the output's size by <see cref="BilevelResampler"/>, and the
+    /// output, both as 8 bit gray (255 for a 1 bit). The reference is null when the source does
+    /// not decode, the output when it does not.
+    /// </summary>
+    private static (Raster? Reference, Raster? Output) DecodeBilevel(ReadOnlySpan<byte> source, ImageGeometry a, byte[]? globalsA, ReadOnlySpan<byte> output, ImageGeometry b, byte[]? globalsB, long decodeLimit)
+    {
+        byte[]? before = BilevelPixels(source, a.Coding, a.Ccitt, globalsA, a.Width, a.Height, decodeLimit);
+        byte[]? after = BilevelPixels(output, b.Coding, b.Ccitt, globalsB, b.Width, b.Height, decodeLimit);
+        if (before is null || (long)b.Width * b.Height * sizeof(double) > decodeLimit) return (null, null);
+        double[] coverage = BilevelResampler.Coverage(before, a.Width, a.Height, b.Width, b.Height);
+        byte[] reference = BilevelResampler.Threshold(coverage, b.Width, b.Height, BilevelResampler.OnesAreForeground(before, a.Width, a.Height));
+        return (BilevelResampler.Gray(reference, b.Width, b.Height), after is null ? null : BilevelResampler.Gray(after, b.Width, b.Height));
     }
 
     /// <summary>SSIM the proof requires of a resampled image when no gate is set.</summary>
@@ -308,18 +522,48 @@ internal static class LossyImages
 
     private static Raster? Decode(ReadOnlySpan<byte> data, ImageGeometry g, long decodeLimit)
     {
-        if (!g.Jpeg)
+        switch (g.Coding)
         {
-            long size = (long)g.Width * g.Height * g.Components;
-            return data.Length < size || size > decodeLimit ? null : new Raster(g.Width, g.Height, g.Components, data.Slice(0, (int)size).ToArray());
-        }
+            case ImageCoding.Raw:
+            {
+                long size = (long)g.Width * g.Height * g.Components;
+                return data.Length < size || size > decodeLimit ? null : new Raster(g.Width, g.Height, g.Components, data.Slice(0, (int)size).ToArray());
+            }
 
+            case ImageCoding.Jpeg:
+                try
+                {
+                    Raster r = JpegDecoder.Decode(data, g.ColorTransform, decodeLimit);
+                    return r.Width == g.Width && r.Height == g.Height && r.Channels == g.Components ? r : null;
+                }
+                catch (JpegFormatException)
+                {
+                    return null;
+                }
+
+            case ImageCoding.Jpx:
+                return DecodeJpx(data, g.Width, g.Height, g.Components, decodeLimit);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// A JPEG 2000 image as 8 bit samples in its dictionary's color space, as readers take it
+    /// (ISO 32000-1, 7.4.9). Null unless the data has exactly that many color channels, no
+    /// opacity channel, the dictionary's size, and colors that are not sYCC (which a dictionary
+    /// color space would leave undefined).
+    /// </summary>
+    private static Raster? DecodeJpx(ReadOnlySpan<byte> data, int width, int height, int components, long decodeLimit)
+    {
         try
         {
-            Raster r = JpegDecoder.Decode(data, g.ColorTransform, decodeLimit);
-            return r.Width == g.Width && r.Height == g.Height && r.Channels == g.Components ? r : null;
+            Jpeg2000Image image = Jpeg2000Decoder.Decode(data, decodeLimit);
+            if (image.Width != width || image.Height != height || image.ColorSpace == 18) return null;
+            if (image.Channels.Count != components || image.Channels.Any(c => c.Opacity)) return null;
+            return (long)width * height * components > decodeLimit ? null : image.ToRaster(components, scale: true);
         }
-        catch (JpegFormatException)
+        catch (Jpeg2000FormatException)
         {
             return null;
         }
@@ -330,12 +574,14 @@ internal static class LossyImages
         quality = null;
         subsampled = false;
         adobe = false;
-        if (!plan.Jpeg)
+        if (plan.Coding == ImageCoding.Raw)
         {
             long size = (long)plan.Width * plan.Height * plan.Components;
             if (data.Length < size || size > decodeLimit) return null;
             return new Raster(plan.Width, plan.Height, plan.Components, data.Slice(0, (int)size).ToArray());
         }
+
+        if (plan.Coding == ImageCoding.Jpx) return DecodeJpx(data, plan.Width, plan.Height, plan.Components, decodeLimit);
 
         try
         {
@@ -354,6 +600,24 @@ internal static class LossyImages
             return JpegDecoder.Decode(data, plan.ColorTransform, decodeLimit);
         }
         catch (JpegFormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A JBIG2Globals stream fully decoded, or null when it is not a stream or does not decode
+    /// to plain data within <paramref name="decodeLimit"/>.
+    /// </summary>
+    public static byte[]? ReadGlobals(PdfFile file, PdfObject? globals, long decodeLimit)
+    {
+        if (file.Resolve(globals) is not PdfStream stream) return null;
+        try
+        {
+            using DecodedStream decoded = StreamCodec.Decode(stream.Data, StreamCodec.GetFilters(stream.Dictionary, file.Resolve), DecodeDepth.Full, decodeLimit, file.Resolve);
+            return decoded.Remaining.Count == 0 && decoded.PendingPredictor is null ? decoded.Data.ToArray() : null;
+        }
+        catch (StreamDecodeException)
         {
             return null;
         }

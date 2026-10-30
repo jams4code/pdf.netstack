@@ -109,7 +109,9 @@ public static class PdfEquivalence
     /// notation as long as they read as the same tokens, and the TrueType program of an identity
     /// mapped composite font may differ where none of the glyphs its fonts show is affected.
     /// Inheritable page attributes may move from page tree nodes onto the pages, as long as every
-    /// page ends up with the same values. docs/FIDELITY.md gives the exact rules.
+    /// page ends up with the same values. A bilevel image stored as samples or CCITT data may be
+    /// coded again as CCITT data when both decode to exactly the same pixels, with parameters and
+    /// data every reader takes alike. docs/FIDELITY.md gives the exact rules.
     /// </remarks>
     /// <param name="original">The source PDF.</param>
     /// <param name="candidate">The PDF to check against it.</param>
@@ -137,10 +139,11 @@ public static class PdfEquivalence
     /// to JPEG, as <see cref="PdfOptimizerOptions.MaxImageDpi"/> and
     /// <see cref="PdfOptimizerOptions.ConvertImagesToJpeg"/> produce: same components and aspect, no
     /// larger, mean colors kept, and luminance SSIM against the original resampled to the new size
-    /// of at least <paramref name="minImageSsim"/>. Every other part of such an image must match.
-    /// Requantized images must then meet the same SSIM. Only images the optimizer could change
-    /// that way qualify: masks, soft masks, stencil masks and color keyed images must match
-    /// exactly, and so must the size of images with any /Mask or a /Matte soft mask.
+    /// of at least <paramref name="minImageSsim"/>. A bilevel image must stay bilevel and is
+    /// compared with the optimizer's own reduction of the original. Every other part of such an
+    /// image must match. Requantized images must then meet the same SSIM. Only images the
+    /// optimizer could change that way qualify: masks, soft masks, stencil masks and color keyed
+    /// images must match exactly, and so must the size of images with any /Mask or a /Matte soft mask.
     /// </summary>
     /// <param name="original">The source PDF.</param>
     /// <param name="candidate">The PDF to check against it.</param>

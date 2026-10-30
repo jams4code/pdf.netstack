@@ -252,8 +252,11 @@ public static partial class PdfOptimizer
                     ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg)
                     : null;
                 var scope = new RecompressionScope(options.RecompressStreams, compact, encoded, options.DeduplicateObjects);
-                recompressed = StreamRecompressor.Run(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors, jpeg, images,
-                    options.MaxDecodedStreamBytes, options.MaxDegreeOfParallelism, ct);
+                recompressed = StreamRecompressor.Run(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors,
+                    options.OptimizeBilevelImages, jpeg, images, options.MaxDecodedStreamBytes, options.MaxDegreeOfParallelism, ct);
+
+                // A JBIG2 image coded anew no longer needs its JBIG2Globals, which may now be unused.
+                if (recompressed.ResampledObjects.Count > 0) graph = ObjectGraph.Collect(file, options.RemovePageThumbnails, options.RemovePieceInfo, ct);
             }
 
             timings = timings with { Recompress = phase.Elapsed };
@@ -332,6 +335,7 @@ public static partial class PdfOptimizer
                 ImagesDownsampled = recompressed.Downsampled,
                 ImagesConvertedToJpeg = recompressed.ConvertedToJpeg,
                 ImagesKeptByQualityGate = recompressed.KeptByGate,
+                ImagesRecodedAsGroup4 = recompressed.Group4,
                 ResourcesPruned = pruned,
                 ContentStreamsCompacted = recompressed.Compacted,
                 FontProgramsMerged = fontsMerged,
@@ -368,6 +372,7 @@ public static partial class PdfOptimizer
                     AllowContentCompaction = recompressed.Compacted > 0,
                     AllowFontMerging = fontsMerged > 0,
                     AllowInheritedAttributes = pushedDown,
+                    AllowBilevelRecoding = recompressed.Group4 > 0,
                 };
                 string? difference = EquivalenceVerifier.Verify(reference, written, rules, options.MaxDecodedStreamBytes,
                     options.MaxDegreeOfParallelism, ct, out int compared);

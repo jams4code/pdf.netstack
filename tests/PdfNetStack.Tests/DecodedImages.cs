@@ -66,12 +66,15 @@ internal static class DecodedImages
         }
     }
 
-    /// <summary>The image drawn on a page, saved and read back: the XObject and its pixels as the reader decodes them.</summary>
+    /// <summary>
+    /// The image drawn on a page, saved without the optimizer (which may code it anew) and read
+    /// back: the XObject as embedded and its pixels as the reader decodes them.
+    /// </summary>
     public static (PdfStream XObject, PdfBitmap Pixels, PdfDocument Document) Embedded(PdfImage image)
     {
         PdfDocument doc = PdfDocument.Create();
         using (PdfGraphics g = doc.Pages.Add(PdfRectangle.A4).CreateGraphics()) g.DrawImage(image, 0, 0);
-        PdfDocument back = PdfDocument.Open(doc.ToArray());
+        PdfDocument back = PdfDocument.Open(doc.ToArray(new PdfSaveOptions { Optimize = false }));
         PdfPageImage placed = back.Pages[0].GetImages().Single();
         return ((PdfStream)placed.Stream!, placed.Decode()!, back);
     }

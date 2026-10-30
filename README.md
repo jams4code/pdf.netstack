@@ -634,6 +634,7 @@ pdfnetstack ocr scan.pdf searchable.pdf --languages latin,arabic   # runs pdfnet
 | Xref stream | Replaces the text xref table with a predictor encoded, compressed stream | Yes |
 | Stream recompression | Removes ASCIIHex/ASCII85 layers, turns LZW and RunLength into Flate, recompresses Flate at zlib level 9, keeps a result only when smaller | Yes |
 | Image prediction | Tries PNG predictors on raw images of 8 bits or less per component | Yes |
+| Bilevel images | `OptimizeBilevelImages`: 1 bit images stored as samples (raw, Flate, LZW, RunLength) or as CCITT Group 3 become CCITT Group 4 (ITU-T T.6) when smaller. Group 3 data is taken only when it decodes without a flaw, and the proof compares every pixel | Yes |
 | JPEG re-encoding | Rebuilds each JPEG's Huffman tables for that image, writes progressive and restart-marked JPEGs as plain baseline, drops segments PDF readers ignore (Exif, XMP, embedded ICC, comments). Works on the DCT coefficients, which stay identical | Yes |
 | Deduplication | Merges identical fonts, images, ICC profiles, resource dictionaries and arrays, streams compared by what they decode to, iterating until merges stop | Yes |
 | Unused resources | Drops fonts, images, forms, graphics states, patterns, shadings, color spaces and property lists that no content using the resource dictionary names | Yes |
@@ -643,15 +644,15 @@ pdfnetstack ocr scan.pdf searchable.pdf --languages latin,arabic   # runs pdfnet
 | Compact syntax | Minimal separators, canonical numbers, null entries dropped | Yes |
 | Thumbnails, PieceInfo | Optional removal of page thumbnails and application private data | No, opt-in |
 | JPEG requantization | `JpegQuality`: coarser quantization at a libjpeg quality, never finer than the image's own; soft masks stay lossless | No, opt-in |
-| Downsampling | `MaxImageDpi`: images drawn above 1.5 times the target resolution, measured at their largest placement, are resampled with a Lanczos filter; masks, bilevel, indexed and color keyed images are left alone | No, opt-in |
-| Photographs to JPEG | `ConvertImagesToJpeg`: raw gray and RGB images that look photographic become baseline JPEG at `JpegQuality`; line art, screenshots and palette images stay lossless | No, opt-in |
+| Downsampling | `MaxImageDpi`: images drawn above 1.5 times the target resolution, measured at their largest placement, are resampled with a Lanczos filter; JPEG 2000 becomes JPEG at `JpegQuality` (or lossless samples without it). Bilevel images, raw, CCITT or JBIG2, stay bilevel: a box filter and a threshold that keeps strokes thinner than the new pixels, coded as Group 4 or Flate. Masks, indexed and color keyed images are left alone | No, opt-in |
+| Photographs to JPEG | `ConvertImagesToJpeg`: raw gray and RGB images and gray and RGB JPEG 2000 images that look photographic become baseline JPEG at `JpegQuality`; line art, screenshots and palette images stay lossless | No, opt-in |
 | Quality gate | `MinImageSsim`: any lossy image change below this luminance SSIM is dropped and the image kept as it was | Opt-in |
 | Progressive JPEG | `ProgressiveJpeg`: every JPEG written is also tried progressive, kept when smaller | Yes, opt-in |
 | Exhaustive Flate | `Compression = Exhaustive`: optimal parsing and block splitting in the manner of Zopfli, zlib kept when smaller | Yes, opt-in |
 
 Without the lossy image options, JPEG data is decoded to DCT coefficients and never to pixels, so
 components, chroma sampling and color model pass through untouched: a CMYK image stays CMYK.
-JPEG 2000, JBIG2 and CCITT data is never decoded or touched.
+JPEG 2000 and JBIG2 data is then never decoded or touched, and CCITT data only by the Group 4 pass.
 
 ## Safety model
 
@@ -681,10 +682,10 @@ resource entry may be missing only where no content can name it, a content strea
 only in layout and must read as the same tokens, and a merged font program must keep every glyph
 the document shows byte for byte. With `JpegQuality` set, a JPEG image may also differ by
 exactly the requantization the optimizer applies, checked coefficient by coefficient, and by
-nothing else. A downsampled or
-converted image must keep its components and aspect, may not grow, and is decoded and compared
-with the source resampled to its new size: mean color, a coarse thumbnail and SSIM, at least
-`MinImageSsim` when set.
+nothing else. A bilevel image coded again as Group 4 is decoded on both sides and every pixel
+must match. A downsampled or converted image must keep its components and aspect, may not grow,
+and is decoded and compared with the source resampled to its new size: mean color, a coarse
+thumbnail and SSIM, at least `MinImageSsim` when set.
 See [docs/FIDELITY.md](docs/FIDELITY.md) for the full method and its limits.
 
 ## Results
@@ -736,9 +737,10 @@ object streams have little left to gain losslessly.
 | `RecompressStreams` | true | |
 | `UseImagePredictors` | true | |
 | `OptimizeJpegImages` | true | Lossless JPEG re-encoding |
+| `OptimizeBilevelImages` | true | 1 bit images to CCITT Group 4 when smaller, the same pixels |
 | `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
-| `MaxImageDpi` | null | Downsample images drawn above 1.5 times this resolution. Lossy |
-| `ConvertImagesToJpeg` | false | Photographic raw images to JPEG at `JpegQuality`. Lossy |
+| `MaxImageDpi` | null | Downsample images drawn above 1.5 times this resolution, bilevel, CCITT, JBIG2 and JPEG 2000 included. Lossy |
+| `ConvertImagesToJpeg` | false | Photographic raw and JPEG 2000 images to JPEG at `JpegQuality`. Lossy |
 | `MinImageSsim` | null | 0 to 1; around 0.95 keeps changes hard to see |
 | `ProgressiveJpeg` | false | Progressive JPEG when smaller. Lossless |
 | `Verify` | true | Disable only for inputs you already trust |
@@ -785,11 +787,16 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 
 ## Limits
 
-- Lossy image options handle 8 bit gray, RGB and CMYK images, raw or JPEG. JPEG 2000, JBIG2,
-  CCITT, 16 bit, indexed, Lab, Separation and DeviceN images keep their resolution, and images
-  inside Type 3 glyphs are never downsampled. The quality gate measures luminance only. On the
-  public benchmark corpus (`eng/corpus/manifest.json`, see docs/FIDELITY.md) the lossy options
-  took the saving from 12.1% to 27.2%; scanned books, coded in JBIG2 and JPEG 2000, gain little.
+- Lossy image options handle 8 bit gray, RGB and CMYK images, raw or JPEG; gray and RGB JPEG
+  2000 images their dictionary fully describes; and bilevel images, raw, CCITT or JBIG2. 16 bit,
+  indexed, Lab, Separation and DeviceN images keep their resolution, masks and soft masks (the
+  JBIG2 layer of a book scan is usually one) are never changed, and images inside Type 3 glyphs
+  are never downsampled. The quality gate measures luminance only. On the public benchmark
+  corpus (`eng/corpus/manifest.json`, see docs/FIDELITY.md) the lossy options take the saving
+  from 12.1% to 29.5%, and on its nine scanned documents from 4.1% to 24.0%: 37% on a 309 page
+  JBIG2 report and 42% to 88% on CCITT pages. Book scans that split each page into a JPEG 2000
+  picture over a JBIG2 mask gain about 2%: the pictures are already smaller than a JPEG of them,
+  and decoding them costs about a second each.
 - Arithmetic coded, 12 bit, lossless and hierarchical JPEGs, JPEGs with more than 64 scans, and
   damaged JPEG data, are carried over untouched.
 - The optimizer does not subset fonts; it merges subsets of one font only when they keep the

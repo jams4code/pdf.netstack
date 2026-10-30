@@ -346,13 +346,19 @@ public sealed class LossyImageTests
 
         (byte[] output, PdfOptimizationResult result) = PdfOptimizer.Optimize(input, NoThreshold with { MaxImageDpi = 72, ConvertImagesToJpeg = true, JpegQuality = 50 });
 
-        // Only the base image with a soft mask (and no /Matte) is downsampled, and converted; the mask is not.
-        Assert.AreEqual(1, result.Statistics.ImagesDownsampled, result.Reason);
+        // Only the base image with a soft mask (and no /Matte) is downsampled, and converted; the
+        // mask is not. The 1 bit image is downsampled too, and stays 1 bit.
+        Assert.AreEqual(2, result.Statistics.ImagesDownsampled, result.Reason);
         Assert.AreEqual(1, result.Statistics.ImagesConvertedToJpeg, result.Reason);
         Assert.AreEqual("DCTDecode", Image(output, 0).Dictionary.GetName("Filter"));
         Assert.AreEqual(72, Int(Image(output, 0), "Width"));
         Assert.AreEqual(600, Int(SoftMask(output), "Width"));
-        for (int i = 1; i <= 7; i++) Assert.AreNotEqual(72, Int(Image(output, i), "Width"), "image " + i);
+        Assert.AreEqual(72, Int(Image(output, 4), "Width"));
+        Assert.AreEqual(1, Int(Image(output, 4), "BitsPerComponent"));
+        for (int i = 1; i <= 7; i++)
+        {
+            if (i != 4) Assert.AreNotEqual(72, Int(Image(output, i), "Width"), "image " + i);
+        }
     }
 
     [TestMethod]

@@ -107,6 +107,15 @@ public sealed record PdfOptimizerOptions
     public bool OptimizeJpegImages { get; init; } = true;
 
     /// <summary>
+    /// Re-encode bilevel (1 bit) images stored as raw samples, under Flate, LZW or RunLength, or as
+    /// CCITT Group 3, as CCITT Group 4 when that is smaller. The encoder follows ITU-T T.6, and
+    /// the proof decodes both versions and requires every pixel to match, so the image stays
+    /// exactly the same. Group 3 data is only re-encoded when it decodes without a flaw and its
+    /// parameters leave nothing to a reader's defaults. Part of stream recompression. Default true.
+    /// </summary>
+    public bool OptimizeBilevelImages { get; init; } = true;
+
+    /// <summary>
     /// Requantize JPEG images to this quality, 1 to 100, on the scale libjpeg and most image tools
     /// use. Not lossless: fine detail is traded for size. A table is never made finer than the
     /// image's own, so images already at or below this quality only get the lossless pass, and
@@ -120,18 +129,22 @@ public sealed record PdfOptimizerOptions
     /// this resolution. The resolution is measured from the largest size at which the image is
     /// drawn anywhere in the document: pages, forms, patterns, soft masks and annotation
     /// appearances. Images drawn in a way the measurement cannot follow, masks, images whose
-    /// soft mask must match their size, and images that are not 8 bit gray, RGB or CMYK are left
-    /// alone. The filter is Lanczos with three lobes. A downsampled JPEG is encoded again, at
-    /// <see cref="JpegQuality"/> but never finer than it was; raw samples stay lossless after
-    /// resampling unless <see cref="ConvertImagesToJpeg"/> is set. JPEG sources need
-    /// <see cref="OptimizeJpegImages"/>. Not lossless. Null, the default, keeps every image's size.
-    /// Requires <see cref="RecompressStreams"/>.
+    /// soft mask must match their size, and images other than 8 bit gray, RGB or CMYK, gray or
+    /// RGB JPEG 2000, and bilevel images are left alone. The filter is Lanczos with three lobes.
+    /// A downsampled JPEG is encoded again, at <see cref="JpegQuality"/> but never finer than it
+    /// was; raw samples stay lossless after resampling unless <see cref="ConvertImagesToJpeg"/> is
+    /// set. A downsampled JPEG 2000 image, which the optimizer does not write, becomes a JPEG at
+    /// <see cref="JpegQuality"/>, or without it lossless samples. Bilevel images (raw, CCITT or
+    /// JBIG2) stay bilevel: each new pixel takes the color that covers at least half of it, and
+    /// strokes thinner than a new pixel are kept, so text stays legible; the result is CCITT Group
+    /// 4 or Flate, whichever is smaller. JPEG sources need <see cref="OptimizeJpegImages"/>. Not
+    /// lossless. Null, the default, keeps every image's size. Requires <see cref="RecompressStreams"/>.
     /// </summary>
     public int? MaxImageDpi { get; init; }
 
     /// <summary>
-    /// Re-encode raw 8 bit gray and RGB images as JPEG at <see cref="JpegQuality"/> when they look
-    /// photographic. Bilevel, indexed, line art and screenshot-like images are recognized from
+    /// Re-encode raw 8 bit gray and RGB images, and gray and RGB JPEG 2000 images, as JPEG at
+    /// <see cref="JpegQuality"/> when they look photographic. Bilevel, indexed, line art and screenshot-like images are recognized from
     /// their pixels and left lossless, and a JPEG is kept only when it is at least 10% smaller
     /// than the best lossless encoding. Not lossless. Default false. Requires
     /// <see cref="JpegQuality"/> and <see cref="RecompressStreams"/>.
