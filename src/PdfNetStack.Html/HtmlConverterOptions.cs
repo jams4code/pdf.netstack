@@ -1,3 +1,4 @@
+using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 
 namespace PdfNetStack.Html;
@@ -59,6 +60,16 @@ public sealed class HtmlConverterOptions
     /// <see cref="PdfSaveOptions.Default"/> to keep the proof.
     /// </summary>
     public PdfSaveOptions? SaveOptions { get; init; }
+
+    /// <summary>
+    /// Finds the hyphenator for a language tag, or null when there is none, for text with
+    /// <c>hyphens: auto</c>; its language is the nearest <c>lang</c> attribute, and text without
+    /// one is not hyphenated, as CSS Text 3 says. Called once per tag in a conversion.
+    /// <c>PdfHyphenationPatterns.ForLanguage</c> from the <c>PdfNetStack.Hyphenation</c> package
+    /// fits here. Null, the default, treats <c>hyphens: auto</c> like <c>manual</c>: words break
+    /// only at soft hyphens.
+    /// </summary>
+    public Func<string, PdfHyphenator?>? Hyphenators { get; init; }
 
     /// <summary>
     /// The most pages a conversion may produce. Default 10000. A document that needs more, such as

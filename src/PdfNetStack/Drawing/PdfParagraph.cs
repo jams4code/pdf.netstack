@@ -48,6 +48,15 @@ public sealed class PdfParagraph
     /// </summary>
     public bool Kashida { get; set; }
 
+    /// <summary>
+    /// Breaks words at the line's end with a hyphen where this hyphenator allows it, as lines fill.
+    /// Null, the default, breaks only between words and at soft hyphens. It applies to the whole
+    /// paragraph, whatever the spans; for text in several languages, insert soft hyphens span by
+    /// span with <see cref="PdfHyphenator.InsertSoftHyphens"/>. <see cref="Text"/> keeps the words
+    /// as they are, and a break is not offered inside a ligature, which would have to reshape it.
+    /// </summary>
+    public PdfHyphenator? Hyphenator { get; set; }
+
     /// <summary>Indent of the first line, in points.</summary>
     public double FirstLineIndent { get; set; }
 

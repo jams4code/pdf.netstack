@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Hyphenation\PdfNetStack.Hyphenation.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr.Tesseract\PdfNetStack.Ocr.Tesseract.csproj" />
   </ItemGroup>
@@ -27,6 +28,7 @@
   <ItemGroup>
     <TrimmerRootAssembly Include="PdfNetStack" />
     <TrimmerRootAssembly Include="PdfNetStack.Html" />
+    <TrimmerRootAssembly Include="PdfNetStack.Hyphenation" />
     <TrimmerRootAssembly Include="PdfNetStack.Ocr" />
     <TrimmerRootAssembly Include="PdfNetStack.Ocr.Tesseract" />
   </ItemGroup>

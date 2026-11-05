@@ -112,6 +112,9 @@ internal sealed class FontResolver
     /// <summary>Runs shaped so far in this conversion, for every layout of it to share.</summary>
     public ShapingCache Shaping { get; } = new();
 
+    /// <summary>The hyphenators of this conversion, for every layout of it to share; null when it has none.</summary>
+    public HyphenatorCache? Hyphenators { get; init; }
+
     /// <summary>Loads @font-face rules; <paramref name="load"/> returns the bytes behind a URL. Faces that fail to load are skipped.</summary>
     public void AddFontFaces(IEnumerable<CssFontFaceRule> rules, Func<string, byte[]?>? load)
     {

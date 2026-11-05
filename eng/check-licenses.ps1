@@ -3,7 +3,8 @@
 # Microsoft's span polyfill packages listed under coreNetStandardOnly. Packages under onlyIn may
 # ship with the named projects and no other (ONNX Runtime with the OCR add-on and the OCR tool, and
 # its managed part through the Tesseract engine, which leaves out the native libraries).
-# Data files a package carries, the OCR models, must be listed under bundledFiles with their license.
+# Data files a package carries, the OCR models and the hyphenation patterns, must be listed under
+# bundledFiles with their license.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $config = Get-Content (Join-Path $PSScriptRoot 'license-allowlist.json') -Raw | ConvertFrom-Json
@@ -14,6 +15,7 @@ $projects = @(
     'src/PdfNetStack/PdfNetStack.csproj',
     'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
     'src/PdfNetStack.Html/PdfNetStack.Html.csproj',
+    'src/PdfNetStack.Hyphenation/PdfNetStack.Hyphenation.csproj',
     'src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj',
     'src/PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj',
     'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj',
@@ -58,6 +60,20 @@ foreach ($model in $models) {
     $name = Split-Path -Leaf $model.Include
     if (-not $config.bundledFiles.PSObject.Properties[$name]) {
         Write-Host "FAIL src/PdfNetStack.Ocr.Models: $name is not on the license allowlist"
+        $failed = $true
+    }
+}
+
+# The hyphenation pattern sets, each generated from a source whose license was read.
+$patterns = @(Get-ChildItem (Join-Path $root 'src/PdfNetStack.Hyphenation/Patterns') -Filter '*.deflate')
+if ($patterns.Count -eq 0) {
+    Write-Host 'FAIL src/PdfNetStack.Hyphenation: no pattern sets found'
+    $failed = $true
+}
+foreach ($set in $patterns) {
+    $name = "hyphenation/$($set.Name)"
+    if (-not $config.bundledFiles.PSObject.Properties[$name]) {
+        Write-Host "FAIL src/PdfNetStack.Hyphenation: $($set.Name) is not on the license allowlist"
         $failed = $true
     }
 }

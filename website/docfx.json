@@ -7,6 +7,7 @@
           "files": [
             "PdfNetStack/PdfNetStack.csproj",
             "PdfNetStack.Html/PdfNetStack.Html.csproj",
+            "PdfNetStack.Hyphenation/PdfNetStack.Hyphenation.csproj",
             "PdfNetStack.Ocr/PdfNetStack.Ocr.csproj",
             "PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj"
           ]

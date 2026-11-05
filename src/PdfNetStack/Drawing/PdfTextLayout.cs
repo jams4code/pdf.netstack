@@ -52,9 +52,11 @@ internal sealed record LineRun(PdfTextStyle Style, PdfFont Font, List<ShapedGlyp
 /// forms the glyphs. Measure with it, then draw it with <see cref="PdfGraphics.DrawText(PdfTextLayout, double, double)"/>.
 /// </summary>
 /// <remarks>
-/// Lines are filled greedily. A word wider than the line is broken between characters. Trailing
-/// spaces do not count toward a line's width. Line height follows the CSS model: each span's
-/// font contributes its ascent and descent, spread by the paragraph's line height.
+/// Lines are filled greedily, breaking at spaces, at soft hyphens and, with
+/// <see cref="PdfParagraph.Hyphenator"/>, inside words. A word still wider than the line is broken
+/// between characters. Trailing spaces do not count toward a line's width. Line height follows
+/// the CSS model: each span's font contributes its ascent and descent, spread by the paragraph's
+/// line height.
 /// </remarks>
 public sealed class PdfTextLayout
 {
@@ -108,6 +110,9 @@ public sealed class PdfTextLayout
         private readonly double[] _prefix;
         private readonly List<Item> _items = [];
         private readonly List<(int Start, int End, Bidi Bidi, int[] CpStart)> _paragraphs = [];
+
+        // Where a line may end with a hyphen no character stands for; null without a hyphenator.
+        private bool[]? _hyphenated;
 
         public Builder(PdfParagraph p, string text, double width)
         {
@@ -292,17 +297,35 @@ public sealed class PdfTextLayout
             return font.HasGlyph(hyphen) ? font.MeasureString(char.ConvertFromUtf32(hyphen), _style[index].Size) : 0;
         }
 
-        private bool EndsWithSoftHyphen(int start, int end) => end > start && _text[end - 1] == '\u00AD';
+        private bool EndsWithHyphen(int start, int end) => end > start && (_text[end - 1] == '\u00AD' || _hyphenated?[end] == true);
 
         private double LineWidth(int start, int end)
         {
             int visible = TrimEnd(start, end);
-            return Width(start, visible) + (EndsWithSoftHyphen(start, visible) ? HyphenWidth(visible - 1) : 0);
+            return Width(start, visible) + (EndsWithHyphen(start, visible) ? HyphenWidth(visible - 1) : 0);
+        }
+
+        /// <summary>Adds the hyphenator's points that fall between clusters, in a font with a hyphen: a break inside a ligature would need reshaping.</summary>
+        private List<LineBreak> AddHyphenation(List<LineBreak> breaks, PdfHyphenator hyphenator)
+        {
+            var points = new List<int>();
+            hyphenator.FindBreaks(_text, 0, _text.Length, points);
+            if (points.Count == 0) return breaks;
+            var clusters = new bool[_text.Length];
+            foreach (Item item in _items)
+            {
+                foreach (ShapedGlyph g in item.Glyphs) clusters[g.Cluster] = true;
+            }
+
+            points.RemoveAll(p => !clusters[p] || !(_font[p - 1].HasGlyph(0x2010) || _font[p - 1].HasGlyph('-')));
+            _hyphenated = new bool[_text.Length + 1];
+            return PdfHyphenator.MergeBreaks(breaks, points, _hyphenated);
         }
 
         private List<PdfTextLine> BreakLines()
         {
             List<LineBreak> breaks = LineBreaker.Breaks(_text);
+            if (_p.Hyphenator is PdfHyphenator hyphenator) breaks = AddHyphenation(breaks, hyphenator);
             var lines = new List<PdfTextLine>();
             int lineStart = 0, next = 0;
             double top = 0;
@@ -394,10 +417,16 @@ public sealed class PdfTextLayout
             {
                 (Item item, int s, int e, byte level) = pieces[k];
                 var glyphs = item.Glyphs.Where(g => g.Cluster >= s && g.Cluster < e).ToList();
-                if (e == visible && EndsWithSoftHyphen(start, visible)) glyphs.AddRange(Hyphen(item));
+                string runText = _text.Substring(s, e - s);
+                if (e == visible && EndsWithHyphen(start, visible))
+                {
+                    glyphs.AddRange(Hyphen(item, e - 1));
+                    if (_text[e - 1] != '\u00AD') runText += '\u00AD';
+                }
+
                 if (level % 2 == 1) glyphs.Reverse();
                 double w = glyphs.Sum(g => g.Advance) * item.Style.Size / 1000;
-                runs.Add(new LineRun(item.Style, item.Font, glyphs, x, w, _text.Substring(s, e - s)));
+                runs.Add(new LineRun(item.Style, item.Font, glyphs, x, w, runText));
                 x += w;
             }
 
@@ -439,12 +468,12 @@ public sealed class PdfTextLayout
             return levels;
         }
 
-        private List<ShapedGlyph> Hyphen(Item item)
+        private List<ShapedGlyph> Hyphen(Item item, int cluster)
         {
             PdfFont font = item.Font;
             int hyphen = font.HasGlyph(0x2010) ? 0x2010 : '-';
             if (!font.HasGlyph(hyphen)) return [];
-            return [.. font.ShapeRun(char.ConvertFromUtf32(hyphen), 0, hyphen > 0xFFFF ? 2 : 1, false, "DFLT").Select(g => g with { Cluster = item.End - 1, Text = "\u00AD" })];
+            return [.. font.ShapeRun(char.ConvertFromUtf32(hyphen), 0, hyphen > 0xFFFF ? 2 : 1, false, "DFLT").Select(g => g with { Cluster = cluster, Text = "\u00AD" })];
         }
 
         /// <summary>

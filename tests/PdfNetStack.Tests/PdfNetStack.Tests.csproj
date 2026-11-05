@@ -32,6 +32,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Hyphenation\PdfNetStack.Hyphenation.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr.Tesseract\PdfNetStack.Ocr.Tesseract.csproj" />
   </ItemGroup>

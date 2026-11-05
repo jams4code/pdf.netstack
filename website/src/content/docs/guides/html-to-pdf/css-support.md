@@ -68,7 +68,7 @@ modes and no JavaScript.
 | Mode | Support |
 |---|---|
 | Block | Margin collapsing, `box-sizing`, min and max sizes, `overflow` clipping |
-| Inline | Unicode line breaking, `text-align` with `justify`, `text-indent`, `white-space`, `vertical-align` (every value), soft hyphens, `overflow-wrap`, `word-break` |
+| Inline | Unicode line breaking, `text-align` with `justify`, `text-indent`, `white-space`, `vertical-align` (every value), soft hyphens, `hyphens`, `overflow-wrap`, `word-break` |
 | Floats | `float`, `clear`, text wrapping around floats |
 | Positioning | `relative`, `absolute`, `fixed` (repeated on every page), `z-index` in stacking order: positioned boxes, flex and grid items with a `z-index`, and boxes with opacity below one or a transform start a stacking context; a negative `z-index` paints under the context's content |
 | Tables | Both border models, `rowspan` and `colspan`, fixed and automatic widths, captions, header and footer groups, header rows repeated on every page |
@@ -86,7 +86,24 @@ modes and no JavaScript.
 | Direction | `direction`, `unicode-bidi`, `dir`, with the Unicode bidirectional algorithm |
 | Spacing and case | `letter-spacing`, `word-spacing`, `text-transform`, `line-height`, `tab-size` |
 | Decoration | `text-decoration` underline, overline and line-through, in solid, double, dotted, dashed and wavy, with color and thickness; `text-shadow` without blur |
-| Not supported | `font-variant-*`, `font-feature-settings`, `font-stretch`, `hyphens: auto` (dictionary hyphenation), `text-overflow` |
+| Not supported | `font-variant-*`, `font-feature-settings`, `font-stretch`, `hyphenate-character`, `hyphenate-limit-chars`, `text-overflow` |
+
+### Hyphenation
+
+`hyphens: auto` hyphenates text in the language of the nearest `lang` attribute, as long as
+`HtmlConverterOptions.Hyphenators` finds patterns for it. Without that option, or without a `lang`,
+`auto` behaves like `manual`, which is what happened before and stays the default. Add the
+`PdfNetStack.Hyphenation` package for the patterns:
+
+```csharp sample="fonts-hyphenation.cs" region="html"
+```
+
+`hyphens: none` also turns off soft hyphens. Text under `white-space: nowrap` or
+`word-break: break-all` is not hyphenated, and a word split across inline elements counts as one.
+Min-content sizes count the points, so a narrow table column can hyphenate instead of overflowing.
+Words are judged as written: `text-transform: uppercase` over lower case text hyphenates, and text
+written in capitals does not. That transform writes the German sharp s as SS.
+See [Hyphenation](/guides/fonts-and-text/#hyphenation) for the languages and the words left alone.
 
 ## Generated content and lists
 

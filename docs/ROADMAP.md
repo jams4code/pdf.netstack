@@ -57,12 +57,14 @@ every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minut
 
 | Area | Scope |
 |---|---|
+| Hyphenation | Liang's algorithm in the core, opt in through `PdfParagraph.Hyphenator`, with exceptions and limits per language; `PdfNetStack.Hyphenation` with patterns from TeX's hyph-utf8 for English (US and UK), German (reformed spelling), French, Dutch, Spanish, Italian and Portuguese and 21 more sets, all under permissive licenses and read per language on first use; `hyphens: auto` with `lang` in `PdfNetStack.Html` |
 | Searchable scans | `PdfNetStack.Ocr.Tesseract`: a second `IOcrEngine` that runs an installed `tesseract` executable, one process per image, with any language Tesseract has data for. It drives the executable rather than a .NET wrapper: `docs/OCR.md` has the evidence and the reasons |
 
-## Next
+Languages whose only patterns are under LPPL, GPL, LGPL or MPL (among them Russian, Swedish, Czech,
+Hungarian, Turkish, Catalan) or give no right to modify (Finnish) stay out, as does German in the
+1901 spelling, whose patterns are permissive but not included.
 
-**Text**
-- Dictionary hyphenation, once permissively licensed patterns cover the main languages.
+## Next
 
 ## Out of scope
 

@@ -57,7 +57,7 @@ Read each license yourself, or ask your counsel, before you decide. This page is
 | PDF/UA | Tagged PDF from HTML (1.1) | Yes |
 | Text extraction | 1.1 | Yes |
 | HTML to PDF | 1.1, `PdfNetStack.Html` | pdfHTML add-on |
-| OCR | `PdfNetStack.Ocr` add-on, not on NuGet | pdfOCR add-on |
+| OCR | `PdfNetStack.Ocr` add-on package | pdfOCR add-on |
 | Redaction | No | pdfSweep add-on |
 | Arabic and right to left text | 1.1, built in | pdfCalligraph add-on |
 
