@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using PdfNetStack.Fonts.OpenType;
@@ -16,16 +15,16 @@ namespace PdfNetStack.Fonts;
 /// A variable font draws its default instance; <see cref="GetInstance(string)"/> and
 /// <see cref="GetInstance(IReadOnlyDictionary{string, double})"/> give any other, embedded as a
 /// static font with the variations applied (TrueType and CFF2 outlines alike). Each location is
-/// made once and shared, the default location being the font itself, so a document embeds one
-/// program per location drawn. Fonts whose license forbids embedding (OS/2 fsType) are refused
-/// when first drawn.
+/// made once and shared while it is in use, the default location being the font itself, so a
+/// document embeds one program per location drawn; instances nothing holds any more are freed.
+/// Fonts whose license forbids embedding (OS/2 fsType) are refused when first drawn.
 /// </remarks>
 public sealed class PdfOpenTypeFont : PdfFont
 {
     private readonly OpenTypeFile _file;
     private readonly OpenTypeFile _source;
     private readonly FontVariations? _variations;
-    private readonly ConcurrentDictionary<string, PdfOpenTypeFont> _instances;
+    private readonly FontInstances _instances;
     private readonly double[]? _location;
     private readonly Kerning? _kerning;
     private readonly double _scale;
@@ -33,7 +32,7 @@ public sealed class PdfOpenTypeFont : PdfFont
     private ShapingTables? _tables;
     private FontTraits? _traits;
 
-    private PdfOpenTypeFont(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont> instances, double[]? location)
+    private PdfOpenTypeFont(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, FontInstances instances, double[]? location)
     {
         _file = file;
         _source = source;
@@ -183,11 +182,11 @@ public sealed class PdfOpenTypeFont : PdfFont
             source.Coordinates = new float[variations.Axes.Count];
         }
 
-        var instances = new ConcurrentDictionary<string, PdfOpenTypeFont>(StringComparer.Ordinal);
+        var instances = new FontInstances();
         PdfOpenTypeFont font = Create(file, source, variations, instances, null);
 
         // The default instance is the font itself, so drawing with both embeds one program.
-        if (variations is not null) instances[Key(new float[variations.Axes.Count])] = font;
+        if (variations is not null) instances.Add(Key(new float[variations.Axes.Count]), font);
         return font;
     }
 
@@ -233,12 +232,12 @@ public sealed class PdfOpenTypeFont : PdfFont
         return Instance(values);
     }
 
-    /// <summary>The instance at <paramref name="values"/> (user units, one per axis), made once and then reused.</summary>
+    /// <summary>The instance at <paramref name="values"/> (user units, one per axis), made once and then reused while it is held.</summary>
     private PdfOpenTypeFont Instance(double[] values)
     {
         FontVariations variations = _variations!;
         float[] coordinates = variations.Normalize(values);
-        return _instances.GetOrAdd(Key(coordinates), _ =>
+        return _instances.GetOrAdd(Key(coordinates), () =>
         {
             // A named instance at this location gives the style and PostScript names.
             NamedInstance? named = variations.Instances.FirstOrDefault(i => variations.Normalize(i.Coordinates).SequenceEqual(coordinates));
@@ -272,7 +271,7 @@ public sealed class PdfOpenTypeFont : PdfFont
         return file;
     }
 
-    private static PdfOpenTypeFont Create(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, ConcurrentDictionary<string, PdfOpenTypeFont> instances, double[]? location)
+    private static PdfOpenTypeFont Create(OpenTypeFile file, OpenTypeFile source, FontVariations? variations, FontInstances instances, double[]? location)
     {
         var font = new PdfOpenTypeFont(file, source, variations, instances, location);
         if (font._file.IsCff && font.Cff.GlyphCount != font._file.GlyphCount)

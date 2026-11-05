@@ -52,6 +52,12 @@ public sealed record OptimizationStatistics(
     /// </summary>
     public int ImagesConvertedToJpeg { get; init; }
 
+    /// <summary>
+    /// Raw RGB images reduced to a palette by <see cref="PdfOptimizerOptions.QuantizeImages"/>. An image
+    /// that was also downsampled counts here and in <see cref="ImagesDownsampled"/>.
+    /// </summary>
+    public int ImagesQuantized { get; init; }
+
     /// <summary>Images left as they were because their lossy change failed <see cref="PdfOptimizerOptions.MinImageSsim"/>.</summary>
     public int ImagesKeptByQualityGate { get; init; }
 
@@ -72,6 +78,9 @@ public sealed record OptimizationStatistics(
 
     /// <summary>True when the output was written as a linearized file.</summary>
     public bool Linearized { get; init; }
+
+    /// <summary>True when the file was optimized in streaming mode (<see cref="PdfOptimizerOptions.Streaming"/>).</summary>
+    public bool Streamed { get; init; }
 
     internal static OptimizationStatistics Empty(TimeSpan elapsed) => new(0, 0, 0, 0, 0, 0, 0, elapsed, new PhaseTimings());
 }

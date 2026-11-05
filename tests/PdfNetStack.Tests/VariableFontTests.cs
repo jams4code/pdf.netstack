@@ -43,6 +43,28 @@ public sealed class VariableFontTests
     }
 
     [TestMethod]
+    public void InstancesNothingHoldsAreFreed()
+    {
+        // A font shared by a long running process must not keep every location it was asked for.
+        PdfOpenTypeFont font = Load("Test-Variable.otf");
+        PdfOpenTypeFont held = font.GetInstance(new Dictionary<string, double> { ["wght"] = 650 });
+        FontInstances instances = (FontInstances)font.InstanceCache;
+        for (int i = 0; i < 200; i++)
+        {
+            _ = font.GetInstance(new Dictionary<string, double> { ["wght"] = 101 + (2 * i) });
+            if (i % 20 == 19)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+        }
+
+        Assert.IsLessThan(100, instances.Count);
+        Assert.AreSame(held, font.GetInstance(new Dictionary<string, double> { ["wght"] = 650 }));
+        Assert.AreSame(font, font.GetInstance(new Dictionary<string, double> { ["wght"] = 400 }));
+    }
+
+    [TestMethod]
     public void StaticFontsHaveNoAxes()
     {
         PdfOpenTypeFont font = Load("Test-Regular.ttf");

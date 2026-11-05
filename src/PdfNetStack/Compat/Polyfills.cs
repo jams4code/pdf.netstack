@@ -150,3 +150,16 @@ namespace PdfNetStack
     }
 }
 #endif
+
+#if !NET9_0_OR_GREATER
+namespace System.Runtime.CompilerServices
+{
+    // Read by name by the C# 13 compiler: keeps Open(path, null) choosing the password overload on
+    // every target, as it did before the PdfLoadOptions overloads existed.
+    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Constructor | AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
+    internal sealed class OverloadResolutionPriorityAttribute(int priority) : Attribute
+    {
+        public int Priority { get; } = priority;
+    }
+}
+#endif

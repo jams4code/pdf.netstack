@@ -64,7 +64,7 @@ public sealed class LayoutTests
         PdfFont helvetica = PdfStandardFont.Helvetica;
         double word = Measure(helvetica, "xxxx", 20), space = Measure(helvetica, " ", 20);
         double width = (word * 2) + space + 1; // two words fit, three do not
-        string css = $"p {{ font: 20px sans-serif; width: {width}px; margin: 0 }} body {{ margin: 0 }}";
+        string css = FormattableString.Invariant($"p {{ font: 20px sans-serif; width: {width}px; margin: 0 }} body {{ margin: 0 }}");
 
         BoxFragment root = Layout("<p id=p>xxxx xxxx xxxx xxxx xxxx</p>", css);
         List<LineFragment> lines = Lines(ById(root, "p"));

@@ -8,7 +8,7 @@ sidebar:
 
 Puppeteer Sharp and Playwright for .NET drive a real browser from C#, and a browser can print a
 page to PDF. `PdfNetStack.Html` converts HTML and CSS to PDF with a layout engine written in C#,
-without a browser. It is part of PdfNetStack 1.1, in the main branch and not yet on NuGet.
+without a browser. It is part of PdfNetStack 1.1, on NuGet.
 
 ## What each does well
 
@@ -54,7 +54,7 @@ Read each license yourself before you decide. This page is not legal advice.
 | Paged media: margin boxes, named pages, running elements | Yes | Not listed | Not listed |
 | Tagged PDF | Yes, on by default | Not listed | Not listed |
 | Sign, encrypt, PDF/A on the result | Yes, with PdfNetStack (1.1) | Not listed | Not listed |
-| Available | 1.1, not yet on NuGet | Released | Released |
+| Available | 1.1, on NuGet | Released | Released |
 
 Sources: [Puppeteer Sharp repository](https://github.com/hardkoded/puppeteer-sharp),
 [Playwright browsers](https://playwright.dev/dotnet/docs/browsers),

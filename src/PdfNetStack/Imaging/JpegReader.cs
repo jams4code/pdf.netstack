@@ -32,10 +32,13 @@ internal ref struct JpegReader
     private bool _atMarker;
     private int _eobRun;
 
-    private JpegReader(ReadOnlySpan<byte> data, long limit)
+    private readonly long _maxPixels;
+
+    private JpegReader(ReadOnlySpan<byte> data, long limit, long maxPixels)
     {
         _data = data;
         _limit = limit;
+        _maxPixels = maxPixels;
     }
 
     private enum ScanMode
@@ -48,8 +51,9 @@ internal ref struct JpegReader
     }
 
     /// <param name="coefficientByteLimit">Ceiling for the coefficient buffers, two bytes per coefficient.</param>
-    /// <exception cref="JpegFormatException">The data is damaged or uses an unsupported coding process.</exception>
-    public static JpegImage Read(ReadOnlySpan<byte> data, long coefficientByteLimit) => new JpegReader(data, coefficientByteLimit).ReadImage();
+    /// <param name="maxPixels">Ceiling for the image area.</param>
+    /// <exception cref="JpegFormatException">The data is damaged, too large or uses an unsupported coding process.</exception>
+    public static JpegImage Read(ReadOnlySpan<byte> data, long coefficientByteLimit, long maxPixels = long.MaxValue) => new JpegReader(data, coefficientByteLimit, maxPixels).ReadImage();
 
     private JpegImage ReadImage()
     {
@@ -223,6 +227,7 @@ internal ref struct JpegReader
         int count = s[5];
         if (height == 0) throw new JpegFormatException("JPEG height defined by DNL is not supported.");
         if (width == 0) throw new JpegFormatException("JPEG width is zero.");
+        if ((long)width * height > _maxPixels) throw new JpegFormatException("JPEG has more pixels than the limit allows.");
         if (count is < 1 or > 4 || s.Length != 6 + 3 * count) throw new JpegFormatException("Invalid JPEG component count.");
 
         int maxH = 1, maxV = 1;

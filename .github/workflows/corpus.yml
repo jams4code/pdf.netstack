@@ -2,12 +2,17 @@ name: Corpus benchmark
 
 # Downloads the public benchmark corpus (eng/corpus/manifest.json: public domain and openly
 # licensed documents, never committed), runs tools/corpus_bench.py over it and uploads the
-# Markdown and JSON report. Runs weekly and on demand only. There is no pull_request trigger, so
-# pull requests, from forks or not, never run it; the repository check keeps forks' schedules off.
+# Markdown and JSON report. Runs weekly, on demand, and for every version tag: then the report is
+# attached to the GitHub release with a comparison against the previous release's report
+# (tools/corpus_compare.py), so a regression in size, time or memory shows next to the release.
+# There is no pull_request trigger, so pull requests, from forks or not, never run it; the
+# repository check keeps forks' schedules off.
 on:
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
+  push:
+    tags: ['v*.*.*']
 
 permissions:
   contents: read
@@ -88,3 +93,48 @@ jobs:
         run: |
           echo "::error::Some corpus files could not be fetched or changed upstream; see the Fetch the corpus step."
           exit 1
+
+  release:
+    # Attaches the report of a version tag to its release, with the comparison. The release itself
+    # is created by the Release workflow; this job waits for it.
+    needs: benchmark
+    if: always() && startsWith(github.ref, 'refs/tags/v') && github.repository == 'jams4code/pdf.netstack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: corpus-report
+          path: report
+
+      - name: Compare with the previous release
+        run: |
+          previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v -x "$TAG" | grep -v -- '-' | head -n 1 || true)
+          mkdir -p previous
+          if [ -n "$previous" ] && gh release download "$previous" --pattern corpus-report.json --dir previous 2>/dev/null; then
+            python3 tools/corpus_compare.py previous/corpus-report.json report/report.json \
+              --previous-label "$previous" --current-label "$TAG" --out report/comparison.md
+          else
+            printf '# Corpus benchmark: %s\n\nNo report is attached to a previous release, so there is nothing to compare with.\n' "$TAG" > report/comparison.md
+          fi
+          cat report/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        run: |
+          for i in $(seq 1 60); do
+            gh release view "$TAG" > /dev/null 2>&1 && break
+            sleep 60
+          done
+          cp report/report.md corpus-report.md
+          cp report/report.json corpus-report.json
+          cp report/comparison.md corpus-comparison.md
+          gh release upload "$TAG" corpus-report.md corpus-report.json corpus-comparison.md --clobber

@@ -33,11 +33,63 @@ public sealed record PdfOptimizerOptions
     /// <summary>Shared default instance.</summary>
     public static PdfOptimizerOptions Default { get; } = new();
 
+    /// <summary>
+    /// Much smaller files with no change most readers can see: drawings and screenshots get a
+    /// palette, photographs become JPEG at quality 75, existing JPEG images are requantized to it,
+    /// and every image keeps an SSIM of at least 0.95 or stays as it was. Not lossless. Start from
+    /// this with a <c>with</c> expression to change one thing.
+    /// </summary>
+    public static PdfOptimizerOptions Balanced { get; } = new()
+    {
+        QuantizeImages = true,
+        ConvertImagesToJpeg = true,
+        JpegQuality = 75,
+        ProgressiveJpeg = true,
+        MinImageSsim = 0.95,
+    };
+
+    /// <summary>
+    /// As small as a document stays useful on screen: <see cref="Balanced"/> with JPEG quality 50,
+    /// images downsampled to 150 dpi, and an SSIM of at least 0.90. Fine texture softens where you
+    /// look for it; check it suits your documents, and do not use it for print. Not lossless.
+    /// </summary>
+    public static PdfOptimizerOptions Smallest { get; } = Balanced with
+    {
+        JpegQuality = 50,
+        MaxImageDpi = 150,
+        MinImageSsim = 0.90,
+    };
+
     /// <summary>Minimum saving, in percent of the input size, required to keep the rewrite. Default 1.</summary>
     public double MinSavingPercent { get; init; } = 1.0;
 
-    /// <summary>Largest input accepted, in bytes. Larger files are returned unchanged. Default 1 GiB.</summary>
+    /// <summary>
+    /// Largest input accepted, in bytes. Larger files are returned unchanged. Default 1 GiB. In
+    /// memory, plan for several times the input size; with <see cref="Streaming"/> the input is
+    /// never held in memory, and the limit can be raised to the largest file to accept.
+    /// </summary>
     public long MaxInputBytes { get; init; } = 1L << 30;
+
+    /// <summary>
+    /// Optimize without holding the file in memory, for files larger than memory or a small
+    /// serverless instance. The input is read on demand, the way
+    /// <see cref="PdfDocument.OpenOnDemand"/> reads it, and the rewrite is written progressively
+    /// to a temporary file: the destination's own temporary file for
+    /// <see cref="PdfOptimizer.OptimizeFileAsync"/>, otherwise one in <see cref="Path.GetTempPath"/>,
+    /// which needs room for the output. The proof then reads that file back on demand and
+    /// compares it with the source exactly as in memory: every reachable object, and every stream
+    /// by its decoded content. Only a proven rewrite, or else the input, reaches the output.
+    /// Memory follows the number of objects and the largest streams being worked on, not the
+    /// size of the file: object dictionaries and the cross-reference data are kept, stream data
+    /// is not, and streams are recompressed in batches of at most 32 MiB of source data (a larger
+    /// stream on its own), each written before the next starts.
+    /// The output may differ from the in-memory rewrite: duplicates are found from what streams
+    /// decode to before they are recompressed, so two JPEG images whose files differ only in
+    /// metadata stay two, and a JBIG2Globals stream that a re-encoded image no longer needs is
+    /// still written. Cannot be combined with <see cref="Linearize"/>, which lays out the whole
+    /// file at once. Default false.
+    /// </summary>
+    public bool Streaming { get; init; }
 
     /// <summary>
     /// Ceiling for any single decoded stream, the guard against decompression bombs. Streams over the
@@ -152,6 +204,21 @@ public sealed record PdfOptimizerOptions
     public bool ConvertImagesToJpeg { get; init; }
 
     /// <summary>
+    /// Reduce raw 8 bit RGB images to a palette of at most 256 colors, in their own color space, when
+    /// that stays faithful and is at least 10% smaller than the best lossless encoding. This is what
+    /// suits line art, technical drawings and screenshots, where JPEG rings around fine labels and
+    /// barely saves anything: text and edges stay sharp. Each image gets the smallest palette that
+    /// keeps <see cref="MinImageSsim"/>, or an SSIM of 0.97 without a gate, moves pixels 8 sample steps
+    /// at most on average, and moves at most 1% of them by more than 32. With
+    /// <see cref="ConvertImagesToJpeg"/> as well, the smaller of the two wins image by image, so set
+    /// <see cref="MinImageSsim"/> to keep JPEG to images where it looks right. Images with /Decode,
+    /// /Interpolate or a /Matte soft mask stay as they are. The proof expands the palette and checks
+    /// the same bounds again. Not lossless unless an image already has that few colors. Default
+    /// false. Requires <see cref="RecompressStreams"/>.
+    /// </summary>
+    public bool QuantizeImages { get; init; }
+
+    /// <summary>
     /// The perceptual gate for every lossy image change: the minimum structural similarity
     /// (SSIM, on luminance, 0 to 1) a changed image must keep, or it stays as it was. A requantized
     /// JPEG is compared with the original; a downsampled image with the exact resample of the
@@ -210,6 +277,7 @@ public sealed record PdfOptimizerOptions
     internal void Validate()
     {
         if (MinSavingPercent is < 0 or >= 100) throw new ArgumentOutOfRangeException(nameof(MinSavingPercent));
+        if (Streaming && Linearize) throw new ArgumentException("Linearize cannot be combined with Streaming: a linearized file is laid out whole, in memory.", nameof(Streaming));
         if (MaxInputBytes <= 0) throw new ArgumentOutOfRangeException(nameof(MaxInputBytes));
         if (MaxDecodedStreamBytes <= 0) throw new ArgumentOutOfRangeException(nameof(MaxDecodedStreamBytes));
         if (ObjectsPerStream is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(ObjectsPerStream));
@@ -223,6 +291,7 @@ public sealed record PdfOptimizerOptions
         if (MaxImageDpi is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(MaxImageDpi));
         if (MinImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(MinImageSsim));
         if (MaxImageDpi is not null && !RecompressStreams) throw new ArgumentException("MaxImageDpi needs RecompressStreams enabled.", nameof(MaxImageDpi));
+        if (QuantizeImages && !RecompressStreams) throw new ArgumentException("QuantizeImages needs RecompressStreams enabled.", nameof(QuantizeImages));
         if (ProgressiveJpeg && !RecompressStreams) throw new ArgumentException("ProgressiveJpeg needs RecompressStreams enabled.", nameof(ProgressiveJpeg));
         if (ConvertImagesToJpeg && (JpegQuality is null || !RecompressStreams))
         {

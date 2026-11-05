@@ -134,12 +134,15 @@ JPEG 2000, JBIG2 and CCITT data is never decoded or touched by the optimizer.
 ## Lossy image options
 
 :::note[Available since 1.1]
-`MaxImageDpi`, `ConvertImagesToJpeg`, `MinImageSsim`, `ProgressiveJpeg` and
-`CompressionEffort.Exhaustive` are in the main branch and ship with 1.1. `JpegQuality` is in 1.0.
+`MaxImageDpi`, `ConvertImagesToJpeg`, `QuantizeImages`, `MinImageSsim`, `ProgressiveJpeg`, the
+`Balanced` and `Smallest` presets and `CompressionEffort.Exhaustive` arrived in 1.1. `JpegQuality`
+is in 1.0.
 :::
 
-All of them are off by default. Turn them on together for the biggest saving on image heavy
-files:
+All of them are off by default. For most documents a preset is all you need:
+`PdfOptimizerOptions.Balanced` gives much smaller files with no change most readers can see, and
+`PdfOptimizerOptions.Smallest` goes further for reading on screen. To choose for yourself, turn the
+options on together for the biggest saving on image heavy files:
 
 ```csharp sample="compress-lossy.cs" region="lossy"
 ```
@@ -153,6 +156,15 @@ files:
   (4:2:0 below quality 90, Huffman tables optimized per image). A classifier leaves line art,
   screenshots, charts, palette and bilevel images lossless, and a JPEG is kept only when it is at
   least 10% smaller than the best lossless encoding. It requires `JpegQuality`.
+- `QuantizeImages` reduces raw 8 bit RGB images to a palette of at most 256 colors, in their own
+  color space. This is the option for technical drawings, charts and screenshots: JPEG rings around
+  their fine labels and often saves little, while a palette keeps edges sharp and Flate then
+  compresses the flat areas well. Each image gets the smallest palette, of 256, 64, 16 or 4 colors,
+  that keeps `MinImageSsim` (0.97 without a gate), changes pixels by at most 8 sample steps on
+  average, and changes at most 1% of them by more than 32. Colors that dominate a cluster stay
+  exact, so a white background stays white. With `ConvertImagesToJpeg` as well, the smaller result
+  wins image by image, so set `MinImageSsim` if you want JPEG only where it looks right. Images
+  with `/Decode`, `/Interpolate` or a `/Matte` soft mask are left alone.
 - `MinImageSsim` is a perceptual gate on luminance SSIM. Any image whose lossy change,
   requantization included, falls below it stays as it was, and `ImagesKeptByQualityGate` counts
   those images. Around 0.95 keeps changes hard to see; 0.90 allows visible softening of fine
@@ -164,7 +176,7 @@ The result says what changed:
 ```csharp sample="compress-lossy.cs" region="report"
 ```
 
-`OptimizationStatistics` reports `ImagesDownsampled`, `ImagesConvertedToJpeg`,
+`OptimizationStatistics` reports `ImagesDownsampled`, `ImagesConvertedToJpeg`, `ImagesQuantized`,
 `JpegImagesRequantized` and `ImagesKeptByQualityGate`, and `Reason` names every lossy change, for
 example "1 image(s) downsampled to 150 dpi, 1 image(s) converted to JPEG at quality 90".
 

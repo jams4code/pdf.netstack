@@ -43,11 +43,12 @@ The same managed code runs on Windows, Linux and macOS. CI runs the test suite o
 
 | Package | What it is | On NuGet |
 |---|---|---|
-| `PdfNetStack` | The library | 1.0.0 |
-| `PdfNetStack.Tool` | The `pdfnetstack` command line tool | 1.0.0 |
-| `PdfNetStack.Html` | HTML and CSS to PDF | Not yet, ships with 1.1 |
-| `PdfNetStack.Ocr` | OCR add-on for scanned PDFs | Not yet |
-| `PdfNetStack.Ocr.Tool` | The `pdfnetstack-ocr` command line tool, models included | Not yet |
+| `PdfNetStack` | The library | 1.1.0 |
+| `PdfNetStack.Tool` | The `pdfnetstack` command line tool | 1.1.0 |
+| `PdfNetStack.Html` | HTML and CSS to PDF | 1.1.0 |
+| `PdfNetStack.Ocr` | OCR add-on for scanned PDFs | 1.1.0 |
+| `PdfNetStack.Ocr.Models` | The OCR models, versioned on their own | 1.0.0 |
+| `PdfNetStack.Ocr.Tool` | The `pdfnetstack-ocr` command line tool, models included | 1.1.0 |
 
 ```bash
 dotnet add package PdfNetStack            # library
@@ -78,20 +79,16 @@ More in [Drawing](/guides/drawing/) and [Fonts and text](/guides/fonts-and-text/
 
 ## Build from source
 
-Drawing, fonts, images, annotations, forms, signatures and long term validation, PDF/A and
-e-invoices, text and image extraction, the optimizer's structural passes, linearization and lossy image
-options, on demand reading and incremental saving, the object model
-and `PdfNetStack.Html` are in the main branch and ship with PdfNetStack 1.1. The 1.0.0
-packages on NuGet do not have them. To use them today, build against a clone of the repository.
-You need the .NET 10 SDK.
+Every feature on this site is in the 1.1 packages on NuGet. To try what is in the main branch
+before the next release, build against a clone of the repository. You need the .NET 10 SDK.
 
 ```bash
 git clone https://github.com/jams4code/pdf.netstack
 dotnet build pdf.netstack/PdfNetStack.sln -c Release
 ```
 
-In a .NET 10 file-based app, reference the project instead of the package. Every sample on this
-site that uses 1.1 features starts with this line, for a clone in the same folder as the file:
+In a .NET 10 file-based app, reference the project instead of the package, here for a clone in
+the same folder as the file:
 
 ```csharp
 #:project pdf.netstack/src/PdfNetStack/PdfNetStack.csproj
@@ -107,8 +104,8 @@ In a project file, use a project reference, here for a clone next to the project
 </ItemGroup>
 ```
 
-The API can still change before 1.1 is released. The [changelog](/changelog/) lists every change
-in main since 1.0.0.
+Unreleased API can still change before its release. The [changelog](/changelog/) lists every
+change by version.
 
 ## How the samples on this site run
 

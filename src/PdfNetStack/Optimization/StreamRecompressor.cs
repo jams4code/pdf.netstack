@@ -33,6 +33,8 @@ internal sealed record RecompressionCounts(int Streams, int JpegImages, HashSet<
 
     public int ConvertedToJpeg { get; init; }
 
+    public int Quantized { get; init; }
+
     /// <summary>Images kept as they were because every lossy candidate failed the perceptual gate.</summary>
     public int KeptByGate { get; init; }
 
@@ -80,6 +82,25 @@ internal static class StreamRecompressor
     /// <param name="images">The lossy image pass, or null to leave image samples alone.</param>
     public static RecompressionCounts Run(PdfFile file, ObjectGraph graph, RecompressionScope scope, CompressionLevel level, bool exhaustive, bool imagePredictors, bool group4, JpegSettings? jpeg, ImageSettings? images, long decodeLimit, int parallelism, CancellationToken ct)
     {
+        Work work = Prepare(file, graph, scope, level, exhaustive, imagePredictors, group4, jpeg, images, decodeLimit, ct);
+
+        // Largest first, handed out one at a time, so one big image never runs alone at the end.
+        int[] schedule = Enumerable.Range(0, work.Count).OrderByDescending(i => work.Streams[i].EncodedLength).ToArray();
+        var partitioner = System.Collections.Concurrent.Partitioner.Create(schedule, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+        Parallel.ForEach(partitioner, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, i =>
+        {
+            if (work.Execute(i, reportHash: true, ct) is { } result) work.Apply(work.Streams[i], result);
+        });
+
+        return work.Counts();
+    }
+
+    /// <summary>
+    /// Plans the work for every stream in scope without doing it. Each stream can then be
+    /// recompressed on its own and in any order, as the streaming optimizer does, a batch at a time.
+    /// </summary>
+    public static Work Prepare(PdfFile file, ObjectGraph graph, RecompressionScope scope, CompressionLevel level, bool exhaustive, bool imagePredictors, bool group4, JpegSettings? jpeg, ImageSettings? images, long decodeLimit, CancellationToken ct)
+    {
         var streams = new List<PdfStream>();
         var numbers = new List<int>();
         foreach (int number in graph.Order)
@@ -121,44 +142,99 @@ internal static class StreamRecompressor
                 is { } plan ? plan with { Recompress = scope.Recompress, Compact = scope.Compact.Contains(numbers[i]) } : null;
         }
 
-        // Largest first, handed out one at a time, so one big image never runs alone at the end.
-        int[] schedule = Enumerable.Range(0, streams.Count).OrderByDescending(i => streams[i].Data.Length).ToArray();
-        int changed = 0, jpegImages = 0, keptByGate = 0, compacted = 0, group4Images = 0;
-        var requantized = new bool[streams.Count];
-        var hashes = new byte[]?[streams.Count];
-        var lossyKinds = new LossyKind[streams.Count];
-        var partitioner = System.Collections.Concurrent.Partitioner.Create(schedule, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering);
+        return new Work(streams, numbers, plans, new Flate(level, exhaustive, ct), imagePredictors, decodeLimit, scope.HashContent);
+    }
+
+    /// <summary>
+    /// The planned recompression of a set of streams, and the tally of what it did. Any stream
+    /// can be done on its own and from any thread; the tally is safe to update concurrently.
+    /// </summary>
+    internal sealed class Work
+    {
+        private readonly Plan?[] _plans;
+        private readonly Flate _flate;
+        private readonly bool _imagePredictors;
+        private readonly long _decodeLimit;
+        private readonly bool _hashContent;
+        private readonly Dictionary<int, int> _index;
+        private readonly bool[] _requantized;
+        private readonly byte[]?[] _hashes;
+        private readonly LossyKind[] _lossyKinds;
+        private int _changed, _jpegImages, _keptByGate, _compacted, _group4;
 
         // Decoding images for the lossy pass takes several times their samples in memory; workers
         // share a budget of twice the decode limit, so a document of large scans cannot multiply
         // that by the number of threads.
-        var gate = new MemoryGate(2 * decodeLimit);
-        Parallel.ForEach(partitioner, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, i =>
+        private readonly MemoryGate _gate;
+
+        internal Work(List<PdfStream> streams, List<int> numbers, Plan?[] plans, Flate flate, bool imagePredictors, long decodeLimit, bool hashContent)
         {
-            Plan? plan = plans[i];
-            if (plan is null) return;
-            long weight = gate.Enter(plan.Image is { } image ? LossyImages.Footprint(image) : 0, ct);
+            Streams = streams;
+            Numbers = numbers;
+            _plans = plans;
+            _flate = flate;
+            _imagePredictors = imagePredictors;
+            _decodeLimit = decodeLimit;
+            _hashContent = hashContent;
+            _index = new Dictionary<int, int>(numbers.Count);
+            for (int i = 0; i < numbers.Count; i++) _index[numbers[i]] = i;
+            _requantized = new bool[streams.Count];
+            _hashes = new byte[]?[streams.Count];
+            _lossyKinds = new LossyKind[streams.Count];
+            _gate = new MemoryGate(2 * decodeLimit);
+        }
+
+        public int Count => Streams.Count;
+
+        /// <summary>The streams in scope, as the file holds them.</summary>
+        public List<PdfStream> Streams { get; }
+
+        /// <summary>The object number of each stream.</summary>
+        public List<int> Numbers { get; }
+
+        /// <summary>The index of the stream with object number <paramref name="number"/>, or -1.</summary>
+        public int IndexOf(int number) => _index.TryGetValue(number, out int i) ? i : -1;
+
+        /// <summary>True when stream <paramref name="i"/> has work planned.</summary>
+        public bool IsPlanned(int i) => _plans[i] is not null;
+
+        /// <summary>
+        /// Recompresses stream <paramref name="i"/> and tallies what the passes did. Returns the
+        /// new encoding, or null when the stream stays as it is. Nothing is applied.
+        /// </summary>
+        /// <param name="reportHash">Record the stream's content hash, when the scope asks for hashes.</param>
+        internal Result? Execute(int i, bool reportHash, CancellationToken ct)
+        {
+            Plan? plan = _plans[i];
+            if (plan is null) return null;
+            long weight = _gate.Enter(plan.Image is { } image ? LossyImages.Footprint(image) : 0, ct);
             Result? result;
             bool rejected;
             try
             {
-                result = Recompress(streams[i], plan, new Flate(level, exhaustive, ct), imagePredictors, decodeLimit,
-                    scope.HashContent ? hash => hashes[i] = hash : null, out rejected);
+                result = Recompress(Streams[i], plan, _flate, _imagePredictors, _decodeLimit,
+                    reportHash && _hashContent ? hash => _hashes[i] = hash : null, out rejected);
             }
             finally
             {
-                gate.Exit(weight);
+                _gate.Exit(weight);
             }
 
-            if (rejected) Interlocked.Increment(ref keptByGate);
-            if (result is null) return;
-            if (result.Jpeg) Interlocked.Increment(ref jpegImages);
-            if (result.Compacted) Interlocked.Increment(ref compacted);
-            if (result.Group4) Interlocked.Increment(ref group4Images);
-            requantized[i] = result.Requantized;
-            lossyKinds[i] = result.Lossy;
-            PdfDictionary d = streams[i].Dictionary;
-            streams[i].Data = result.Data;
+            if (rejected) Interlocked.Increment(ref _keptByGate);
+            if (result is null) return null;
+            if (result.Jpeg) Interlocked.Increment(ref _jpegImages);
+            if (result.Compacted) Interlocked.Increment(ref _compacted);
+            if (result.Group4) Interlocked.Increment(ref _group4);
+            _requantized[i] = result.Requantized;
+            _lossyKinds[i] = result.Lossy;
+            return result;
+        }
+
+        /// <summary>Gives <paramref name="target"/> a new encoding: its data, filters and, for a resampled image, its size.</summary>
+        internal void Apply(PdfStream target, Result result)
+        {
+            PdfDictionary d = target.Dictionary;
+            target.Data = result.Data;
             d.Remove("DL");
             if ((result.Lossy & LossyKind.Downsampled) != 0)
             {
@@ -168,6 +244,12 @@ internal static class StreamRecompressor
 
             // A JPEG 2000 image may leave its depth to the data; samples and JPEG must state it.
             if (result.SetsBits) d.Set("BitsPerComponent", PdfNumber.FromInteger(8));
+
+            if (result.ColorSpace is not null)
+            {
+                d.Set("ColorSpace", result.ColorSpace);
+                d.Set("BitsPerComponent", PdfNumber.FromInteger(result.PaletteBits));
+            }
 
             if (result.Filter is null)
             {
@@ -181,29 +263,100 @@ internal static class StreamRecompressor
                 else d.Set("DecodeParms", result.DecodeParms);
             }
 
-            Interlocked.Increment(ref changed);
-        });
-
-        var requantizedObjects = new HashSet<int>();
-        var resampledObjects = new HashSet<int>();
-        var contentHashes = new Dictionary<int, byte[]>();
-        for (int i = 0; i < streams.Count; i++)
-        {
-            if (requantized[i]) requantizedObjects.Add(numbers[i]);
-            if (lossyKinds[i] != LossyKind.None) resampledObjects.Add(numbers[i]);
-            if (hashes[i] is { } hash) contentHashes[numbers[i]] = hash;
+            Interlocked.Increment(ref _changed);
         }
 
-        return new RecompressionCounts(changed, jpegImages, requantizedObjects)
+        /// <summary>
+        /// Stream <paramref name="i"/> with its new encoding, as a new stream with a copy of the
+        /// dictionary, or null when it stays as it is. The stream the file holds is not changed,
+        /// so its data stays where it is, in the file.
+        /// </summary>
+        public PdfStream? Rewritten(int i, CancellationToken ct)
         {
-            ResampledObjects = resampledObjects,
-            Downsampled = lossyKinds.Count(k => (k & LossyKind.Downsampled) != 0),
-            ConvertedToJpeg = lossyKinds.Count(k => (k & LossyKind.ConvertedToJpeg) != 0),
-            KeptByGate = keptByGate,
-            Compacted = compacted,
-            Group4 = group4Images,
-            ContentHashes = contentHashes,
-        };
+            if (Execute(i, reportHash: false, ct) is not { } result) return null;
+            PdfDictionary source = Streams[i].Dictionary;
+            var copy = new PdfDictionary(source.Count);
+            for (int k = 0; k < source.Count; k++)
+            {
+                (string key, PdfObject value) = source.EntryAt(k);
+                copy.Set(key, value);
+            }
+
+            var rewritten = new PdfStream(copy, ReadOnlyMemory<byte>.Empty);
+            Apply(rewritten, result);
+            return rewritten;
+        }
+
+        /// <summary>
+        /// A key for stream <paramref name="i"/> such that two streams with equal keys and equal
+        /// dictionaries, encoding entries aside, recompress to the same content: a hash of what the
+        /// stream decodes to through its general filters, the predictor and filters still to
+        /// apply, and what the plan may do to it. Costs one decode and no encoding, so the
+        /// streaming optimizer can find duplicates before it writes anything. Null when the stream
+        /// has no plan or its data does not decode; such a stream is compared by its bytes.
+        /// </summary>
+        public byte[]? ContentKey(int i)
+        {
+            if (_plans[i] is not { } plan) return null;
+            DecodedStream decoded;
+            try
+            {
+                decoded = StreamCodec.Decode(Streams[i].Data, plan.Filters, DecodeDepth.CompressionOnly, _decodeLimit, static o => o);
+            }
+            catch (StreamDecodeException)
+            {
+                return null;
+            }
+
+            using (decoded)
+            {
+                byte[] content = ContentHash(decoded.Data.Span, decoded.PendingPredictor, decoded.Remaining);
+
+                // Whether the stream may be compacted, requantized or resampled, and to what size.
+                string what = FormattableString.Invariant($"{plan.Compact}|{plan.Recompress}|{plan.Jpeg?.Quality}|{plan.Image?.Target}|{plan.Image?.MayConvert}|{plan.Image?.PaletteBase is not null}");
+                return Compat.Sha256([.. content, .. System.Text.Encoding.ASCII.GetBytes(what)]);
+            }
+        }
+
+        /// <summary>
+        /// The tally so far. Given the representative of each object the deduplicator merged,
+        /// a merged object counts as requantized or resampled when its representative was, which
+        /// is what the output holds for it.
+        /// </summary>
+        public RecompressionCounts Counts(IReadOnlyDictionary<int, int>? representative = null)
+        {
+            var requantizedObjects = new HashSet<int>();
+            var resampledObjects = new HashSet<int>();
+            var contentHashes = new Dictionary<int, byte[]>();
+            for (int i = 0; i < Count; i++)
+            {
+                if (_requantized[i]) requantizedObjects.Add(Numbers[i]);
+                if (_lossyKinds[i] != LossyKind.None) resampledObjects.Add(Numbers[i]);
+                if (_hashes[i] is { } hash) contentHashes[Numbers[i]] = hash;
+            }
+
+            if (representative is not null)
+            {
+                foreach (KeyValuePair<int, int> pair in representative)
+                {
+                    if (pair.Value == pair.Key) continue;
+                    if (requantizedObjects.Contains(pair.Value)) requantizedObjects.Add(pair.Key);
+                    if (resampledObjects.Contains(pair.Value)) resampledObjects.Add(pair.Key);
+                }
+            }
+
+            return new RecompressionCounts(_changed, _jpegImages, requantizedObjects)
+            {
+                ResampledObjects = resampledObjects,
+                Downsampled = _lossyKinds.Count(k => (k & LossyKind.Downsampled) != 0),
+                ConvertedToJpeg = _lossyKinds.Count(k => (k & LossyKind.ConvertedToJpeg) != 0),
+                Quantized = _lossyKinds.Count(k => (k & LossyKind.Quantized) != 0),
+                KeptByGate = _keptByGate,
+                Compacted = _compacted,
+                Group4 = _group4,
+                ContentHashes = contentHashes,
+            };
+        }
     }
 
     /// <summary>
@@ -249,7 +402,7 @@ internal static class StreamRecompressor
     /// <param name="Image">Set for an image the lossy image pass may change, with <paramref name="Images"/>.</param>
     /// <param name="Recompress">Re-encoding is allowed; without it only a compacted content stream may replace the data.</param>
     /// <param name="Compact">The stream is a content stream to compact.</param>
-    private sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg, ImagePlan? Image, ImageSettings? Images, bool Recompress = true, bool Compact = false)
+    internal sealed record Plan(List<FilterSpec> Filters, int OriginalOverhead, PredictorParams? ImageLayout, bool KeepUnfiltered, JpegPlan? Jpeg, ImagePlan? Image, ImageSettings? Images, bool Recompress = true, bool Compact = false)
     {
         /// <summary>Set for a bilevel image that may become Group 4.</summary>
         public BilevelPlan? Bilevel { get; init; }
@@ -257,16 +410,16 @@ internal static class StreamRecompressor
 
     /// <summary>A bilevel image the Group 4 pass may re-encode.</summary>
     /// <param name="Ccitt">The parameters of Group 3 data, or null for samples.</param>
-    private sealed record BilevelPlan(int Width, int Height, CcittParameters? Ccitt);
+    internal sealed record BilevelPlan(int Width, int Height, CcittParameters? Ccitt);
 
     /// <param name="Quality">Requantization target, or null to stay lossless.</param>
     /// <param name="ColorTransform">The DCTDecode /ColorTransform parameter, when present.</param>
     /// <param name="Components">Components the image's color space has; the JPEG must match.</param>
     /// <param name="Progressive">Also try progressive coding.</param>
     /// <param name="MinSsim">The perceptual gate for requantization, or null.</param>
-    private sealed record JpegPlan(int? Quality, int? ColorTransform, int Components, bool Progressive, double? MinSsim);
+    internal sealed record JpegPlan(int? Quality, int? ColorTransform, int Components, bool Progressive, double? MinSsim);
 
-    private sealed record Result(ReadOnlyMemory<byte> Data, PdfObject? Filter, PdfObject? DecodeParms, bool Jpeg = false, bool Requantized = false, bool Compacted = false)
+    internal sealed record Result(ReadOnlyMemory<byte> Data, PdfObject? Filter, PdfObject? DecodeParms, bool Jpeg = false, bool Requantized = false, bool Compacted = false)
     {
         public LossyKind Lossy { get; init; }
 
@@ -279,6 +432,12 @@ internal static class StreamRecompressor
 
         /// <summary>The image needs /BitsPerComponent 8, which its dictionary leaves out.</summary>
         public bool SetsBits { get; init; }
+
+        /// <summary>The Indexed color space of a quantized image, or null.</summary>
+        public PdfObject? ColorSpace { get; init; }
+
+        /// <summary>Bits per index of a quantized image.</summary>
+        public int PaletteBits { get; init; }
     }
 
     /// <summary>
@@ -495,11 +654,14 @@ internal static class StreamRecompressor
     private static Result? Recompress(PdfStream stream, Plan plan, Flate level, bool imagePredictors, long decodeLimit, Action<byte[]>? reportHash, out bool rejected)
     {
         rejected = false;
-        int originalCost = stream.Data.Length + plan.OriginalOverhead;
+
+        // Read once: data still in the file is read again on every access.
+        ReadOnlyMemory<byte> data = stream.Data;
+        int originalCost = data.Length + plan.OriginalOverhead;
         DecodedStream decoded;
         try
         {
-            decoded = StreamCodec.Decode(stream.Data, plan.Filters, DecodeDepth.CompressionOnly, decodeLimit, static o => o);
+            decoded = StreamCodec.Decode(data, plan.Filters, DecodeDepth.CompressionOnly, decodeLimit, static o => o);
         }
         catch (StreamDecodeException)
         {
@@ -606,11 +768,13 @@ internal static class StreamRecompressor
                 }
             }
 
+            if (image.Target is null && bestCost < LossyImages.MinWorthwhileCost) return null;
+
             Result? best = null;
             int limit = (int)(bestCost * LossyImages.RequiredGain);
             foreach (LossyCandidate c in LossyImages.Candidates(data.Span, image, settings, level, imagePredictors, decodeLimit, out rejected))
             {
-                int cost = c.Data.Length + Overhead(c.Filter, c.DecodeParms);
+                int cost = c.Data.Length + Overhead(c.Filter, c.DecodeParms) + ColorSpaceCost(c.ColorSpace);
                 if (cost >= limit) continue;
                 limit = cost;
                 best = new Result(c.Data, c.Filter, c.DecodeParms, Jpeg: image.Jpeg)
@@ -619,6 +783,8 @@ internal static class StreamRecompressor
                     Width = c.Width,
                     Height = c.Height,
                     SetsBits = image.NeedsBits,
+                    ColorSpace = c.ColorSpace,
+                    PaletteBits = c.PaletteBits,
                 };
             }
 
@@ -628,6 +794,15 @@ internal static class StreamRecompressor
         {
             unpredicted?.Dispose();
         }
+    }
+
+    /// <summary>Bytes an Indexed color space takes in the dictionary, its lookup table above all.</summary>
+    private static int ColorSpaceCost(PdfObject? colorSpace)
+    {
+        if (colorSpace is null) return 0;
+        var probe = new ByteSink(1024);
+        new PdfSerializer(r => r.Number).Write(probe, colorSpace);
+        return probe.Length;
     }
 
     /// <summary>Bytes the /Filter and /DecodeParms entries take in the dictionary.</summary>

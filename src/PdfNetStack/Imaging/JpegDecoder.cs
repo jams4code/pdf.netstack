@@ -21,10 +21,11 @@ internal static class JpegDecoder
     /// <param name="data">The JPEG.</param>
     /// <param name="colorTransform">The DCTDecode /ColorTransform, or null outside a PDF.</param>
     /// <param name="byteLimit">Ceiling for coefficient and sample buffers.</param>
+    /// <param name="maxPixels">Ceiling for the image area.</param>
     /// <exception cref="JpegFormatException">The data is damaged, too large or uses an unsupported coding process.</exception>
-    public static Raster Decode(ReadOnlySpan<byte> data, int? colorTransform, long byteLimit)
+    public static Raster Decode(ReadOnlySpan<byte> data, int? colorTransform, long byteLimit, long maxPixels = long.MaxValue)
     {
-        using JpegImage image = JpegReader.Read(data, byteLimit);
+        using JpegImage image = JpegReader.Read(data, byteLimit, maxPixels);
         int width = image.Width, height = image.Height, n = image.Components.Length;
         if (n is not (1 or 3 or 4)) throw new JpegFormatException($"JPEG with {n} components is not supported.");
         long samples = (long)width * height * n;

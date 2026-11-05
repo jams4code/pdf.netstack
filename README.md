@@ -46,6 +46,34 @@ CI runs the full test suite on .NET Framework 4.8, .NET 8 and .NET 10, on Window
 macOS. The whole real world corpus also passes on .NET Framework 4.8. One difference: .NET
 Standard's zlib has no level 9, so `CompressionEffort.Maximum` compresses a little less there.
 
+## Serverless and containers
+
+The libraries run in AWS Lambda, Azure Functions and containers without changes:
+
+- **Native AOT and trimming.** `PdfNetStack`, `PdfNetStack.Html` and `PdfNetStack.Ocr` publish
+  with Native AOT and trimming on linux-x64 and linux-arm64 with no warnings, checked in CI.
+- **Globalization.** Parsing and output do not depend on the culture. The test suite passes
+  under invariant globalization (`InvariantGlobalization`) and under tr-TR.
+- **File system.** Nothing is written except to the paths and streams you pass, and to temporary
+  files in two cases you choose: a stream that cannot seek opened on demand (in
+  `PdfLoadOptions.TempDirectory`), and the streaming optimizer. Both use the system temporary
+  folder by default, `/tmp` on Lambda, and delete their files when closed. Installed fonts are
+  only read, when `PdfFontCollection.System` is used; a missing font directory, an unreadable one
+  or no home directory gives an empty collection.
+- **Memory and streams.** `PdfLoadOptions` caps decoded streams and image pixels and opens files
+  on demand; `OpenAsync`, `SaveAsync` and `HtmlConverter.ConvertToPdfAsync` never block on the
+  caller's stream; an unoptimized save is written progressively; and
+  `PdfOptimizerOptions.Streaming` optimizes files larger than memory. See
+  [the large files guide](website/src/content/docs/guides/large-files.md).
+- **Long lived instances.** Static caches are thread safe and bounded, and variable font
+  instances are released once nothing uses them, so one warm instance can serve concurrent
+  requests indefinitely.
+
+Package the fonts your HTML needs and set `UseSystemFonts = false`. On a development machine,
+the first HTML conversion in a new Native AOT process took about 16 ms, against about 770 ms
+under the JIT. The [serverless samples](samples/serverless/README.md) have a complete Lambda
+function and an Azure Functions app, with a SAM template, sizing advice and cost estimates.
+
 ## Why another PDF tool
 
 Most PDF compression in the .NET world shells out to Ghostscript, depends on a copyleft or
@@ -108,9 +136,22 @@ var options = new PdfOptimizerOptions
     JpegQuality = 60,                           // opt-in, lossy: requantize JPEG images
     MaxImageDpi = 150,                          // opt-in, lossy: downsample oversampled images
     ConvertImagesToJpeg = true,                 // opt-in, lossy: photographs to JPEG at JpegQuality
+    QuantizeImages = true,                      // opt-in, lossy: drawings and screenshots to a palette
     MinImageSsim = 0.95,                        // keep any image a lossy change would hurt
 };
+
+// Files larger than memory: read on demand, written through a temporary file, proven there
+var streaming = new PdfOptimizerOptions { Streaming = true, MaxInputBytes = 8L << 30 };
+await PdfOptimizer.OptimizeFileAsync("archive.pdf", "archive-small.pdf", streaming);
 ```
+
+With `Streaming` the optimizer runs the same passes and the same proof without holding the file:
+the source is read on demand, the rewrite goes progressively to a temporary file (the
+destination's own for `OptimizeFileAsync`), and the proof reads it back on demand. Memory then
+follows the number of objects and the streams being recompressed, a batch of at most 32 MiB of
+source data at a time, not the size of the file. On a generated 278 MB file it peaked at about
+50 MB of live managed memory (a 300 to 460 MB working set) against 810 MB (1.4 GB) in memory,
+and wrote the same bytes. Linearization is not available in this mode.
 
 `PdfOptimizationResult` tells you what was written and why: `Disposition`, sizes, SHA-256 of
 input and output, page count, a human readable `Reason`, and per pass statistics and timings.
@@ -133,6 +174,7 @@ doc.Info.Title = "Signed contract";
 doc.Outlines.Add("Annex", doc.Pages[^1]);      // bookmarks, read and written
 
 doc.Save("contract-final.pdf");                // optimized and verified by default
+await doc.SaveAsync(response.Body);            // asynchronous writes only, for response bodies
 
 PdfDocument merged = PdfDocument.Merge([PdfDocument.Open("a.pdf"), PdfDocument.Open("b.pdf")]);
 foreach (PdfDocument single in merged.Split()) { /* one document per page */ }
@@ -143,11 +185,34 @@ leaves the original bytes, and any signatures over them, untouched:
 
 ```csharp
 using var stream = new FileStream("scan.pdf", FileMode.Open, FileAccess.ReadWrite);
-PdfDocument big = PdfDocument.OpenOnDemand(stream);  // reads the xref and page tree, nothing else
-string text = big.Pages[41].ExtractText();           // reads that page's content and fonts only
+using PdfDocument big = PdfDocument.OpenOnDemand(stream);  // reads the xref and page tree, nothing else
+string text = big.Pages[41].ExtractText();                 // reads that page's content and fonts only
 big.Info.Title = "Scanned archive";
-big.SaveIncremental(stream);                         // appends the changed objects in place
+big.SaveIncremental(stream);                               // appends the changed objects in place
 ```
+
+`PdfLoadOptions` sets how a document is opened and what it may cost: the password, the decode
+ceilings (`MaxDecodedStreamBytes`, `MaxImagePixels`), in memory or on demand, and where a stream
+that cannot seek is copied. `OpenAsync` reads a stream with asynchronous reads only, for request
+bodies and downloads in hosts such as AWS Lambda and Azure Functions:
+
+```csharp
+var options = new PdfLoadOptions { Mode = PdfLoadMode.OnDemand, TempDirectory = "/tmp", MaxImagePixels = 50_000_000 };
+using PdfDocument doc = await PdfDocument.OpenAsync(request.Body, options, cancellationToken);
+for (int i = 0; i < doc.Pages.Count; i++)
+{
+    Index(doc.Pages[i].ExtractText());
+    if (i % 50 == 49) doc.ReleaseUnusedObjects();  // frees what earlier pages parsed; edits are kept
+}
+```
+
+A full save with `Optimize = false` writes progressively: each object, or batch of objects for
+an object stream, goes to the output as soon as it is serialized, and the cross-reference data
+comes last, so memory follows the largest object rather than the file. For a document opened on
+demand, stream data is copied from the source as it is written. `SaveAsync` does the same with
+asynchronous writes only, as ASP.NET Core and Azure Functions require of response bodies. With
+the optimizer on, the default, the file is built in memory first, because the optimizer proves its
+rewrite against all of it.
 
 Named destinations, the anchors bookmarks and links point at by name, list, resolve and rename
 in one call; every bookmark, link and GoTo action follows the new name:
@@ -523,8 +588,9 @@ bits, JPEGs (decoded as libjpeg does), JPEG 2000 (JP2 files and raw codestreams;
 exact and lossy within one step of OpenJPEG), CCITT fax (Group 3 and 4, bit exact with libtiff)
 and JBIG2, through DeviceGray, RGB and CMYK, Cal and ICC based
 spaces, Indexed, Lab, Separation and DeviceN, with the Decode array and stencil masks applied. An
-image's pixels must fit the document's decode limit (`maxDecodedStreamBytes`, 256 MiB by
-default). JPEG 2000 is decoded a band of rows at a time straight into 8 bit pixels, so a 600 dpi
+image's pixels must fit the document's decode limit (`MaxDecodedStreamBytes`, 256 MiB by
+default) and its pixel limit (`PdfLoadOptions.MaxImagePixels`, 2^28 by default); a larger image
+is refused with `PdfFormatException` before its pixels are allocated. JPEG 2000 is decoded a band of rows at a time straight into 8 bit pixels, so a 600 dpi
 color page of 4812 by 7541 pixels takes about 190 MB at peak, its 109 MB of pixels included.
 
 ### Extracting text
@@ -590,6 +656,7 @@ ship to NuGet with the next release.
 using PdfNetStack.Html;
 
 byte[] pdf = HtmlConverter.ConvertToPdf(html);                              // a string
+await HtmlConverter.ConvertToPdfAsync(html, response.Body, cancellationToken: ct); // straight to a response
 PdfDocument doc = HtmlConverter.ConvertFileToDocument("invoice.html");      // a file and its assets
 ```
 
@@ -611,6 +678,7 @@ pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images onl
 pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
 pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
 pdfnetstack optimize in.pdf out.pdf --linearize         # fast web view
+pdfnetstack optimize huge.pdf out.pdf --streaming       # bounded memory, any input size
 pdfnetstack inspect in.pdf                  # where the bytes go
 pdfnetstack verify original.pdf other.pdf   # check any tool's output for equivalence
 
@@ -740,6 +808,7 @@ object streams have little left to gain losslessly.
 | `OptimizeJpegImages` | true | Lossless JPEG re-encoding |
 | `OptimizeBilevelImages` | true | 1 bit images to CCITT Group 4 when smaller, the same pixels |
 | `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
+| `QuantizeImages` | false | Raw RGB images to a palette when that stays faithful. Lossy, for drawings and screenshots |
 | `MaxImageDpi` | null | Downsample images drawn above 1.5 times this resolution, bilevel, CCITT, JBIG2 and JPEG 2000 included. Lossy |
 | `ConvertImagesToJpeg` | false | Photographic raw and JPEG 2000 images to JPEG at `JpegQuality`. Lossy |
 | `MinImageSsim` | null | 0 to 1; around 0.95 keeps changes hard to see |
@@ -749,7 +818,8 @@ object streams have little left to gain losslessly.
 | `AllowRepairedFiles` | false | Rewrites damaged files into clean ones |
 | `RemovePageThumbnails` | false | Not lossless |
 | `RemovePieceInfo` | false | Not lossless for the authoring app, invisible to viewers |
-| `MaxInputBytes` | 1 GiB | |
+| `Streaming` | false | Read on demand, write through a temporary file, prove it there: memory bounded by objects and batches, not the file. Not with `Linearize` |
+| `MaxInputBytes` | 1 GiB | Raise it with `Streaming` for larger files |
 | `MaxDecodedStreamBytes` | 256 MiB | Per stream decode ceiling |
 | `MaxDegreeOfParallelism` | CPU count | Lower it to cap memory on image heavy files |
 
@@ -762,18 +832,19 @@ in the [roadmap](docs/ROADMAP.md).
 |---|---|---|
 | Editing | Open, create, merge, split, import, reorder, rotate and remove pages; document info; bookmarks | 1.0 |
 | Encryption | Open RC4, AES-128 and AES-256 files; write AES-128/256 with permissions | 1.0 |
-| Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | 1.1, unreleased |
-| Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1, unreleased |
-| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections, variable font instances (TrueType and CFF2) | 1.1, unreleased |
-| Text layout | Line breaking, alignment, justification (with kashida), rich text, Arabic, Indic, Southeast Asian and other complex scripts, RTL, Unicode normalization | 1.1, unreleased |
-| Images and overlays | JPEG, PNG, GIF, BMP, TIFF, WebP and SVG placement with fit and opacity, pages of other PDFs as watermarks, letterheads, n-up | 1.1, unreleased |
-| Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1, unreleased |
-| Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1, unreleased |
-| Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA signing and verification with chain, revocation, policy and name constraint checks and qualified status, PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output, Factur-X and ZUGFeRD | 1.1, unreleased |
-| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1, unreleased |
-| Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1, unreleased |
-| Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1, unreleased |
-| OCR | `PdfNetStack.Ocr` add-on and `PdfNetStack.Ocr.Models`: searchable scans, Latin and Arabic, scans in one image or several, pages scanned sideways, an application supplied rasterizer; the `pdfnetstack-ocr` tool | 1.1, unreleased |
+| Object model | Public `PdfDictionary`, `PdfArray`, `PdfStream` and friends for anything the API lacks | 1.1 |
+| Drawing | Canvas on new and existing pages: paths, colors, transforms, clipping, gradients | 1.1 |
+| Fonts | Standard 14 fonts, TrueType/OpenType/WOFF/WOFF2 embedding with subsetting, kerning, font collections, variable font instances (TrueType and CFF2) | 1.1 |
+| Text layout | Line breaking, alignment, justification (with kashida), rich text, Arabic, Indic, Southeast Asian and other complex scripts, RTL, Unicode normalization | 1.1 |
+| Images and overlays | JPEG, PNG, GIF, BMP, TIFF, WebP and SVG placement with fit and opacity, pages of other PDFs as watermarks, letterheads, n-up | 1.1 |
+| Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1 |
+| Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1 |
+| Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA signing and verification with chain, revocation, policy and name constraint checks and qualified status, PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output, Factur-X and ZUGFeRD | 1.1 |
+| HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1 |
+| Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1 |
+| Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1 |
+| OCR | `PdfNetStack.Ocr` add-on and `PdfNetStack.Ocr.Models`: searchable scans, Latin and Arabic, scans in one image or several, pages scanned sideways, an application supplied rasterizer; the `pdfnetstack-ocr` tool | 1.1 |
+| Large files and serverless | Documents opened on demand from files and streams that cannot seek, image and decode limits, progressive and asynchronous saving, a streaming optimizer for files larger than memory; Native AOT on linux-x64 and linux-arm64; AWS Lambda and Azure Functions samples | 1.1 |
 
 ### Low level access
 
@@ -822,10 +893,22 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
   run 64 bit and reference `Microsoft.ML.OnnxRuntime` itself, so its native runtime is copied next
   to the app.
 - Linearization is opt-in (`Linearize`); without it, the linearization of an input is dropped.
-- The optimizer and full saves hold the whole document in memory. Peak memory depends on decoded
+- In memory, the default, the optimizer holds the whole document. Peak memory depends on decoded
   image sizes and on parallelism: plan for about 10 times the file size, more for image heavy
-  files, or lower `MaxDegreeOfParallelism`. To read or edit a large file without loading it, use
-  `PdfDocument.OpenOnDemand` and `SaveIncremental`.
+  files, or lower `MaxDegreeOfParallelism`. `Streaming` keeps memory bounded instead, at the
+  cost of a temporary file the size of the output and more reads of the source. Its output can
+  differ slightly from the in-memory rewrite, because duplicates are found before recompression:
+  two JPEG files that differ only in metadata stay two.
+- A full save with the optimizer, the default, builds the file in memory; with `Optimize = false`
+  it is written progressively. To read or edit a large file without loading it, open
+  it with `PdfLoadMode.OnDemand`, then use `SaveIncremental` or a progressive save.
+- A document read on demand keeps every object it parses (about 25 KB a page for pages with their
+  own fonts) until `ReleaseUnusedObjects` frees those nothing uses, and decoded object streams up
+  to `MaxDecodedStreamBytes`. In memory, a document holds the whole file, and a stream that cannot
+  seek is read into pieces joined once, so about twice its size at peak.
+- Encrypted output draws a random initialization vector for every string and stream, so two
+  saves of an encrypted document never match byte for byte; neither do two PDF/A saves, whose
+  metadata records a new instance id and the time of the save.
 
 ## Documentation
 

@@ -18,13 +18,19 @@ namespace PdfNetStack;
 /// that is not linearized yet is written even when it is larger.
 /// With <see cref="PdfOptimizerOptions.JpegQuality"/> set, JPEG images may be requantized; the
 /// proof then checks that each such image changed by exactly that requantization and nothing else.
+/// By default the input and the rewrite are held in memory; with
+/// <see cref="PdfOptimizerOptions.Streaming"/> neither is, for files larger than memory.
 /// </summary>
 public static partial class PdfOptimizer
 {
     /// <summary>Optimizes a PDF held in memory and writes the result to <paramref name="output"/>.</summary>
     /// <param name="input">The complete source PDF. It is never modified.</param>
     /// <param name="output">Receives the optimized PDF, or the original bytes when no safe saving exists.</param>
-    /// <param name="options">Optimization options; <see cref="PdfOptimizerOptions.Default"/> when null.</param>
+    /// <param name="options">
+    /// Optimization options; <see cref="PdfOptimizerOptions.Default"/> when null. With
+    /// <see cref="PdfOptimizerOptions.Streaming"/>, the rewrite goes through a temporary file
+    /// instead of memory.
+    /// </param>
     /// <param name="cancellationToken">Cancels between and within passes.</param>
     /// <returns>What was written and why.</returns>
     public static PdfOptimizationResult Optimize(
@@ -36,6 +42,7 @@ public static partial class PdfOptimizer
         Compat.ThrowIfNull(output, nameof(output));
         options ??= PdfOptimizerOptions.Default;
         options.Validate();
+        if (options.Streaming) return OptimizeStreaming(new Source(input), output, options, cancellationToken);
 
         var clock = Stopwatch.StartNew();
         string sourceHash = Sha256Hex(input.Span);
@@ -63,6 +70,16 @@ public static partial class PdfOptimizer
     }
 
     /// <summary>Reads <paramref name="input"/> to the end, optimizes it and writes to <paramref name="output"/>.</summary>
+    /// <remarks>
+    /// <paramref name="output"/> is written only asynchronously. By default the input is read
+    /// asynchronously into memory. With <see cref="PdfOptimizerOptions.Streaming"/>, a
+    /// <see cref="FileStream"/> or <see cref="MemoryStream"/> positioned at its start is read on
+    /// demand where it is, and any other input is first copied, asynchronously, to a temporary file.
+    /// </remarks>
+    /// <param name="input">The source PDF, read from its current position to its end.</param>
+    /// <param name="output">Receives the optimized PDF, or the input unchanged.</param>
+    /// <param name="options">Optimization options; <see cref="PdfOptimizerOptions.Default"/> when null.</param>
+    /// <param name="cancellationToken">Cancels between and within passes.</param>
     public static async Task<PdfOptimizationResult> OptimizeAsync(
         Stream input,
         Stream output,
@@ -72,6 +89,12 @@ public static partial class PdfOptimizer
         Compat.ThrowIfNull(input, nameof(input));
         Compat.ThrowIfNull(output, nameof(output));
         options ??= PdfOptimizerOptions.Default;
+        if (options.Streaming)
+        {
+            options.Validate();
+            return await OptimizeStreamingAsync(input, output, options, cancellationToken).ConfigureAwait(false);
+        }
+
 #pragma warning disable CA1835 // Array overloads keep one code path for .NET Standard 2.0.
         // Buffer at most MaxInputBytes. Anything larger is streamed through untouched without
         // ever being held in memory, as the in-memory path would return it unchanged anyway.
@@ -109,6 +132,16 @@ public static partial class PdfOptimizer
     /// Optimizes a file. The destination is written through a temporary file and moved into place,
     /// so readers never observe a partial file. Source and destination must differ.
     /// </summary>
+    /// <remarks>
+    /// By default the source is read into memory. With <see cref="PdfOptimizerOptions.Streaming"/>
+    /// it is read on demand, and the rewrite is written to the destination's temporary file and
+    /// proven there before it is moved into place; when it is not used, the source is copied there
+    /// instead.
+    /// </remarks>
+    /// <param name="sourcePath">The PDF to optimize. It is never modified.</param>
+    /// <param name="destinationPath">Receives the optimized PDF, or a copy of the source.</param>
+    /// <param name="options">Optimization options; <see cref="PdfOptimizerOptions.Default"/> when null.</param>
+    /// <param name="cancellationToken">Cancels between and within passes; the destination is then left as it was.</param>
     public static async Task<PdfOptimizationResult> OptimizeFileAsync(
         string sourcePath,
         string destinationPath,
@@ -120,6 +153,12 @@ public static partial class PdfOptimizer
         if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Source and destination must be different files.", nameof(destinationPath));
+        }
+
+        if (options is { Streaming: true })
+        {
+            options.Validate();
+            return await OptimizeFileStreamingAsync(source, destination, options, cancellationToken).ConfigureAwait(false);
         }
 
         byte[] data = await Compat.ReadAllBytesAsync(source, cancellationToken).ConfigureAwait(false);
@@ -175,45 +214,15 @@ public static partial class PdfOptimizer
         try
         {
             pageCount = CountPages(file);
-
-            if (file.Trailer["Encrypt"] is not null and not PdfNull)
+            if (Unsupported(file, input.Span.IndexOf("/ByteRange"u8) >= 0, options) is { } unsupported)
             {
-                return Retained(OptimizationDisposition.UnsupportedRetained, "Encrypted PDF.");
-            }
-
-            if (input.Span.IndexOf("/ByteRange"u8) >= 0)
-            {
-                return Retained(OptimizationDisposition.UnsupportedRetained, "Digitally signed PDF.");
-            }
-
-            if (file.RevisionCount > 1 && !options.AllowIncrementalUpdates)
-            {
-                return Retained(OptimizationDisposition.UnsupportedRetained,
-                    $"PDF has {file.RevisionCount} revisions (incremental updates). Set AllowIncrementalUpdates to flatten.");
-            }
-
-            if ((file.WasReconstructed || file.LengthsRepaired > 0) && !options.AllowRepairedFiles)
-            {
-                return Retained(OptimizationDisposition.UnsupportedRetained,
-                    "PDF is damaged and needed repair. Set AllowRepairedFiles to rewrite it.");
+                return Retained(OptimizationDisposition.UnsupportedRetained, unsupported);
             }
 
             ObjectGraph graph = ObjectGraph.Collect(file, options.RemovePageThumbnails, options.RemovePieceInfo, ct);
-            if (graph.HasSignatureMarkers)
+            if (Unsupported(graph, file, options) is { } unsupportedGraph)
             {
-                return Retained(OptimizationDisposition.UnsupportedRetained, "Digitally signed or usage-rights enabled PDF.");
-            }
-
-            if (graph.HasGenerationMismatch && !options.AllowRepairedFiles)
-            {
-                return Retained(OptimizationDisposition.UnsupportedRetained,
-                    "References name generations the cross-reference data does not record. Set AllowRepairedFiles to rewrite it.");
-            }
-
-            if (file.UnreadableObjects > 0 && !options.AllowRepairedFiles)
-            {
-                return Retained(OptimizationDisposition.UnsupportedRetained,
-                    $"{file.UnreadableObjects} object(s) could not be parsed. Set AllowRepairedFiles to rewrite it.");
+                return Retained(OptimizationDisposition.UnsupportedRetained, unsupportedGraph);
             }
 
             bool pdfA1 = IsPdfA1(file, options.MaxDecodedStreamBytes);
@@ -248,8 +257,8 @@ public static partial class PdfOptimizer
             if (options.RecompressStreams || compact.Count > 0)
             {
                 JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality, options.ProgressiveJpeg, options.MinImageSsim) : null;
-                ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg
-                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg)
+                ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg || options.QuantizeImages
+                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg) { Quantize = options.QuantizeImages }
                     : null;
                 var scope = new RecompressionScope(options.RecompressStreams, compact, encoded, options.DeduplicateObjects);
                 recompressed = StreamRecompressor.Run(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors,
@@ -334,6 +343,7 @@ public static partial class PdfOptimizer
                 JpegImagesRequantized = recompressed.JpegRequantized,
                 ImagesDownsampled = recompressed.Downsampled,
                 ImagesConvertedToJpeg = recompressed.ConvertedToJpeg,
+                ImagesQuantized = recompressed.Quantized,
                 ImagesKeptByQualityGate = recompressed.KeptByGate,
                 ImagesRecodedAsGroup4 = recompressed.Group4,
                 ResourcesPruned = pruned,
@@ -397,6 +407,42 @@ public static partial class PdfOptimizer
         Outcome Retained(OptimizationDisposition disposition, string reason) => new(disposition, null, reason, pageCount, null);
     }
 
+    /// <summary>Why a file is left as it is, from what opening it showed; null when it may be rewritten.</summary>
+    /// <param name="signed">The file's bytes hold a signature's /ByteRange.</param>
+    private static string? Unsupported(PdfFile file, bool signed, PdfOptimizerOptions options)
+    {
+        if (file.Trailer["Encrypt"] is not null and not PdfNull) return "Encrypted PDF.";
+        if (signed) return "Digitally signed PDF.";
+        if (file.RevisionCount > 1 && !options.AllowIncrementalUpdates)
+        {
+            return $"PDF has {file.RevisionCount} revisions (incremental updates). Set AllowIncrementalUpdates to flatten.";
+        }
+
+        if ((file.WasReconstructed || file.LengthsRepaired > 0) && !options.AllowRepairedFiles)
+        {
+            return "PDF is damaged and needed repair. Set AllowRepairedFiles to rewrite it.";
+        }
+
+        return null;
+    }
+
+    /// <summary>Why a file is left as it is, from what walking its object graph showed; null when it may be rewritten.</summary>
+    private static string? Unsupported(ObjectGraph graph, PdfFile file, PdfOptimizerOptions options)
+    {
+        if (graph.HasSignatureMarkers) return "Digitally signed or usage-rights enabled PDF.";
+        if (graph.HasGenerationMismatch && !options.AllowRepairedFiles)
+        {
+            return "References name generations the cross-reference data does not record. Set AllowRepairedFiles to rewrite it.";
+        }
+
+        if (file.UnreadableObjects > 0 && !options.AllowRepairedFiles)
+        {
+            return $"{file.UnreadableObjects} object(s) could not be parsed. Set AllowRepairedFiles to rewrite it.";
+        }
+
+        return null;
+    }
+
     /// <summary>What was written, naming every lossy image change.</summary>
     private static string Reason(PdfOptimizerOptions options, RecompressionCounts recompressed)
     {
@@ -404,6 +450,7 @@ public static partial class PdfOptimizer
         if (recompressed.JpegRequantized > 0) lossy.Add(Compat.Format("{0} JPEG image(s) requantized to quality {1}", recompressed.JpegRequantized, options.JpegQuality!.Value));
         if (recompressed.Downsampled > 0) lossy.Add(Compat.Format("{0} image(s) downsampled to {1} dpi", recompressed.Downsampled, options.MaxImageDpi!.Value));
         if (recompressed.ConvertedToJpeg > 0) lossy.Add(Compat.Format("{0} image(s) converted to JPEG at quality {1}", recompressed.ConvertedToJpeg, options.JpegQuality!.Value));
+        if (recompressed.Quantized > 0) lossy.Add(Compat.Format("{0} image(s) reduced to a palette", recompressed.Quantized));
         if (lossy.Count == 0)
         {
             return options.Verify

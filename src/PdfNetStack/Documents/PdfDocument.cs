@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using PdfNetStack.Documents;
@@ -54,8 +55,10 @@ public sealed record PdfSaveOptions
 /// <remarks>
 /// Editing a digitally signed document invalidates its signatures. Content of imported pages, including fonts, images, annotations and their
 /// appearance streams, is copied; resources shared by several imported pages are copied once.
+/// A document read on demand (<see cref="PdfLoadMode.OnDemand"/>) holds its file until it is
+/// disposed; disposing any other document does nothing.
 /// </remarks>
-public sealed class PdfDocument
+public sealed class PdfDocument : IDisposable
 {
     private readonly HashSet<int> _pageTreeNodes = new();
     private readonly HashSet<int> _everPages = new();
@@ -85,10 +88,16 @@ public sealed class PdfDocument
 
     internal ObjectStore Objects { get; private set; } = new();
 
-    // The file an opened document came from, the stream it was read from when opened on demand,
-    // and what the page tree looked like after opening: what an incremental save compares with.
+    // The file an opened document came from, the caller's stream it was read from when opened on
+    // demand, and what the page tree looked like after opening: what an incremental save compares with.
     private PdfFile? _file;
     private Stream? _sourceStream;
+
+    // A document read on demand stops working when disposed, and closes what it opened itself:
+    // a file opened by path, or the temporary copy of a stream that cannot seek.
+    private bool _closeOnDispose;
+    private bool _disposed;
+    private IDisposable? _owned;
     private List<int> _openedPages = [];
     private bool _pageTreeMatchesFile = true;
     private readonly Dictionary<int, List<(string Key, PdfObject Value)>> _inherited = new();
@@ -98,6 +107,9 @@ public sealed class PdfDocument
 
     internal int NextNumber { get; set; } = 1;
 
+    /// <summary>Objects of the file parsed and kept so far, for a document read on demand.</summary>
+    internal int CachedObjectCount => _file?.CachedCount ?? 0;
+
     /// <summary>
     /// The document catalog (ISO 32000-1, 7.7.2), root of the object graph. Use it with
     /// <see cref="Resolve(PdfObject?)"/> and <see cref="AddObject(PdfObject)"/> for features the
@@ -106,7 +118,10 @@ public sealed class PdfDocument
     public PdfDictionary Catalog { get; private set; } = new();
 
     /// <summary>Per stream decode ceiling for <see cref="GetStreamData(PdfStream)"/>.</summary>
-    internal long DecodeLimit { get; private set; } = 256L << 20;
+    internal long DecodeLimit { get; private set; } = PdfLoadOptions.DefaultMaxDecodedStreamBytes;
+
+    /// <summary>Most pixels an image of this document may decode to.</summary>
+    internal long MaxImagePixels { get; private set; } = PdfLoadOptions.DefaultMaxImagePixels;
 
     internal int CatalogNumber { get; private set; }
 
@@ -162,32 +177,196 @@ public sealed class PdfDocument
         return doc;
     }
 
-    /// <summary>Opens a document from a file.</summary>
+    /// <summary>Opens a document from a file, read into memory.</summary>
     /// <param name="path">File to open.</param>
     /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
     /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
     /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
-    public static PdfDocument Open(string path, string? password = null) => Open(File.ReadAllBytes(path), password);
+    [OverloadResolutionPriority(1)]
+    public static PdfDocument Open(string path, string? password = null) => Open(path, new PdfLoadOptions { Password = password });
 
-    /// <summary>Opens a document from a stream, read to its end.</summary>
-    public static PdfDocument Open(Stream stream, string? password = null)
+    /// <summary>
+    /// Opens a document from a file. In memory, the file is read in one pass into an array of its
+    /// size and closed. On demand, the document opens the file for reading, shared with other
+    /// readers, and keeps it open until it is disposed.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// using PdfDocument doc = PdfDocument.Open("archive.pdf", new PdfLoadOptions { Mode = PdfLoadMode.OnDemand });
+    /// foreach (PdfPage page in doc.Pages) Console.WriteLine(page.ExtractText());
+    /// </code>
+    /// </example>
+    /// <param name="path">File to open.</param>
+    /// <param name="options">Password, limits and mode.</param>
+    /// <exception cref="ArgumentOutOfRangeException">An option is out of range.</exception>
+    /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    public static PdfDocument Open(string path, PdfLoadOptions options)
+    {
+        Compat.ThrowIfNull(path, nameof(path));
+        Compat.ThrowIfNull(options, nameof(options));
+        options.Validate();
+        if (options.Mode == PdfLoadMode.InMemory) return Load(File.ReadAllBytes(path), options);
+
+        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
+        return OnStream(file, options, owned: file, appendable: false);
+    }
+
+    /// <summary>Opens a document from a stream, read into memory from its position to its end.</summary>
+    /// <param name="stream">The stream to read. It is not disposed.</param>
+    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
+    /// <exception cref="PdfFormatException">The data is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    [OverloadResolutionPriority(1)]
+    public static PdfDocument Open(Stream stream, string? password = null) => Open(stream, new PdfLoadOptions { Password = password });
+
+    /// <summary>Opens a document from a stream, from its position. The document never disposes the stream.</summary>
+    /// <remarks>
+    /// <para>
+    /// In memory, the stream is read to its end once: a <see cref="MemoryStream"/> whose buffer is
+    /// exposed is used without copying (do not change it while the document is in use), a stream
+    /// that can seek is read into an array of the size it reports, and any other stream into a
+    /// buffer that grows as it reads. The stream is not used again.
+    /// </para>
+    /// <para>
+    /// On demand, a stream that can seek is read in place each time the document needs data, so
+    /// it must stay open and unchanged while the document is in use, and nothing else may read it
+    /// meanwhile; <see cref="SaveIncremental(Stream)"/> given the same stream appends to it. A
+    /// stream that cannot seek is copied first, to memory up to
+    /// <see cref="PdfLoadOptions.SpoolThreshold"/> and to a temporary file past it. The copy is
+    /// the document's own and is deleted when the document is disposed.
+    /// </para>
+    /// </remarks>
+    /// <param name="stream">A readable stream.</param>
+    /// <param name="options">Password, limits and mode.</param>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> cannot be read.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">An option is out of range.</exception>
+    /// <exception cref="PdfFormatException">The data is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    /// <exception cref="NotSupportedException">In memory, the stream holds 2 GiB or more; open it on demand.</exception>
+    public static PdfDocument Open(Stream stream, PdfLoadOptions options)
     {
         Compat.ThrowIfNull(stream, nameof(stream));
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return Open(buffer.ToArray(), password);
+        Compat.ThrowIfNull(options, nameof(options));
+        options.Validate();
+        if (!stream.CanRead) throw new ArgumentException("The stream must be readable.", nameof(stream));
+        if (options.Mode == PdfLoadMode.InMemory) return Load(InputReader.ReadToEnd(stream), options);
+        if (stream.CanSeek) return OnStream(stream, options, owned: null, appendable: true);
+        return OnSpool(Spool.Copy(stream, options.SpoolThreshold, options.TempDirectory), options);
     }
 
     /// <summary>
     /// Opens a document from memory. Stream data is referenced, not copied, so the buffer must
     /// not change while the document is in use.
     /// </summary>
-    public static PdfDocument Open(ReadOnlyMemory<byte> data, string? password = null, long maxDecodedStreamBytes = 256L << 20)
-    {
-        PdfFile file = PdfFile.Open(data, maxDecodedStreamBytes);
-        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
+    /// <param name="data">The file's bytes.</param>
+    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
+    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
+    /// <exception cref="PdfFormatException">The data is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    [OverloadResolutionPriority(1)]
+    public static PdfDocument Open(ReadOnlyMemory<byte> data, string? password = null, long maxDecodedStreamBytes = PdfLoadOptions.DefaultMaxDecodedStreamBytes) =>
+        Open(data, new PdfLoadOptions { Password = password, MaxDecodedStreamBytes = maxDecodedStreamBytes });
 
-        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes, _file = file };
+    /// <summary>
+    /// Opens a document from memory. Stream data is referenced, not copied, so the buffer must
+    /// not change while the document is in use. On demand, objects are parsed only when first
+    /// used, which saves the memory and time of parsing what the application never reads.
+    /// Disposing the document does nothing: the memory is the caller's.
+    /// </summary>
+    /// <param name="data">The file's bytes.</param>
+    /// <param name="options">Password, limits and mode. The spool settings do not apply.</param>
+    /// <exception cref="ArgumentOutOfRangeException">An option is out of range.</exception>
+    /// <exception cref="PdfFormatException">The data is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    public static PdfDocument Open(ReadOnlyMemory<byte> data, PdfLoadOptions options)
+    {
+        Compat.ThrowIfNull(options, nameof(options));
+        options.Validate();
+        if (options.Mode == PdfLoadMode.InMemory) return Load(data, options);
+        return OnDemand(PdfFile.Open(data, options.MaxDecodedStreamBytes), options, source: null, owned: null, closeOnDispose: false);
+    }
+
+    /// <summary>
+    /// Opens a document from a stream without reading it synchronously, for network streams and
+    /// hosts that forbid synchronous I/O, such as ASP.NET Core request bodies. The stream is read
+    /// from its position to its end, asynchronously, and not used again; parsing then runs on the
+    /// calling thread. In memory, the data is held as <see cref="Open(Stream, PdfLoadOptions)"/>
+    /// holds it. On demand, it is copied to memory up to <see cref="PdfLoadOptions.SpoolThreshold"/>
+    /// and to a temporary file past it, deleted when the document is disposed. To read a file on
+    /// demand without copying it, open it by path.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// var options = new PdfLoadOptions { Mode = PdfLoadMode.OnDemand, TempDirectory = "/tmp" };
+    /// using PdfDocument doc = await PdfDocument.OpenAsync(request.Body, options, cancellationToken);
+    /// string first = doc.Pages[0].ExtractText();
+    /// </code>
+    /// </example>
+    /// <param name="stream">A readable stream. It is not disposed.</param>
+    /// <param name="options">Password, limits and mode; null for the defaults (in memory).</param>
+    /// <param name="cancellationToken">Stops reading; any temporary copy is deleted.</param>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> cannot be read.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">An option is out of range.</exception>
+    /// <exception cref="OperationCanceledException">Cancelled before the document was open.</exception>
+    /// <exception cref="PdfFormatException">The data is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    /// <exception cref="NotSupportedException">In memory, the stream holds 2 GiB or more; open it on demand.</exception>
+    public static async Task<PdfDocument> OpenAsync(Stream stream, PdfLoadOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Compat.ThrowIfNull(stream, nameof(stream));
+        options ??= PdfLoadOptions.Default;
+        options.Validate();
+        if (!stream.CanRead) throw new ArgumentException("The stream must be readable.", nameof(stream));
+        if (options.Mode == PdfLoadMode.InMemory)
+        {
+            ReadOnlyMemory<byte> data = await InputReader.ReadToEndAsync(stream, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return Load(data, options);
+        }
+
+        Spool spool = await Spool.CopyAsync(stream, options.SpoolThreshold, options.TempDirectory, cancellationToken).ConfigureAwait(false);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            spool.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        return OnSpool(spool, options);
+    }
+
+    /// <summary>
+    /// Opens a document from a stream without reading the file into memory. The
+    /// cross-reference data and the page tree are read when opening; every other object is
+    /// parsed when first used, and stream data (page content, images, fonts) is read from
+    /// <paramref name="stream"/> each time it is needed and not kept. Memory use therefore
+    /// follows what the application touches, not the size of the file: a document of any size
+    /// can be read page by page, and <see cref="SaveIncremental(Stream)"/> writes only what
+    /// changed. <see cref="ToArray(PdfSaveOptions?)"/> still builds the whole output in memory.
+    /// The same as <see cref="Open(Stream, PdfLoadOptions)"/> with <see cref="PdfLoadMode.OnDemand"/>.
+    /// </summary>
+    /// <param name="stream">
+    /// A readable stream positioned anywhere. One that can seek must stay open and unchanged while
+    /// the document is in use, and must not be read by anyone else meanwhile. One that cannot seek
+    /// is copied to memory up to 16 MiB and to a file in the system's temporary folder past it,
+    /// deleted when the document is disposed. The document never disposes the stream.
+    /// </param>
+    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
+    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
+    /// <exception cref="ArgumentException"><paramref name="stream"/> cannot be read.</exception>
+    /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
+    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
+    public static PdfDocument OpenOnDemand(Stream stream, string? password = null, long maxDecodedStreamBytes = PdfLoadOptions.DefaultMaxDecodedStreamBytes) =>
+        Open(stream, new PdfLoadOptions { Password = password, MaxDecodedStreamBytes = maxDecodedStreamBytes, Mode = PdfLoadMode.OnDemand });
+
+    /// <summary>Parses a file held in memory: every object reachable from the trailer.</summary>
+    private static PdfDocument Load(ReadOnlyMemory<byte> data, PdfLoadOptions options)
+    {
+        long limit = options.MaxDecodedStreamBytes;
+        PdfFile file = PdfFile.Open(data, limit);
+        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(options.Password);
+
+        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = limit, MaxImagePixels = options.MaxImagePixels, _file = file };
         ObjectGraph graph = ObjectGraph.Collect(file, stripThumbnails: false, stripPieceInfo: false, CancellationToken.None);
         foreach (int number in graph.Order) doc.Objects[number] = file.GetObject(number);
         doc.NextNumber = (doc.Objects.Count == 0 ? 0 : doc.Objects.Keys.Max()) + 1;
@@ -197,32 +376,69 @@ public sealed class PdfDocument
     }
 
     /// <summary>
-    /// Opens a document from a seekable stream without reading the file into memory. The
-    /// cross-reference data and the page tree are read when opening; every other object is
-    /// parsed when first used, and stream data (page content, images, fonts) is read from
-    /// <paramref name="stream"/> each time it is needed and not kept. Memory use therefore
-    /// follows what the application touches, not the size of the file: a document of any size
-    /// can be read page by page, and <see cref="SaveIncremental(Stream)"/> writes only what
-    /// changed. <see cref="ToArray(PdfSaveOptions?)"/> still builds the whole output in memory.
+    /// Opens on demand from a seekable stream. <paramref name="owned"/> closes with the document,
+    /// or at once if opening fails. Only the caller's own stream is <paramref name="appendable"/>:
+    /// an incremental save given that stream appends to it.
     /// </summary>
-    /// <param name="stream">A readable, seekable stream positioned anywhere. It must stay open and unchanged while the document is in use, and must not be read by anyone else meanwhile. The document never disposes it.</param>
-    /// <param name="password">User or owner password for encrypted files. Null tries the empty user password.</param>
-    /// <param name="maxDecodedStreamBytes">Ceiling for any single decoded stream.</param>
-    /// <exception cref="ArgumentException"><paramref name="stream"/> cannot be read or cannot seek.</exception>
-    /// <exception cref="PdfFormatException">The file is not a readable PDF.</exception>
-    /// <exception cref="PdfPasswordException">The file is encrypted and the password does not open it.</exception>
-    public static PdfDocument OpenOnDemand(Stream stream, string? password = null, long maxDecodedStreamBytes = 256L << 20)
+    private static PdfDocument OnStream(Stream stream, PdfLoadOptions options, IDisposable? owned, bool appendable)
     {
-        Compat.ThrowIfNull(stream, nameof(stream));
-        PdfFile file = PdfFile.Open(stream, maxDecodedStreamBytes);
-        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(password);
+        try
+        {
+            return OnDemand(PdfFile.Open(stream, options.MaxDecodedStreamBytes), options, appendable ? stream : null, owned, closeOnDispose: true);
+        }
+        catch
+        {
+            owned?.Dispose();
+            throw;
+        }
+    }
 
-        var doc = new PdfDocument(file.HeaderVersion, file.Security) { DecodeLimit = maxDecodedStreamBytes, _file = file, _sourceStream = stream };
+    /// <summary>Opens on demand from a private copy, which the document owns from then on.</summary>
+    private static PdfDocument OnSpool(Spool spool, PdfLoadOptions options)
+    {
+        if (spool.File is { } file) return OnStream(file, options, owned: spool, appendable: false);
+        return OnDemand(PdfFile.Open(spool.Memory, options.MaxDecodedStreamBytes), options, source: null, owned: null, closeOnDispose: true);
+    }
+
+    private static PdfDocument OnDemand(PdfFile file, PdfLoadOptions options, Stream? source, IDisposable? owned, bool closeOnDispose)
+    {
+        if (file.Trailer["Encrypt"] is not null and not PdfNull) file.Unlock(options.Password);
+
+        var doc = new PdfDocument(file.HeaderVersion, file.Security)
+        {
+            DecodeLimit = options.MaxDecodedStreamBytes,
+            MaxImagePixels = options.MaxImagePixels,
+            _file = file,
+            _sourceStream = source,
+            _owned = owned,
+            _closeOnDispose = closeOnDispose,
+        };
         doc.Objects = new ObjectStore(file);
         doc.NextNumber = FirstFreeNumber(file);
         doc.Attach(file);
         return doc;
     }
+
+    /// <summary>
+    /// Releases the file a document read on demand reads from: a file it opened itself is
+    /// closed, and a temporary copy of a stream is deleted. The caller's stream is never
+    /// disposed. Afterwards the document can no longer be used: anything that needs its objects
+    /// or its file throws <see cref="ObjectDisposedException"/>. A document read into memory, or
+    /// created, holds nothing to release, and disposing it does nothing. Calling it again does
+    /// nothing either.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed || !_closeOnDispose) return;
+        _disposed = true;
+        Objects.Close();
+        (_file?.Source as StreamSource)?.Close();
+        (_baseline?.Source as StreamSource)?.Close();
+        _owned?.Dispose();
+        _owned = null;
+    }
+
+    private void ThrowIfDisposed() => Compat.ThrowIfDisposed(_disposed, this);
 
     /// <summary>
     /// The first number no object of the file uses, so objects added later never take the number
@@ -286,6 +502,7 @@ public sealed class PdfDocument
     }
 
     /// <summary>Saves to a file, replacing it atomically.</summary>
+    /// <remarks>Written as <see cref="Save(Stream, PdfSaveOptions?)"/> writes, to a temporary file next to it that is then moved into place.</remarks>
     public void Save(string path, PdfSaveOptions? options = null)
     {
         string full = Path.GetFullPath(path);
@@ -307,11 +524,114 @@ public sealed class PdfDocument
         }
     }
 
-    /// <summary>Saves the document as a new single revision PDF.</summary>
+    /// <summary>
+    /// Saves the document as a new single revision PDF, the same bytes <see cref="ToArray"/>
+    /// returns for the same options.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// With <see cref="PdfSaveOptions.Optimize"/> off, the file is written progressively: each
+    /// object, or batch of objects packed into an object stream, goes to <paramref name="stream"/>
+    /// as soon as it is serialized, and the cross-reference data comes last. Beyond the document
+    /// itself, memory then follows the largest object or batch, not the file; stream data of a
+    /// document opened with <see cref="OpenOnDemand"/> is read from its source as it is written.
+    /// </para>
+    /// <para>
+    /// With <see cref="PdfSaveOptions.Optimize"/> on, the default, the whole file is built in
+    /// memory first: the optimizer reads all of it and proves its rewrite equivalent before any
+    /// of it is used, and encryption, when set, is a last pass over the optimized file. To
+    /// optimize a document too large for that, save it with <c>Optimize = false</c> to a file and
+    /// run <see cref="PdfOptimizer"/> on that file with <see cref="PdfOptimizerOptions.Streaming"/>.
+    /// </para>
+    /// <para>
+    /// When writing fails, the exception propagates and what reached <paramref name="stream"/> is
+    /// not a complete file.
+    /// </para>
+    /// </remarks>
     public void Save(Stream stream, PdfSaveOptions? options = null)
     {
         Compat.ThrowIfNull(stream, nameof(stream));
-        stream.Write(ToArray(options));
+        options ??= PdfSaveOptions.Default;
+        if (options.Optimize)
+        {
+            stream.Write(Build(options, CancellationToken.None));
+            return;
+        }
+
+        SavePlan plan = PlanSave(options);
+        foreach (ReadOnlyMemory<byte> chunk in PdfDocumentWriter.WriteChunks(plan.Objects, plan.Trailer, plan.Map, plan.Settings))
+        {
+            stream.Write(chunk.Span);
+        }
+    }
+
+    /// <summary>
+    /// Saves the document as <see cref="Save(Stream, PdfSaveOptions?)"/> does, writing to
+    /// <paramref name="stream"/> only asynchronously, and flushes it. Suits response bodies and
+    /// other streams that forbid synchronous writes, such as those of ASP.NET Core and Azure
+    /// Functions.
+    /// </summary>
+    /// <remarks>
+    /// Serializing, compressing and optimizing run on the calling thread between writes; they
+    /// are work for the processor, not waits. Memory use is as described for
+    /// <see cref="Save(Stream, PdfSaveOptions?)"/>.
+    /// </remarks>
+    /// <param name="stream">Receives the PDF from its current position.</param>
+    /// <param name="options">Save options; <see cref="PdfSaveOptions.Default"/> when null.</param>
+    /// <param name="cancellationToken">
+    /// Observed before each object is written and by each write. When it fires, the save stops
+    /// with <see cref="OperationCanceledException"/> and what reached the stream is not a complete file.
+    /// </param>
+    public async Task SaveAsync(Stream stream, PdfSaveOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Compat.ThrowIfNull(stream, nameof(stream));
+        options ??= PdfSaveOptions.Default;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (options.Optimize)
+        {
+            byte[] data = Build(options, cancellationToken);
+            await OutputStreams.WriteAsync(stream, data, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            SavePlan plan = PlanSave(options);
+            foreach (ReadOnlyMemory<byte> chunk in PdfDocumentWriter.WriteChunks(plan.Objects, plan.Trailer, plan.Map, plan.Settings, ct: cancellationToken))
+            {
+                await OutputStreams.WriteAsync(stream, chunk, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Saves to a file as <see cref="Save(string, PdfSaveOptions?)"/> does, writing
+    /// asynchronously. The file is replaced only once the whole output is written; on failure or
+    /// cancellation it is left as it was.
+    /// </summary>
+    /// <param name="path">The file to write.</param>
+    /// <param name="options">Save options; <see cref="PdfSaveOptions.Default"/> when null.</param>
+    /// <param name="cancellationToken">Observed before each object is written and by each write.</param>
+    public async Task SaveAsync(string path, PdfSaveOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Compat.ThrowIfNull(path, nameof(path));
+        string full = Path.GetFullPath(path);
+        string? directory = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+        string temp = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+            {
+                await SaveAsync(stream, options, cancellationToken).ConfigureAwait(false);
+            }
+
+            Compat.MoveOverwrite(temp, full);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
     }
 
     /// <summary>
@@ -339,6 +659,7 @@ public sealed class PdfDocument
     public void SaveIncremental(Stream output)
     {
         Compat.ThrowIfNull(output, nameof(output));
+        ThrowIfDisposed();
         if (_file is null) throw new InvalidOperationException("Only an opened document can be saved incrementally.");
         if (Security.Source is not null || Security.Target is not null) throw new NotSupportedException("Incremental saving of encrypted documents is not supported.");
         if (_file.WasReconstructed) throw new NotSupportedException("The document was damaged and rebuilt when opened; save it in full instead.");
@@ -494,6 +815,74 @@ public sealed class PdfDocument
         }
     }
 
+    /// <summary>
+    /// Frees the memory of objects that a document read on demand has parsed and nothing uses any
+    /// more, such as the fonts, resources and annotations of pages already processed. They are
+    /// parsed again from the file if they are needed later. No edit is lost: an object that
+    /// differs from the file is kept, and so is every object still referenced from anywhere else,
+    /// by the document or by the application, which goes on working on the same instance.
+    /// </summary>
+    /// <remarks>
+    /// Without it, a document read on demand keeps every object it has parsed, so memory grows with
+    /// the pages processed (about 24 KB a page for pages with their own font). To find the objects
+    /// still in use, this runs a full garbage collection, which takes time on a large heap: call it
+    /// every few dozen pages rather than after each one. A document read into memory holds all its
+    /// objects by design, and this does nothing for it. Decoded object streams are kept apart, up
+    /// to <see cref="PdfLoadOptions.MaxDecodedStreamBytes"/> in total.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// using PdfDocument doc = PdfDocument.Open("archive.pdf", new PdfLoadOptions { Mode = PdfLoadMode.OnDemand });
+    /// for (int i = 0; i &lt; doc.Pages.Count; i++)
+    /// {
+    ///     Index(doc.Pages[i].ExtractText());
+    ///     if (i % 50 == 49) doc.ReleaseUnusedObjects();
+    /// }
+    /// </code>
+    /// </example>
+    /// <returns>How many objects were released.</returns>
+    /// <exception cref="ObjectDisposedException">The document was disposed.</exception>
+    public int ReleaseUnusedObjects()
+    {
+        ThrowIfDisposed();
+        if (_file is null || !Objects.ReadsFile) return 0;
+
+        // The copy an incremental save compares with never hands its objects out.
+        _baseline?.ReleaseAll();
+        return _file.Release(Unchanged());
+    }
+
+    /// <summary>Parsed objects of the file that still read as the file has them.</summary>
+    private List<int> Unchanged()
+    {
+        var unchanged = new List<int>();
+        var serializer = new PdfSerializer(r => r.Number) { KeepGenerations = true };
+        var x = new ByteSink(1024);
+        var y = new ByteSink(1024);
+        foreach (int number in _file!.CachedNumbers)
+        {
+            if (!_file.TryGetCached(number, out PdfObject current) || current is PdfNull) continue;
+            if (_file.ReadAgain(number) is not { } original) continue;
+            bool same = current switch
+            {
+                PdfStream cs => original is PdfStream os && cs.Version == os.Version && cs.IsDeferred == os.IsDeferred && Same(cs.Dictionary, os.Dictionary),
+                _ => original is not PdfStream && Same(current, original),
+            };
+            if (same) unchanged.Add(number);
+        }
+
+        return unchanged;
+
+        bool Same(PdfObject a, PdfObject b)
+        {
+            x.Clear();
+            y.Clear();
+            serializer.Write(x, a);
+            serializer.Write(y, b);
+            return x.WrittenSpan.SequenceEqual(y.WrittenSpan);
+        }
+    }
+
     /// <summary>Numbers of the objects <paramref name="obj"/> refers to directly.</summary>
     private static List<int> References(PdfObject obj)
     {
@@ -524,11 +913,44 @@ public sealed class PdfDocument
         return found;
     }
 
-    /// <summary>Saves the document to a byte array.</summary>
-    public byte[] ToArray(PdfSaveOptions? options = null)
-    {
-        options ??= PdfSaveOptions.Default;
+    /// <summary>
+    /// Saves the document to a byte array. The output is the same, byte for byte, as what
+    /// <see cref="Save(Stream, PdfSaveOptions?)"/> writes with the same options. Two saves of an
+    /// encrypted document still differ in their random initialization vectors, and two PDF/A saves
+    /// in the instance id and time their metadata records.
+    /// </summary>
+    public byte[] ToArray(PdfSaveOptions? options = null) => Build(options ?? PdfSaveOptions.Default, CancellationToken.None);
 
+    /// <summary>The whole file in memory: written, then optimized and encrypted as the options say.</summary>
+    private byte[] Build(PdfSaveOptions options, CancellationToken ct)
+    {
+        SavePlan plan = PlanSave(options);
+        byte[] written = PdfDocumentWriter.Write(plan.Objects, plan.Trailer, plan.Map, plan.Settings).ToArray();
+        if (!options.Optimize) return written;
+
+        var optimizerOptions = new PdfOptimizerOptions
+        {
+            MinSavingPercent = 0,
+            Compression = options.Compression,
+            UseObjectStreams = plan.Settings.UseObjectStreams,
+            Verify = options.VerifyOptimization,
+        };
+        (written, _) = PdfOptimizer.Optimize(written, optimizerOptions, ct);
+        return Security.Target is { } encryption ? Encrypted(written, encryption, plan.Settings.UseObjectStreams, plan.Settings.CompressionLevel) : written;
+    }
+
+    /// <summary>What a full save writes: the objects in output order, the trailer, and how to write them.</summary>
+    /// <param name="Objects">Object i is written with number i + 1.</param>
+    private sealed record SavePlan(List<PdfObject> Objects, PdfDictionary Trailer, Func<PdfReference, int> Map, WriterSettings Settings);
+
+    /// <summary>
+    /// Finishes everything drawing and editing left open and lays out the file a full save writes.
+    /// Without the optimizer the plan already encrypts; with it, encryption is a last pass over the
+    /// optimized file (see <see cref="Encrypted"/>).
+    /// </summary>
+    private SavePlan PlanSave(PdfSaveOptions options)
+    {
+        ThrowIfDisposed();
         // Drawing still open is written now, so a missing Dispose does not lose it.
         foreach (Drawing.PdfGraphics g in _openGraphics.ToArray()) g.Dispose();
 
@@ -653,34 +1075,73 @@ public sealed class PdfDocument
         Visit(trailer, 0);
         while (queue.Count > 0) Visit(Objects[queue.Dequeue()], 0);
 
-        // Pages node is rebuilt on every save; drop it so a second save starts clean.
+        // The pages node and the PDF/A-4 dates are rebuilt on every save; once listed for
+        // writing they leave the store, so a second save starts clean.
         var objects = order.Select(n => Objects[n]).ToList();
-        int Map(PdfReference r) => index.TryGetValue(r.Number, out int n) ? n : -1;
+        Objects.Remove(pagesNumber);
+        if (archiveInfo is int infoCopy) Objects.Remove(infoCopy);
+
         // PDF/A-1 is PDF 1.4, which predates object and xref streams; PDF/A-4 is PDF 2.0.
         bool objectStreams = options.UseObjectStreams && archive != 1;
         string version = PdfArchive.HeaderVersion(archive) ?? (objectStreams && string.CompareOrdinal(Version, "1.5") < 0 ? "1.5" : Version);
-        // The optimizer pass below does the exhaustive search; without it, the writer does.
+        // The optimizer pass does the exhaustive search; without it, the writer does.
         var settings = new WriterSettings(objectStreams, 200, version, level)
         {
             Exhaustive = options.Compression == CompressionEffort.Exhaustive && !options.Optimize,
         };
-        byte[] written = PdfDocumentWriter.Write(objects, trailer, Map, settings).ToArray();
-        Objects.Remove(pagesNumber);
-        if (archiveInfo is int infoCopy) Objects.Remove(infoCopy);
 
-        if (options.Optimize)
+        int Map(PdfReference r) => index.TryGetValue(r.Number, out int n) ? n : -1;
+        if (options.Optimize || Security.Target is not { } encryption) return new SavePlan(objects, trailer, Map, settings);
+
+        // Without the optimizer nothing needs the plain file, so the one pass encrypts.
+        objects.Add(encryption.Dictionary);
+        int encryptNumber = objects.Count;
+        var encrypt = new PdfReference(encryptNumber, 0);
+        trailer.Set("Encrypt", encrypt);
+        version = EncryptedVersion(encryption, version, objectStreams);
+        if (NeedsAdobeExtension(encryption, version))
         {
-            var optimizerOptions = new PdfOptimizerOptions
-            {
-                MinSavingPercent = 0,
-                Compression = options.Compression,
-                UseObjectStreams = objectStreams,
-                Verify = options.VerifyOptimization,
-            };
-            (written, _) = PdfOptimizer.Optimize(written, optimizerOptions);
+            // The catalog written gets the extension; the document's own stays as it is.
+            PdfDictionary catalog = Clone(Catalog);
+            AddAdobeExtension(catalog, Resolve);
+            objects[index[CatalogNumber] - 1] = catalog;
         }
 
-        return Security.Target is { } encryption ? Encrypted(written, encryption, objectStreams, level) : written;
+        int MapEncrypted(PdfReference r) => ReferenceEquals(r, encrypt) ? encryptNumber : Map(r);
+        return new SavePlan(objects, trailer, MapEncrypted, settings with
+        {
+            Version = version,
+            Encryption = encryption,
+            EncryptionDictionaryNumber = encryptNumber,
+        });
+    }
+
+    /// <summary>The lowest version that has <paramref name="encryption"/>'s method, and object streams when used.</summary>
+    private static string EncryptedVersion(StandardSecurity encryption, string version, bool objectStreams)
+    {
+        string minimum = encryption.StreamMethod switch
+        {
+            CryptMethod.AesV3 => "1.7",
+            CryptMethod.AesV2 => "1.6",
+            _ => "1.4",
+        };
+        if (string.CompareOrdinal(version, minimum) < 0) version = minimum;
+        if (objectStreams && string.CompareOrdinal(version, "1.5") < 0) version = "1.5";
+        return version;
+    }
+
+    /// <summary>AES-256 belongs to PDF 2.0; a 1.7 file announces it through Adobe extension level 8.</summary>
+    private static bool NeedsAdobeExtension(StandardSecurity encryption, string version) =>
+        encryption.Revision >= 5 && string.CompareOrdinal(version, "2.0") < 0;
+
+    private static void AddAdobeExtension(PdfDictionary catalog, Func<PdfObject?, PdfObject?> resolve)
+    {
+        var adbe = new PdfDictionary();
+        adbe.Set("BaseVersion", new PdfName("1.7"));
+        adbe.Set("ExtensionLevel", PdfNumber.FromInteger(8));
+        PdfDictionary extensions = resolve(catalog["Extensions"]) is PdfDictionary existing ? Clone(existing) : new PdfDictionary();
+        extensions.Set("ADBE", adbe);
+        catalog.Set("Extensions", extensions);
     }
 
     /// <summary>
@@ -700,26 +1161,8 @@ public sealed class PdfDocument
         const int encryptMarker = int.MaxValue;
         int Map(PdfReference r) => r.Number == encryptMarker ? encryptNumber : index.TryGetValue(r.Number, out int n) ? n : -1;
 
-        string version = file.HeaderVersion;
-        string minimum = encryption.StreamMethod switch
-        {
-            CryptMethod.AesV3 => "1.7",
-            CryptMethod.AesV2 => "1.6",
-            _ => "1.4",
-        };
-        if (string.CompareOrdinal(version, minimum) < 0) version = minimum;
-        if (objectStreams && string.CompareOrdinal(version, "1.5") < 0) version = "1.5";
-
-        // AES-256 belongs to PDF 2.0; a 1.7 file announces it through Adobe extension level 8.
-        if (encryption.Revision >= 5 && string.CompareOrdinal(version, "2.0") < 0 && file.ResolveDictionary(file.Trailer["Root"]) is { } catalog)
-        {
-            var adbe = new PdfDictionary();
-            adbe.Set("BaseVersion", new PdfName("1.7"));
-            adbe.Set("ExtensionLevel", PdfNumber.FromInteger(8));
-            PdfDictionary extensions = file.ResolveDictionary(catalog["Extensions"]) is { } existing ? Clone(existing) : new PdfDictionary();
-            extensions.Set("ADBE", adbe);
-            catalog.Set("Extensions", extensions);
-        }
+        string version = EncryptedVersion(encryption, file.HeaderVersion, objectStreams);
+        if (NeedsAdobeExtension(encryption, version) && file.ResolveDictionary(file.Trailer["Root"]) is { } catalog) AddAdobeExtension(catalog, file.Resolve);
 
         var trailer = new PdfDictionary();
         if (file.Trailer["Root"] is { } root) trailer.Set("Root", root);
@@ -756,6 +1199,7 @@ public sealed class PdfDocument
     public PdfReference AddObject(PdfObject obj)
     {
         Compat.ThrowIfNull(obj, nameof(obj));
+        ThrowIfDisposed();
         if (obj is PdfReference) throw new ArgumentException("A reference cannot be an indirect object.", nameof(obj));
         return new PdfReference(Add(obj), 0);
     }
@@ -769,6 +1213,7 @@ public sealed class PdfDocument
     public byte[] GetStreamData(PdfStream stream)
     {
         Compat.ThrowIfNull(stream, nameof(stream));
+        ThrowIfDisposed();
         try
         {
             List<Filters.FilterSpec> filters = Filters.StreamCodec.GetFilters(stream.Dictionary, Resolve);
@@ -835,6 +1280,7 @@ public sealed class PdfDocument
     /// </summary>
     public PdfObject? Resolve(PdfObject? obj)
     {
+        ThrowIfDisposed();
         for (int guard = 0; obj is PdfReference r && guard < 32; guard++)
         {
             obj = Objects.TryGetValue(r.Number, out PdfObject? target) ? target : PdfNull.Instance;

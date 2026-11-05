@@ -1,0 +1,14 @@
+{
+  "version": "2.0",
+  "functionTimeout": "00:05:00",
+  "logging": {
+    "logLevel": {
+      "default": "Information"
+    }
+  },
+  "extensions": {
+    "blobs": {
+      "maxDegreeOfParallelism": 2
+    }
+  }
+}

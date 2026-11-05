@@ -11,8 +11,9 @@ internal static class WebPDecoder
 {
     public static bool IsWebP(ReadOnlySpan<byte> d) => d.Length >= 16 && d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E' && d[10] == 'B' && d[11] == 'P';
 
+    /// <param name="maxPixels">Ceiling for the canvas area, at most <see cref="PngImage.MaxPixels"/>.</param>
     /// <exception cref="FormatException">The data is not a WebP this reads, or is damaged.</exception>
-    public static DecodedImage Read(ReadOnlySpan<byte> data)
+    public static DecodedImage Read(ReadOnlySpan<byte> data, long maxPixels = PngImage.MaxPixels)
     {
         if (!IsWebP(data)) throw new FormatException("Not a WebP image.");
         int end = (int)Math.Min(data.Length, 8 + (long)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(4)));
@@ -20,15 +21,15 @@ internal static class WebPDecoder
         if (chunks.Count == 0) throw new FormatException("WebP has no image data.");
 
         Chunk first = chunks[0];
-        if (first.Is("VP8 ") || first.Is("VP8L")) return Frame(data, chunks, null);
+        if (first.Is("VP8 ") || first.Is("VP8L")) return Frame(data, chunks, null, maxPixels);
         if (!first.Is("VP8X") || first.Length < 10) throw new FormatException("WebP layout is not recognized.");
 
         ReadOnlySpan<byte> header = data.Slice(first.Start, first.Length);
         int canvasWidth = U24(header, 4) + 1, canvasHeight = U24(header, 7) + 1;
-        DecodedImage.CheckSize(canvasWidth, canvasHeight, 4, "WebP");
+        DecodedImage.CheckSize(canvasWidth, canvasHeight, 4, "WebP", maxPixels);
         byte[]? icc = chunks.FirstOrDefault(c => c.Is("ICCP")) is { Length: > 0 } profile ? data.Slice(profile.Start, profile.Length).ToArray() : null;
 
-        if ((header[0] & 0x02) == 0) return Frame(data, chunks, icc);
+        if ((header[0] & 0x02) == 0) return Frame(data, chunks, icc, maxPixels);
 
         // Animation: the first frame, offset on a canvas that starts out transparent.
         Chunk frame = chunks.FirstOrDefault(c => c.Is("ANMF"));
@@ -36,7 +37,7 @@ internal static class WebPDecoder
         ReadOnlySpan<byte> f = data.Slice(frame.Start, frame.Length);
         int x0 = 2 * U24(f, 0), y0 = 2 * U24(f, 3), width = U24(f, 6) + 1, height = U24(f, 9) + 1;
         if ((long)x0 + width > canvasWidth || (long)y0 + height > canvasHeight) throw new FormatException("WebP frame lies outside the canvas.");
-        DecodedImage image = Frame(data, Chunks(data, frame.Start + 16, frame.Start + frame.Length), icc);
+        DecodedImage image = Frame(data, Chunks(data, frame.Start + 16, frame.Start + frame.Length), icc, maxPixels);
         if (image.Width != width || image.Height != height) throw new FormatException("WebP frame size does not match its bitstream.");
         if (x0 == 0 && y0 == 0 && width == canvasWidth && height == canvasHeight) return image;
 
@@ -54,7 +55,7 @@ internal static class WebPDecoder
     }
 
     /// <summary>A frame's optional alpha chunk and its VP8 or VP8L bitstream.</summary>
-    private static DecodedImage Frame(ReadOnlySpan<byte> data, List<Chunk> chunks, byte[]? icc)
+    private static DecodedImage Frame(ReadOnlySpan<byte> data, List<Chunk> chunks, byte[]? icc, long maxPixels)
     {
         int index = chunks.FindIndex(c => c.Is("VP8 ") || c.Is("VP8L"));
         if (index < 0) throw new FormatException("WebP has no bitstream.");
@@ -63,7 +64,7 @@ internal static class WebPDecoder
         int width, height;
         if (bitstream.Is("VP8L"))
         {
-            uint[] argb = Vp8LDecoder.Decode(stream, out width, out height);
+            uint[] argb = Vp8LDecoder.Decode(stream, out width, out height, maxPixels);
             var rgb = new byte[(long)width * height * 3];
             var alpha = new byte[(long)width * height];
             for (long i = 0; i < argb.Length; i++)
@@ -78,7 +79,7 @@ internal static class WebPDecoder
             return new DecodedImage(width, height, 3, 8, rgb) { Alpha = DecodedImage.Translucent(alpha), IccProfile = icc };
         }
 
-        byte[] color = Vp8Decoder.DecodeRgb(stream, out width, out height);
+        byte[] color = Vp8Decoder.DecodeRgb(stream, out width, out height, maxPixels);
         byte[]? opacity = null;
         int alphaIndex = chunks.FindIndex(c => c.Is("ALPH"));
         if (alphaIndex >= 0 && alphaIndex < index) opacity = DecodedImage.Translucent(Alpha(data.Slice(chunks[alphaIndex].Start, chunks[alphaIndex].Length), width, height));

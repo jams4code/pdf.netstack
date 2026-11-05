@@ -87,6 +87,8 @@ export default defineConfig({
               ],
             },
             'guides/low-level-objects',
+            'guides/aws-lambda',
+            'guides/azure-functions',
           ],
         },
         { label: 'Recipes', collapsed: true, items: [{ autogenerate: { directory: 'recipes' } }] },

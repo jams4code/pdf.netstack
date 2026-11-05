@@ -25,7 +25,7 @@ text. A companion app gives a live preview with hot reload
 **PdfNetStack.** It makes existing PDFs smaller without changing a rendered pixel and proves every
 output equivalent to its source before returning it ([compression](/guides/compress-pdf/),
 [fidelity](/concepts/fidelity/)). It edits, merges, splits and encrypts documents (1.0, on
-NuGet). Version 1.1, in the main branch and not yet on NuGet, adds a drawing canvas, embedded
+NuGet). Version 1.1, also on NuGet, adds a drawing canvas, embedded
 OpenType fonts, paragraph layout, forms, PAdES signatures, PDF/A-2 and 3 output, text and image
 extraction, and HTML and CSS to PDF.
 

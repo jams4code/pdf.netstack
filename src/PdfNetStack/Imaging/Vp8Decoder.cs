@@ -44,11 +44,12 @@ internal static class Vp8Decoder
     }
 
     /// <summary>The frame as 8 bit RGB, rows top to bottom.</summary>
-    /// <exception cref="FormatException">The data is damaged.</exception>
-    public static byte[] DecodeRgb(ReadOnlySpan<byte> data, out int width, out int height)
+    /// <param name="maxPixels">Ceiling for the image area, at most <see cref="PngImage.MaxPixels"/>.</param>
+    /// <exception cref="FormatException">The data is damaged or too large.</exception>
+    public static byte[] DecodeRgb(ReadOnlySpan<byte> data, out int width, out int height, long maxPixels = PngImage.MaxPixels)
     {
         (width, height) = Size(data);
-        DecodedImage.CheckSize(width, height, 4, "WebP");
+        DecodedImage.CheckSize(width, height, 4, "WebP", maxPixels);
         Frame frame = new Frame(data.ToArray(), width, height);
         frame.Decode();
         return frame.ToRgb();

@@ -11,7 +11,11 @@ namespace PdfNetStack.Optimization;
 /// <param name="Quality">JPEG quality for new encodings; null keeps a JPEG source's own.</param>
 /// <param name="MinSsim">The perceptual gate, or null for none.</param>
 /// <param name="Progressive">Also try progressive JPEG coding.</param>
-internal sealed record ImageSettings(int? MaxDpi, bool ConvertToJpeg, int? Quality, double? MinSsim, bool Progressive);
+internal sealed record ImageSettings(int? MaxDpi, bool ConvertToJpeg, int? Quality, double? MinSsim, bool Progressive)
+{
+    /// <summary>Raw RGB images may be reduced to a palette.</summary>
+    public bool Quantize { get; init; }
+}
 
 /// <summary>The lossy image changes that won, for the statistics and the proof. A raw image may be both.</summary>
 [Flags]
@@ -20,6 +24,7 @@ internal enum LossyKind
     None = 0,
     Downsampled = 1,
     ConvertedToJpeg = 2,
+    Quantized = 4,
 }
 
 /// <summary>How an image's samples are coded under its general filters.</summary>
@@ -67,6 +72,9 @@ internal sealed record ImagePlan(int Width, int Height, int Components, ImageCod
 
     /// <summary>The dictionary has no /BitsPerComponent, which a JPEG 2000 image may leave out and any other coding needs.</summary>
     public bool NeedsBits { get; init; }
+
+    /// <summary>The image's color space, set when its samples may be reduced to a palette in that space.</summary>
+    public PdfObject? PaletteBase { get; init; }
 }
 
 /// <summary>An image's size and coding, as the proof reads it from the dictionary.</summary>
@@ -80,6 +88,15 @@ internal sealed record ImageGeometry(int Width, int Height, int Components, Imag
 
     /// <summary>The CCITT parameters of CCITT data.</summary>
     public CcittParameters? Ccitt { get; init; }
+
+    /// <summary>For an image the lossy pass wrote with a palette: its lookup table, whose colors are <see cref="Components"/> samples each.</summary>
+    public byte[]? Palette { get; init; }
+
+    /// <summary>Bits per index of an image with a <see cref="Palette"/>.</summary>
+    public int PaletteBits { get; init; }
+
+    /// <summary>The base of the Indexed color space of an image with a <see cref="Palette"/>.</summary>
+    public PdfObject? PaletteBase { get; init; }
 
     /// <summary>The filter that decodes the coding, or null for samples.</summary>
     public string? Filter => LossyImages.Filter(Coding);
@@ -95,7 +112,14 @@ internal sealed record ImageAllowance(Predicate<int> MayRequantize, Predicate<in
 }
 
 /// <summary>A lossy candidate: encoded data with its filter, and the size it now has.</summary>
-internal sealed record LossyCandidate(byte[] Data, PdfObject Filter, PdfObject? DecodeParms, int Width, int Height, LossyKind Kind);
+internal sealed record LossyCandidate(byte[] Data, PdfObject Filter, PdfObject? DecodeParms, int Width, int Height, LossyKind Kind)
+{
+    /// <summary>The Indexed color space a quantized image now needs.</summary>
+    public PdfObject? ColorSpace { get; init; }
+
+    /// <summary>The bits per index that color space needs.</summary>
+    public int PaletteBits { get; init; }
+}
 
 /// <summary>
 /// The lossy image profile: downsampling to a target resolution and conversion of continuous
@@ -114,6 +138,12 @@ internal static class LossyImages
 
     /// <summary>A lossy candidate must be at most this fraction of the best lossless encoding.</summary>
     public const double RequiredGain = 0.9;
+
+    /// <summary>
+    /// An image this small losslessly, in bytes, keeps its size and is not worth judging: a JPEG's
+    /// headers alone are larger, and a palette's dictionary entry takes what it could save.
+    /// </summary>
+    public const int MinWorthwhileCost = 256;
 
     /// <summary>
     /// The plan for one image, or null when the pass must leave it alone: masks, images with a
@@ -142,9 +172,24 @@ internal static class LossyImages
         }
 
         bool mayConvert = settings.ConvertToJpeg && g.Coding is ImageCoding.Raw or ImageCoding.Jpx && g.Components is 1 or 3 && settings.Quality is not null;
-        if (target is null && !mayConvert) return null;
-        return new ImagePlan(g.Width, g.Height, g.Components, g.Coding, g.ColorTransform, target, mayConvert) { NeedsBits = d["BitsPerComponent"] is null or PdfNull };
+        bool mayQuantize = settings.Quantize && MayQuantize(file, d, g);
+        if (target is null && !mayConvert && !mayQuantize) return null;
+        return new ImagePlan(g.Width, g.Height, g.Components, g.Coding, g.ColorTransform, target, mayConvert)
+        {
+            NeedsBits = d["BitsPerComponent"] is null or PdfNull,
+            PaletteBase = mayQuantize ? d["ColorSpace"] : null,
+        };
     }
+
+    /// <summary>
+    /// True for an image a palette can stand in for as readers take it: raw 8 bit RGB, with no
+    /// /Decode, which means something else for an index, and no /Interpolate, which readers apply
+    /// to color images and may not apply to an Indexed one. A /Matte soft mask is left out too:
+    /// the colors there are preblended, and undoing the matte needs them exactly.
+    /// </summary>
+    private static bool MayQuantize(PdfFile file, PdfDictionary d, ImageGeometry g) =>
+        g is { Coding: ImageCoding.Raw, Components: 3, Bits: 8 } && !HasMatteSoftMask(file, d)
+        && file.Resolve(d["Decode"]) is null or PdfNull && file.Resolve(d["Interpolate"]) is not PdfBoolean { Value: true };
 
     /// <summary>
     /// About the most memory the lossy pass holds at once for an image: JPEG 2000 decodes into 32
@@ -286,7 +331,89 @@ internal static class LossyImages
             }
         }
 
+        if (plan.PaletteBase is { } paletteBase)
+        {
+            if (Quantized(reference, paletteBase, resized, settings.MinSsim, level, imagePredictors) is { } quantized) candidates.Add(quantized);
+            else if (candidates.Count == 0) rejected = true;
+        }
+
         return candidates;
+    }
+
+    /// <summary>
+    /// The smallest palette version of an image that stays faithful, or null when even the largest
+    /// palette does not. Sizes are ranked with a cheap pass; only the winner gets the configured effort.
+    /// </summary>
+    private static LossyCandidate? Quantized(Raster reference, PdfObject paletteBase, LossyKind resized, double? gate, Flate level, bool imagePredictors)
+    {
+        ColorQuantizer quantizer = ColorQuantizer.For(reference);
+        QuantizedImage? best = null;
+        int bestSize = int.MaxValue;
+        foreach (int colors in PaletteSizes)
+        {
+            // The palette already found fits this size too, so this size would find the same one.
+            if (best is not null && quantizer.IsExact(best.Colors) && best.Colors <= colors) continue;
+
+            QuantizedImage image = quantizer.Reduce(colors);
+
+            // An exact palette has nothing to judge: every pixel is what it was.
+            if (!quantizer.IsExact(colors) && PaletteFailure(reference, image.Expand(reference.Width, reference.Height), gate, coarse: false) is not null) break;
+            int size = (image.Colors * 3) + StreamCodec.Deflate(image.PackedRows(reference.Width, reference.Height), System.IO.Compression.CompressionLevel.Fastest).Length;
+            if (size < bestSize)
+            {
+                bestSize = size;
+                best = image;
+            }
+        }
+
+        // The coarse comparison resamples both images, so only the winner pays for it, as the proof will.
+        if (best is null || PaletteFailure(reference, best.Expand(reference.Width, reference.Height), gate, coarse: true) is not null) return null;
+        byte[] packed = best.PackedRows(reference.Width, reference.Height);
+        (byte[] data, PdfObject? parms) = LosslessPacked(packed, reference.Width, reference.Height, best.Bits, level, imagePredictors);
+        var space = new PdfArray();
+        space.Add(new PdfName("Indexed"));
+        space.Add(paletteBase);
+        space.Add(PdfNumber.FromInteger(best.Colors - 1));
+        space.Add(new PdfString(best.Palette));
+        return new LossyCandidate(data, new PdfName("FlateDecode"), parms, reference.Width, reference.Height, resized | LossyKind.Quantized)
+        {
+            ColorSpace = space,
+            PaletteBits = best.Bits,
+        };
+    }
+
+    /// <summary>
+    /// Why a palette version is not faithful to its reference, or null when it is. Mean color and
+    /// coarse scale as for any lossy change, luminance SSIM at least the gate, and deviation bounds
+    /// that see what luminance cannot, a color drifting at the same brightness.
+    /// </summary>
+    /// <param name="coarse">Also compare the images at coarse scale, the costly check.</param>
+    private static string? PaletteFailure(Raster reference, Raster after, double? gate, bool coarse)
+    {
+        // How far pixels moved on their worst channel, as a histogram: a sort would cost too much.
+        var histogram = new long[256];
+        byte[] x = reference.Samples, y = after.Samples;
+        long sum = 0;
+        for (int i = 0; i + 2 < x.Length; i += 3)
+        {
+            int d = Math.Max(Math.Abs(x[i] - y[i]), Math.Max(Math.Abs(x[i + 1] - y[i + 1]), Math.Abs(x[i + 2] - y[i + 2])));
+            histogram[d]++;
+            sum += d;
+        }
+
+        long pixels = x.Length / 3, seen = 0;
+        if (sum > MaxPaletteMeanDeviation * pixels) return "quantized image moved its colors too far on average";
+        for (int d = 255; d > MaxPaletteDeviation; d--)
+        {
+            seen += histogram[d];
+            if (seen * 100 > pixels) return "quantized image moved too many pixels too far";
+        }
+
+        if (Ssim.MeanShift(reference, after) > MaxMeanShift) return "quantized image changed its colors";
+        double ssim = Ssim.Compare(reference, after);
+        double floor = gate ?? PaletteMinSsim;
+        if (ssim < floor) return Compat.Format("quantized image has SSIM {0:F4}, below {1}", ssim, floor);
+        return coarse && CoarseDifference(reference, after) > MaxCoarseDifference ? "quantized image differs from its source at coarse scale" : null;
     }
 
     /// <summary>
@@ -475,6 +602,7 @@ internal static class LossyImages
 
         if (reference is null) return "source image cannot be decoded";
         if (after is null) return "resampled image cannot be decoded";
+        if (b.Palette is not null) return PaletteFailure(reference, after, gate, coarse: true);
         if (Ssim.MeanShift(reference, after) > MaxMeanShift) return "resampled image changed its colors";
 
         // SSIM stays well above zero on flat, noisy windows whatever the content, so the picture
@@ -503,6 +631,18 @@ internal static class LossyImages
     /// <summary>SSIM the proof requires of a resampled image when no gate is set.</summary>
     public const double StructuralFloor = 0.5;
 
+    /// <summary>SSIM a palette version must keep when no gate is set: hard to tell from the source.</summary>
+    public const double PaletteMinSsim = 0.97;
+
+    /// <summary>Largest mean, over pixels, of a pixel's change on its worst channel, for a palette version.</summary>
+    public const double MaxPaletteMeanDeviation = 8.0;
+
+    /// <summary>At most 1% of pixels may change by more than this on their worst channel, for a palette version.</summary>
+    public const int MaxPaletteDeviation = 32;
+
+    /// <summary>Palette sizes tried, largest first; the search stops at the first that is not faithful.</summary>
+    private static readonly int[] PaletteSizes = [256, 64, 16, 4];
+
     /// <summary>Largest shift of a channel's mean, in sample steps, the proof accepts.</summary>
     public const double MaxMeanShift = 4.0;
 
@@ -524,6 +664,8 @@ internal static class LossyImages
     {
         switch (g.Coding)
         {
+            case ImageCoding.Raw when g.Palette is not null:
+                return ExpandPalette(data, g, decodeLimit);
             case ImageCoding.Raw:
             {
                 long size = (long)g.Width * g.Height * g.Components;
@@ -546,6 +688,38 @@ internal static class LossyImages
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Index samples expanded through the image's palette. Null when the data is short, an index
+    /// is outside the lookup table, or the result would exceed the limit.
+    /// </summary>
+    private static Raster? ExpandPalette(ReadOnlySpan<byte> data, ImageGeometry g, long decodeLimit)
+    {
+        byte[] palette = g.Palette!;
+        int bits = g.PaletteBits;
+        long rowBytes = (((long)g.Width * bits) + 7) / 8;
+        long size = (long)g.Width * g.Height * g.Components;
+        if (data.Length < rowBytes * g.Height || size > decodeLimit) return null;
+
+        int colors = palette.Length / 3, mask = (1 << bits) - 1;
+        var samples = new byte[size];
+        int o = 0;
+        for (int y = 0; y < g.Height; y++)
+        {
+            int row = (int)(y * rowBytes);
+            for (int x = 0; x < g.Width; x++, o += 3)
+            {
+                int bit = x * bits;
+                int index = (data[row + (bit >> 3)] >> (8 - bits - (bit & 7))) & mask;
+                if (index >= colors) return null;
+                samples[o] = palette[index * 3];
+                samples[o + 1] = palette[(index * 3) + 1];
+                samples[o + 2] = palette[(index * 3) + 2];
+            }
+        }
+
+        return new Raster(g.Width, g.Height, g.Components, samples);
     }
 
     /// <summary>
@@ -627,6 +801,46 @@ internal static class LossyImages
     {
         using JpegImage image = JpegEncoder.Encode(raster, quality, subsample);
         return JpegWriter.TryWriteSmallest(image, raster.Samples.Length / 4, progressive);
+    }
+
+    /// <summary>
+    /// What the proof needs to read an image the lossy pass gave a palette, or null when it is not
+    /// such an image: samples of 1, 2, 4 or 8 bits under general filters only, an Indexed color
+    /// space over 3 components with its lookup table in a string, and no /Decode or /Interpolate,
+    /// which the pass rules out on its sources as well.
+    /// </summary>
+    public static ImageGeometry? PaletteGeometry(PdfFile file, PdfDictionary d, List<FilterSpec> filters)
+    {
+        if (d.GetName("Subtype") != "Image" || file.Resolve(d["ImageMask"]) is PdfBoolean { Value: true }) return null;
+        foreach (FilterSpec f in filters)
+        {
+            if (!StreamCodec.IsDecodable(f.Name)) return null;
+        }
+
+        if (file.Resolve(d["Decode"]) is not (null or PdfNull) || file.Resolve(d["Interpolate"]) is PdfBoolean { Value: true }) return null;
+        if (file.Resolve(d["ColorSpace"]) is not PdfArray { Count: 4 } space || file.Resolve(space[0]) is not PdfName { Value: "Indexed" or "I" }) return null;
+        if (file.Resolve(space[3]) is not PdfString lookup || Components(file, space[1]) != 3) return null;
+        int width = Int(file, d["Width"]), height = Int(file, d["Height"]), bits = Int(file, d["BitsPerComponent"]);
+        if (width <= 0 || height <= 0 || (long)width * height > ImageSamples.MaxPixels || bits is not (1 or 2 or 4 or 8)) return null;
+        int high = file.Resolve(space[2]) is PdfNumber { IsInteger: true, IntegerValue: >= 0 and < 256 } h ? (int)h.IntegerValue : -1;
+        if (high < 0 || lookup.Value.Length < (high + 1) * 3) return null;
+        return new ImageGeometry(width, height, 3, ImageCoding.Raw, null)
+        {
+            Palette = lookup.Value.AsSpan(0, (high + 1) * 3).ToArray(),
+            PaletteBits = bits,
+            PaletteBase = space[1],
+        };
+    }
+
+    /// <summary>Index rows under Flate, with or without PNG prediction, whichever is smaller.</summary>
+    private static (byte[] Data, PdfObject? Parms) LosslessPacked(byte[] packed, int width, int height, int bits, Flate flate, bool imagePredictors)
+    {
+        if (!imagePredictors || height < 2) return (flate.Encode(packed), null);
+        var layout = new PredictorParams(15, 1, bits, width);
+        using BoundedBuffer predicted = Predictors.EncodePng(packed, layout);
+        bool usePredictor = StreamCodec.Deflate(predicted.Span, System.IO.Compression.CompressionLevel.Fastest).Length
+            < StreamCodec.Deflate(packed, System.IO.Compression.CompressionLevel.Fastest).Length;
+        return usePredictor ? (flate.Encode(predicted.Span), StreamCodec.PredictorDictionary(layout)) : (flate.Encode(packed), null);
     }
 
     /// <summary>Flate with or without PNG prediction, whichever is smaller.</summary>

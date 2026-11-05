@@ -7,7 +7,7 @@ faq:
   - q: How much memory does PdfNetStack need to optimize a PDF?
     a: The optimizer holds the whole document in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism. To read or edit a large file without loading it, open it with PdfDocument.OpenOnDemand (1.1).
   - q: Is PdfNetStack compatible with Native AOT and trimming?
-    a: Yes, on .NET 8 and later. The core and HTML libraries are marked AOT compatible, and CI publishes the command line tool with Native AOT and fails on any trim or AOT warning.
+    a: Yes, on .NET 8 and later. The core, HTML and OCR libraries are marked AOT compatible, and CI publishes them with Native AOT on Linux x64 and arm64 and fails on any trim or AOT warning.
 ---
 
 What PdfNetStack costs in memory and time, and the settings that change it.
@@ -31,13 +31,15 @@ worked on at once.
 | `MaxDegreeOfParallelism` (default: processor count) | Caps the worker threads of stream recompression and verification, so fewer streams are decoded at once. Lower it for image heavy files |
 | `MaxDecodedStreamBytes` (default 256 MiB) | Ceiling for any single decoded stream; larger streams are left untouched |
 | `MaxInputBytes` (default 1 GiB) | Larger inputs are returned unchanged. `OptimizeAsync` buffers at most this much and streams anything larger through to the output untouched |
+| `Streaming` (1.1, default false) | The source is read on demand and the rewrite goes through a temporary file, proven there: memory follows the number of objects and a batch of at most 32 MiB of source data, not the file |
 
 `PdfDocument.Open(ReadOnlyMemory<byte>)` references the buffer you pass instead of copying it, so
 the buffer must not change while the document is in use. The stream and file overloads read the
-input into memory first. `PdfDocument.OpenOnDemand` (1.1) reads only the cross-reference data and
-the page tree, parses other objects when first used and reads stream data each time it is needed,
-so memory follows what your code touches; `SaveIncremental` then appends only the changes. See
-[Large files](/guides/large-files/).
+input into memory first, once (1.1). Opened on demand (`PdfLoadMode.OnDemand`, 1.1), a document
+reads only the cross-reference data and the page tree, parses other objects when first used and
+reads stream data each time it is needed, so memory follows what your code touches;
+`SaveIncremental` then appends only the changes. `PdfLoadOptions` also caps decoded streams and
+image pixels per document. See [Large files](/guides/large-files/).
 
 A measured example from the README: a 631 page catalogue of 72.6 MiB, already Flate compressed,
 took about 5 seconds with all cores and peaked at a working set of about 690 MB.
@@ -69,10 +71,12 @@ cores), each with one thread unless `--threads` is given. In a service, set
 
 ## Native AOT and trimming
 
-On .NET 8 and .NET 10 the `PdfNetStack` and `PdfNetStack.Html` libraries are marked AOT
-compatible, which also enables the trim analyzers. CI publishes the command line tool with Native
-AOT for Linux and fails the build on any trim or AOT warning. The library has no native code to
-ship per platform.
+On .NET 8 and .NET 10 the `PdfNetStack`, `PdfNetStack.Html` and `PdfNetStack.Ocr` libraries are
+marked AOT compatible, which also enables the trim analyzers. CI publishes the command line tool
+and a smoke test app that roots all three libraries with Native AOT for linux-x64 and linux-arm64,
+fails on any trim or AOT warning, and runs the result. The core and HTML libraries have no native
+code to ship per platform. For serverless hosts, see [AWS Lambda](/guides/aws-lambda/) and
+[Azure Functions](/guides/azure-functions/).
 
 ## .NET Framework and .NET Standard 2.0
 
@@ -83,8 +87,10 @@ world corpus pass on .NET Framework 4.8. On .NET 9 and later, `System.IO.Compres
 
 ## Limits
 
-- The optimizer, `ToArray` and a full `Save` need the whole document in memory. An optimizer that
-  streams its output, for files larger than memory, is on the [roadmap](/roadmap/).
+- In memory, the default, the optimizer needs the whole document, and so do `ToArray` and a full
+  `Save` with the optimizer on. A save with `Optimize = false` is written progressively, and the
+  optimizer's `Streaming` mode (1.1) keeps memory bounded for files larger than memory; see
+  [Large files](/guides/large-files/).
 - Linearized output (`Linearize`, 1.1) writes every object on its own, without object streams,
   so it can be larger than the default output.
 - Faster text extraction and HTML layout are roadmap items.

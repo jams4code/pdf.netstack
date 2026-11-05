@@ -38,8 +38,9 @@ internal static class GifDecoder
 
     public static bool IsGif(ReadOnlySpan<byte> data) => data.Length >= 6 && data[0] == 'G' && data[1] == 'I' && data[2] == 'F' && data[3] == '8' && data[4] is (byte)'7' or (byte)'9' && data[5] == 'a';
 
+    /// <param name="maxPixels">Ceiling for the canvas area, at most <see cref="PngImage.MaxPixels"/>.</param>
     /// <exception cref="FormatException">The data is not a GIF, has no image, or is too large.</exception>
-    public static GifImage Read(ReadOnlySpan<byte> data)
+    public static GifImage Read(ReadOnlySpan<byte> data, long maxPixels = PngImage.MaxPixels)
     {
         if (!IsGif(data) || data.Length < 13) throw new FormatException("Not a GIF image.");
         int screenWidth = U16(data, 6), screenHeight = U16(data, 8), flags = data[10];
@@ -61,7 +62,7 @@ internal static class GifDecoder
                     SkipBlocks(data, ref pos);
                     break;
                 case 0x2C:
-                    return Frame(data, ref pos, screenWidth, screenHeight, global, transparent);
+                    return Frame(data, ref pos, screenWidth, screenHeight, global, transparent, maxPixels);
                 case 0x3B:
                     throw new FormatException("GIF has no image.");
                 default:
@@ -72,7 +73,7 @@ internal static class GifDecoder
         throw new FormatException("GIF has no image.");
     }
 
-    private static GifImage Frame(ReadOnlySpan<byte> data, ref int pos, int screenWidth, int screenHeight, byte[]? global, int transparent)
+    private static GifImage Frame(ReadOnlySpan<byte> data, ref int pos, int screenWidth, int screenHeight, byte[]? global, int transparent, long maxPixels)
     {
         if (pos + 9 > data.Length) throw new FormatException("GIF image descriptor is truncated.");
         int left = U16(data, pos), top = U16(data, pos + 2), width = U16(data, pos + 4), height = U16(data, pos + 6), flags = data[pos + 8];
@@ -82,7 +83,7 @@ internal static class GifDecoder
 
         // The logical screen frames the image; files that declare none, or a smaller one, get the frame's.
         int canvasWidth = Math.Max(screenWidth, left + width), canvasHeight = Math.Max(screenHeight, top + height);
-        if (width == 0 || height == 0 || (long)canvasWidth * canvasHeight > PngImage.MaxPixels) throw new FormatException("GIF image size is invalid or too large.");
+        if (width == 0 || height == 0 || (long)canvasWidth * canvasHeight > maxPixels) throw new FormatException("GIF image size is invalid or too large.");
         if (pos >= data.Length) throw new FormatException("GIF image data is missing.");
         int minimum = data[pos++];
         if (minimum is < 2 or > 11) throw new FormatException("GIF image data has an invalid code size.");

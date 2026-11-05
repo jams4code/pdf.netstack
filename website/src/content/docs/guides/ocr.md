@@ -1,7 +1,7 @@
 ---
 title: Make scanned PDFs searchable with OCR in C#
 description: Add an invisible text layer to scanned PDFs in .NET with the PdfNetStack.Ocr add-on, Latin and Arabic, PDF bytes never reach native code. MIT.
-since: 'unreleased'
+since: '1.1'
 sidebar:
   label: OCR
 faq:

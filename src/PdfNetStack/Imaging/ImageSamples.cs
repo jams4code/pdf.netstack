@@ -10,7 +10,7 @@ namespace PdfNetStack.Imaging;
 /// </summary>
 internal static class ImageSamples
 {
-    /// <summary>Pixels one image may have, as for PNG (2^28).</summary>
+    /// <summary>Pixels one image may have by default, as for PNG (2^28); <see cref="PdfLoadOptions.MaxImagePixels"/> lowers it per document.</summary>
     public const long MaxPixels = 1L << 28;
 
     /// <summary>The image codec left after general filters, or null for raw samples.</summary>
@@ -42,7 +42,7 @@ internal static class ImageSamples
     public static Raster? Decode(PdfDocument doc, PdfDictionary dict, ReadOnlyMemory<byte> raw, PdfDictionary? resources)
     {
         int width = Int(doc, dict["Width"]), height = Int(doc, dict["Height"]);
-        if (width <= 0 || height <= 0 || (long)width * height > MaxPixels) throw new PdfFormatException("Image size is invalid or too large.");
+        if (width <= 0 || height <= 0 || (long)width * height > doc.MaxImagePixels) throw new PdfFormatException("Image size is invalid or too large.");
         bool mask = doc.Resolve(dict["ImageMask"]) is PdfBoolean { Value: true };
         string? encoding = Encoding(doc, dict);
         if (encoding == "JPXDecode") return DecodeJpx(doc, dict, raw, resources, mask);
@@ -55,7 +55,8 @@ internal static class ImageSamples
         if (encoding == "CCITTFaxDecode")
         {
             CcittParameters parameters = Ccitt(doc, LastParms(doc, dict), width);
-            if ((long)((parameters.Columns + 7) / 8) * (parameters.Rows > 0 ? parameters.Rows : height) > Math.Min(doc.DecodeLimit, Compat.MaxArrayLength))
+            long rows = parameters.Rows > 0 ? parameters.Rows : height;
+            if ((long)((parameters.Columns + 7) / 8) * rows > Math.Min(doc.DecodeLimit, Compat.MaxArrayLength) || (long)parameters.Columns * rows > doc.MaxImagePixels)
             {
                 throw new PdfFormatException("Image exceeds the decode limit.");
             }
@@ -84,7 +85,7 @@ internal static class ImageSamples
             Raster jpeg;
             try
             {
-                jpeg = JpegDecoder.Decode(data, transform, doc.DecodeLimit);
+                jpeg = JpegDecoder.Decode(data, transform, doc.DecodeLimit, doc.MaxImagePixels);
             }
             catch (JpegFormatException e)
             {
@@ -152,7 +153,7 @@ internal static class ImageSamples
         Raster? jpx;
         try
         {
-            (jpx, space) = Jpeg2000Decoder.DecodeForPdf(data, space, doc.DecodeLimit);
+            (jpx, space) = Jpeg2000Decoder.DecodeForPdf(data, space, doc.DecodeLimit, maxPixels: doc.MaxImagePixels);
         }
         catch (Jpeg2000FormatException e)
         {

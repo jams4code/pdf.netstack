@@ -57,17 +57,42 @@ output = verified rewrite, or input bytes
 | `Fonts/OpenType/` | OpenType fonts: `OpenTypeFile` (sfnt, collections, WOFF, WOFF2), `CffFont` and `TrueTypeSubsetter` (embedded subsets), `Shaper` with `ShaperNormalization`, `IndicShaper`, `UseShaper`, `ThaiShaper`, `KhmerShaper`, `MyanmarShaper`, `HangulShaper` and `SyllableGrammar` (GSUB and GPOS, normalization, the script shapers and their syllable grammars), and `FontVariations`, `FontInstancer` and `Cff2Converter` (static instances of variable fonts). |
 | `Optimization/` | Reachability, content analysis, resource pruning, font program merging, recompression, deduplication, verification; `ImagePlacement` (largest drawn size of each image) and `LossyImages` (downsampling, JPEG conversion, the quality gate and its proof). `ReferenceIndex` records where every reference sits, so a pass can prove an object is reached only in the role it understands. |
 | `Documents/` | The editing model. `ObjectStore` holds a document's objects, or reads them from its file on demand. |
-| `Writing/` | Token serializer with minimal separators; document writer for compact and classic layouts; linearized writer; incremental update writer. |
-| `PdfOptimizer.cs` | Public entry point and orchestration. Every exception path returns the input. |
+| `Writing/` | Token serializer with minimal separators; document writer for compact and classic layouts, whole in memory or as a sequence of chunks; linearized writer; incremental update writer. |
+| `PdfOptimizer.cs` | Public entry point and orchestration. Every exception path returns the input. `PdfOptimizer.Streaming.cs` runs the same passes with the source on demand and the rewrite in a temporary file. |
 
 ## Design decisions
 
-**The optimizer reads everything into memory.** PDFs are random access by design and every pass
-touches most of the file. A single buffer with `ReadOnlyMemory<byte>` slices is the simplest
-correct model and the fastest one. Stream data is never copied until it is re-encoded.
+**The optimizer reads everything into memory, by default.** PDFs are random access by design and
+every pass touches most of the file. A single buffer with `ReadOnlyMemory<byte>` slices is the
+simplest correct model and the fastest one. Stream data is never copied until it is re-encoded.
 
-**Documents can be read on demand.** `PdfDocument.OpenOnDemand` puts `PdfFile` on a seekable
-stream instead of a buffer, through the same `PdfSource` abstraction, with 64 bit offsets.
+**Streaming mode keeps the passes and the proof, not the data.** With
+`PdfOptimizerOptions.Streaming` the source is a `PdfFile` on a stream, so only object
+dictionaries and the cross-reference data stay in memory. Pruning, font merging and compaction
+change dictionaries and a few font programs, as in memory. Recompression is planned for every
+stream first (`StreamRecompressor.Prepare`) and done while writing: the writer asks for each
+stream in output order, and the streams from that one on are recompressed side by side up to
+32 MiB of source data, handed over once and forgotten. Deduplication must be decided before the
+first object is written, so it keys each planned stream by a hash of what it decodes to through
+its general filters, plus what its plan may do to it (compact it, requantize it, resample it to
+which size); two streams with equal keys and equal dictionaries recompress to the same content.
+That costs one extra decode per stream and no encoding. The rewrite goes to a temporary file,
+and the proof is `EquivalenceVerifier` on a fresh reader over the source (`PdfFile.Fork`) and a
+reader over that file, both on demand: the same walk and the same stream comparisons as in
+memory, with each stream decoded while it is compared and then dropped.
+
+**Saving writes as it goes.** `PdfDocumentWriter` produces the file as a sequence of chunks: a
+64 KB buffer of serialized objects, or stream data of that size or more passed on as it is, with
+offsets counted as the bytes go out and the cross-reference data last. In memory the same code
+keeps everything in one buffer, so `ToArray` and a progressive `Save` cannot drift apart.
+`SaveAsync` awaits each chunk's write. A save with the optimizer still builds the file in
+memory first, because the optimizer proves its rewrite against all of it.
+
+**Documents can be read on demand.** `PdfLoadMode.OnDemand` puts `PdfFile` on a seekable
+stream instead of a buffer, through the same `PdfSource` abstraction, with 64 bit offsets: the
+caller's stream, a file the document opened by path, or a `Spool`, the document's own copy of a
+stream that cannot seek (in memory up to a threshold, else a temporary file deleted on dispose).
+Disposing the document closes the source, so any later read throws `ObjectDisposedException`.
 Opening reads the header, the cross-reference data (checking each in-file entry's object header,
 4 KB at a time) and the page tree. Any other object is parsed when first resolved and kept, so
 it stays the same instance; dictionaries are parsed from a window that grows only while the
@@ -77,10 +102,16 @@ assigned. Decoded object streams share the usual cache, capped at one decode lim
 therefore the objects the application has resolved plus the data it is holding, whatever the
 file size: reading the text of one page of a large scan reads that page's content and fonts,
 not its images. `SaveIncremental` writes only what changed after the original bytes, copying
-them a megabyte at a time, or appends to the source stream in place. A full save (`ToArray`,
-`Save`) still builds the whole output in memory, and so does the optimizer. On a synthetic 400 MB
+them a megabyte at a time, or appends to the source stream in place. A full save without the
+optimizer is written progressively, its stream data read from the source as it goes; `ToArray`
+and a save with the optimizer build the whole output in memory. On a synthetic 400 MB
 file of 100 image pages, opening on demand and extracting one page's text took 0.24 s and added
 9 MB to the working set; the same with the file read into memory took 0.63 s and 387 MB.
+Parsed objects stay until `ReleaseUnusedObjects` drops those that still read as the file has
+them (each is parsed again and compared) and that nothing else references. The second test is a
+full garbage collection: the candidates are held only weakly across it, and any that survive
+are referenced from somewhere and return to the cache, so no instance anyone holds is ever
+replaced and no edit is lost.
 
 **Incremental saves compare, they do not track.** The document keeps no change log. On
 `SaveIncremental` a second reader parses the original objects afresh, and every object the
@@ -144,3 +175,10 @@ parallel, after every object they need has been resolved, so workers never call 
 parser. `PdfFile.GetObject` is still locked as a guard. `MaxDegreeOfParallelism` caps both
 phases and is the main lever on peak memory. A stream source serializes its reads, so a document
 opened on demand can be read from several threads, though each read waits for the last.
+
+Static state is shared by every document in the process and kept bounded for long running hosts.
+Lookup tables are built once, lazily where only some inputs need them (the CJK CMaps, the
+syllable grammars of the complex script shapers), under locks or `LazyInitializer`, and their size
+depends only on data shipped with the library. Caches that grow with the input belong to a
+document or a conversion and go with it. Variable font instances are held weakly by the font that
+made them, so a font shared across requests keeps only the instances still in use.

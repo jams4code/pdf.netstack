@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using PdfNetStack.Filters;
 using PdfNetStack.Objects;
 using PdfNetStack.Security;
@@ -369,6 +370,108 @@ internal sealed class PdfFile
     /// files with bytes before %PDF that count from the header.
     /// </summary>
     public int OffsetBase => _offsetBase;
+
+    /// <summary>How many objects are parsed and kept.</summary>
+    public int CachedCount
+    {
+        get
+        {
+            lock (_cache)
+            {
+                return _cache.Count;
+            }
+        }
+    }
+
+    /// <summary>The object as parsed and kept, without parsing it.</summary>
+    public bool TryGetCached(int number, out PdfObject obj)
+    {
+        lock (_cache)
+        {
+            return _cache.TryGetValue(number, out obj!);
+        }
+    }
+
+    /// <summary>
+    /// The object parsed afresh from the file, neither taken from nor added to the parsed objects,
+    /// so it reads exactly as the file has it. Null when it cannot be read.
+    /// </summary>
+    public PdfObject? ReadAgain(int number)
+    {
+        lock (_cache)
+        {
+            if (!_xref.TryGetValue(number, out XrefEntry entry) || entry.Type == XrefEntryType.Free || !_resolving.Add(number)) return null;
+            int unreadable = UnreadableObjects, repaired = LengthsRepaired;
+            try
+            {
+                return entry.Type == XrefEntryType.InFile
+                    ? ReadIndirectObject(entry.Field1, number)
+                    : ReadFromObjectStream((int)entry.Field1, entry.Field2, number);
+            }
+            catch (Exception ex) when (ex is PdfFormatException or StreamDecodeException)
+            {
+                return null;
+            }
+            finally
+            {
+                // A second reading of one object is no new damage.
+                _resolving.Remove(number);
+                UnreadableObjects = unreadable;
+                LengthsRepaired = repaired;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Drops the parsed objects among <paramref name="numbers"/> that nothing outside this file
+    /// still references, found by a full garbage collection: those are parsed again when next
+    /// asked for. Objects still referenced elsewhere stay, so whoever holds one keeps working on
+    /// the instance this file returns. The caller vouches that each object reads as the file has it.
+    /// </summary>
+    /// <returns>How many objects were dropped.</returns>
+    public int Release(IEnumerable<int> numbers)
+    {
+        lock (_cache)
+        {
+            Dictionary<int, WeakReference<PdfObject>> weak = Weaken(numbers);
+            GC.Collect();
+            int released = 0;
+            foreach (KeyValuePair<int, WeakReference<PdfObject>> pair in weak)
+            {
+                if (pair.Value.TryGetTarget(out PdfObject? alive)) _cache[pair.Key] = alive;
+                else released++;
+            }
+
+            return released;
+        }
+    }
+
+    /// <summary>Moves objects out of the cache behind weak references; no strong reference stays on this frame.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private Dictionary<int, WeakReference<PdfObject>> Weaken(IEnumerable<int> numbers)
+    {
+        var weak = new Dictionary<int, WeakReference<PdfObject>>();
+        foreach (int number in numbers)
+        {
+            if (number == _encryptNumber || !_cache.TryGetValue(number, out PdfObject? obj) || obj is PdfNull) continue;
+            weak[number] = new WeakReference<PdfObject>(obj);
+            _cache.Remove(number);
+        }
+
+        return weak;
+    }
+
+    /// <summary>
+    /// Drops every parsed object, for a reader whose objects never leave it, such as the copy an
+    /// incremental save compares with.
+    /// </summary>
+    public void ReleaseAll()
+    {
+        lock (_cache)
+        {
+            _cache.Clear();
+        }
+    }
 
     /// <summary>Numbers of the objects parsed so far, in no particular order.</summary>
     public IReadOnlyCollection<int> CachedNumbers

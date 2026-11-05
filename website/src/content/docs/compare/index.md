@@ -13,8 +13,8 @@ other products.
 
 ## How to read these tables
 
-- Facts about PdfNetStack come from its repository. **1.0** means on NuGet today. **1.1** means in
-  the main branch and not yet on NuGet.
+- Facts about PdfNetStack come from its repository. **1.0** and **1.1** say which
+  release, both on NuGet, added a feature.
 - Facts about other products come from their own websites, repositories, documentation and NuGet
   packages, linked on each product's page.
 - **Not listed** means the feature is not in the product's own documentation or feature list on the

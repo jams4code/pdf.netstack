@@ -12,7 +12,11 @@ internal sealed partial class Shaper
 {
     private const int KhmerConsonantSyllable = 0, KhmerBrokenCluster = 1, KhmerOther = 2;
 
-    private static readonly SyllableGrammar.Machine[] KhmerMachines = BuildKhmerMachines();
+    /// <summary>The syllable machines, built when Khmer text is first shaped rather than with every shaper.</summary>
+    private static class KhmerGrammar
+    {
+        public static readonly SyllableGrammar.Machine[] Machines = BuildKhmerMachines();
+    }
 
     private static readonly ShapingFeature[] KhmerBasicFeatures =
     [
@@ -31,7 +35,7 @@ internal sealed partial class Shaper
     {
         foreach (GlyphInfo g in _buffer) g.IndicCategory = (byte)(ShapingData.Indic(g.CodePoint) & 0xFF);
         ApplyStage(_gsub, _gsubFeatures, [new("rvrn")]);
-        FindSyllables(KhmerMachines, g => g.IndicCategory, KhmerOther);
+        FindSyllables(KhmerGrammar.Machines, g => g.IndicCategory, KhmerOther);
         InsertDottedCircles(KhmerBrokenCluster, g => g.IndicCategory = (byte)IndicCategory.DottedCircle);
         foreach ((int start, int end) in Syllables())
         {

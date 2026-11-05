@@ -217,7 +217,8 @@ internal sealed class EquivalenceVerifier
                 (ImageGeometry, ImageGeometry)? images = null;
                 if (numberA >= 0 && _allowance.MayResample(numberA) && fa is not null && fb is not null
                     && LossyImages.MayResample(_a, aStream.Dictionary) && !LossyImages.HasMatteSoftMask(_a, aStream.Dictionary)
-                    && LossyImages.Geometry(_a, aStream.Dictionary, fa) is { } ga && LossyImages.Geometry(_b, bStream.Dictionary, fb) is { } gb)
+                    && LossyImages.Geometry(_a, aStream.Dictionary, fa) is { } ga
+                    && ((ga is { Coding: ImageCoding.Raw, Components: 3, Bits: 8 } ? LossyImages.PaletteGeometry(_b, bStream.Dictionary, fb) : null) ?? LossyImages.Geometry(_b, bStream.Dictionary, fb)) is { } gb)
                 {
                     // A soft mask with /Matte must keep its image's size (ISO 32000-1, 11.6.5.3).
                     bool resized = ga.Width != gb.Width || ga.Height != gb.Height;
@@ -232,8 +233,16 @@ internal sealed class EquivalenceVerifier
 
                 // A JPEG 2000 image may leave /BitsPerComponent to its data; samples or a JPEG made from it state 8.
                 bool bitsMayAppear = images is { Item1.Coding: ImageCoding.Jpx, Item2.Coding: not ImageCoding.Jpx };
-                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, numberA, isStream: true, sizeMayChange: images is not null, bitsMayAppear: bitsMayAppear);
+                bool palette = images is { Item2.Palette: not null };
+                string? d = CompareDictionaries(aStream.Dictionary, bStream.Dictionary, path, depth, numberA, isStream: true, sizeMayChange: images is not null, bitsMayAppear: bitsMayAppear, paletteAppears: palette);
                 if (d is not null) return d;
+
+                // A palette stands for samples in the source's own color space.
+                if (palette)
+                {
+                    d = Compare(aStream.Dictionary["ColorSpace"] ?? PdfNull.Instance, images!.Value.Item2.PaletteBase ?? PdfNull.Instance, path + "/ColorSpace", depth + 1);
+                    if (d is not null) return d;
+                }
 
                 BilevelJob? bilevel = null;
                 (byte[]?, byte[]?) globals = default;
@@ -298,7 +307,8 @@ internal sealed class EquivalenceVerifier
 
     /// <param name="numberA">Object number of the source stream whose dictionary this is, else -1.</param>
     /// <param name="bitsMayAppear">/BitsPerComponent 8 may be in the output only.</param>
-    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, int numberA, bool isStream = false, bool sizeMayChange = false, bool bitsMayAppear = false)
+    /// <param name="paletteAppears">The output is the source with a palette: its /ColorSpace and /BitsPerComponent are checked apart.</param>
+    private string? CompareDictionaries(PdfDictionary a, PdfDictionary b, string path, int depth, int numberA, bool isStream = false, bool sizeMayChange = false, bool bitsMayAppear = false, bool paletteAppears = false)
     {
         // A merged TrueType program has a new length; /Length1 describes the encoding of the data.
         bool mergedProgram = isStream && _rules.AllowFontMerging && numberA >= 0 && a["Length1"] is not null && _fontPrograms.Value.ContainsKey(numberA);
@@ -320,6 +330,7 @@ internal sealed class EquivalenceVerifier
         {
             if (isStream && EncodingKeys.Contains(key)) continue;
             if (sizeMayChange && SizeKeys.Contains(key)) continue;
+            if (paletteAppears && key is "ColorSpace" or "BitsPerComponent") continue;
             if (mergedProgram && key == "Length1") continue;
             if ((page || node) && Inheritable(key)) continue;
             if (_ignoredSourceKeys.Contains(key) && b[key] is null) continue;

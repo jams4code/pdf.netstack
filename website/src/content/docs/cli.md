@@ -50,15 +50,17 @@ It needs the .NET 8 or later runtime. `pdfnetstack --help` prints every command 
 pdfnetstack optimize <input.pdf> <output.pdf> [options]
 pdfnetstack optimize in.pdf out.pdf --jpeg-quality 60   # lossy, JPEG images only
 pdfnetstack optimize in.pdf out.pdf --max-dpi 150 --to-jpeg --jpeg-quality 75 --min-ssim 0.95
+pdfnetstack optimize in.pdf out.pdf --preset balanced   # much smaller, no visible change
+pdfnetstack optimize in.pdf out.pdf --quantize          # drawings and screenshots to a palette
 pdfnetstack optimize in.pdf out.pdf --exhaustive        # archival: smaller Flate, much slower
 pdfnetstack optimize in.pdf out.pdf --linearize         # fast web view
+pdfnetstack optimize huge.pdf out.pdf --streaming       # bounded memory, any input size
 pdfnetstack optimize in.pdf out.pdf --json              # the full result as JSON
 ```
 
-The lossy image options (`--max-dpi`, `--to-jpeg`, `--min-ssim`), `--progressive`,
-`--exhaustive`, `--linearize` and the structural passes with their `--no-prune`, `--no-compact`
-and `--no-font-merge` switches are in the main branch and ship with 1.1; the 1.0.0 tool on NuGet
-does not have them. The reason line names every lossy change.
+The lossy image options (`--max-dpi`, `--to-jpeg`, `--quantize`, `--min-ssim`), `--preset`, `--progressive`,
+`--exhaustive`, `--linearize`, `--streaming` and the structural passes with their `--no-prune`, `--no-compact`
+and `--no-font-merge` switches arrived in 1.1; the 1.0.0 tool does not have them. The reason line names every lossy change.
 
 Prints the disposition, the sizes, the saving and the time, the reason, and for an optimized file
 the object counts and the time per phase. The output file is always written: the verified
@@ -230,12 +232,15 @@ Optimizer options apply to `optimize`, `batch` and, where they make sense, to `v
 | `--no-compact` | 1.1. Do not rewrite content streams compactly | `CompactContentStreams = false` |
 | `--no-font-merge` | 1.1. Do not merge subsets of one TrueType font | `MergeFontSubsets = false` |
 | `--linearize` | 1.1. Write a linearized file (fast web view) | `Linearize` |
+| `--streaming` | 1.1. Read the input on demand and write the rewrite through a temporary file, proven there; no input size limit | `Streaming`, `MaxInputBytes` |
 | `--no-recompress` | Do not re-encode streams | `RecompressStreams = false` |
 | `--no-image-predictors` | Do not try PNG prediction on raw images | `UseImagePredictors = false` |
 | `--no-jpeg` | Do not re-encode JPEG images | `OptimizeJpegImages = false` |
 | `--jpeg-quality <1-100>` | Requantize JPEG images, and the quality of new JPEGs (lossy) | `JpegQuality` |
 | `--max-dpi <n>` | 1.1. Downsample images drawn above 1.5 times n dpi to n (lossy) | `MaxImageDpi` |
 | `--to-jpeg` | 1.1. Re-encode photographic raw images as JPEG at `--jpeg-quality` (lossy) | `ConvertImagesToJpeg` |
+| `--quantize` | 1.1. Reduce raw RGB images to a palette when that stays faithful (lossy) | `QuantizeImages` |
+| `--preset <balanced\|smallest>` | 1.1. A ready set of lossy options; options after it change it | `PdfOptimizerOptions.Balanced`, `Smallest` |
 | `--min-ssim <0-1>` | 1.1. Keep any image whose lossy change falls below this SSIM | `MinImageSsim` |
 | `--progressive` | 1.1. Write JPEG progressively when that is smaller (lossless) | `ProgressiveJpeg` |
 | `--no-verify` | Skip the equivalence proof (not recommended) | `Verify = false` |
@@ -278,8 +283,10 @@ is refused by the [safety model](/concepts/safety-model/), is a success: the out
 - Lossy options handle 8 bit gray, RGB and CMYK images, raw or JPEG; `--to-jpeg` needs
   `--jpeg-quality`. JPEG 2000, JBIG2, CCITT, 16 bit, indexed, Lab, Separation and DeviceN images
   keep their resolution.
-- The optimizer holds each document in memory while it processes it. For large image heavy files, lower
-  `--threads` or `--jobs`, see [Memory and performance](/concepts/memory-and-performance/).
+- By default the optimizer holds each document in memory while it processes it. For large image
+  heavy files, lower `--threads` or `--jobs`, or use `--streaming`, which keeps memory bounded
+  and needs room for the output in the temporary folder next to it. See
+  [Memory and performance](/concepts/memory-and-performance/).
 
 ## Related
 

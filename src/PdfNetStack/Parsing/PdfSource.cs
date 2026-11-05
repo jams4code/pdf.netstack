@@ -83,6 +83,7 @@ internal sealed class StreamSource : PdfSource
     private readonly object _gate = new();
     private byte[] _block = [];
     private long _blockStart = -1;
+    private bool _closed;
 
     public StreamSource(Stream stream)
     {
@@ -108,6 +109,7 @@ internal sealed class StreamSource : PdfSource
 
         lock (_gate)
         {
+            if (_closed) throw new ObjectDisposedException(nameof(PdfDocument), "The document was disposed; its file can no longer be read.");
             if (count <= BlockSize)
             {
                 if (_blockStart < 0 || start < _blockStart || end > _blockStart + _block.Length)
@@ -122,6 +124,17 @@ internal sealed class StreamSource : PdfSource
             }
 
             return ReadExactly(start, (int)count);
+        }
+    }
+
+    /// <summary>Ends reading: every later read throws <see cref="ObjectDisposedException"/>. The stream is not disposed.</summary>
+    public void Close()
+    {
+        lock (_gate)
+        {
+            _closed = true;
+            _block = [];
+            _blockStart = -1;
         }
     }
 

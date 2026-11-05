@@ -37,15 +37,16 @@ internal sealed class Vp8LDecoder
     }
 
     /// <summary>A VP8L chunk: header, then the image stream.</summary>
-    /// <exception cref="FormatException">The data is damaged.</exception>
-    public static uint[] Decode(ReadOnlySpan<byte> data, out int width, out int height)
+    /// <param name="maxPixels">Ceiling for the image area, at most <see cref="PngImage.MaxPixels"/>.</param>
+    /// <exception cref="FormatException">The data is damaged or too large.</exception>
+    public static uint[] Decode(ReadOnlySpan<byte> data, out int width, out int height, long maxPixels = PngImage.MaxPixels)
     {
         (width, height) = Size(data);
         var decoder = new Vp8LDecoder(data.ToArray()) { _pos = 1 };
         decoder.ReadBits(28);
         decoder.ReadBits(1);
         if (decoder.ReadBits(3) != 0) throw new FormatException("WebP lossless version is not 0.");
-        DecodedImage.CheckSize(width, height, 4, "WebP");
+        DecodedImage.CheckSize(width, height, 4, "WebP", maxPixels);
         return decoder.ImageStream(width, height);
     }
 

@@ -1,5 +1,5 @@
 #:project ../../src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj
-// since: unreleased
+// since: 1.1
 // run: build-only (needs the OCR model files from tools/fetch_ocr_models.py)
 using PdfNetStack;
 using PdfNetStack.Ocr;

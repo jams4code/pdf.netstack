@@ -89,6 +89,18 @@ without its encoding entries.
 then compares each page by the value it ends up with, its own or its nearest ancestor's, and does
 not compare those keys on intermediate nodes, whose values matter only through the pages.
 
+### Streaming mode
+
+With `PdfOptimizerOptions.Streaming` the proof is the same one, not a sampled or per page check.
+The rewrite is written to a temporary file, and the verifier runs on two readers that load
+objects on demand: a fresh reader over the source, which has parsed nothing the passes touched,
+and a reader over that file. It walks both graphs from the trailer and compares every reachable
+object, and every stream by its decoded content, under the same rules as above. Each stream is
+decoded only while it is compared. The output must also parse with no repaired stream length,
+checked again after the walk has read every stream. A merged object is allowed exactly the
+image change its representative got, which is what the output holds for it. Only a proven
+rewrite reaches the destination; otherwise the input is copied there unchanged.
+
 ### Linearized output
 
 A linearized file holds the same objects as any other rewrite, so the proof above covers its

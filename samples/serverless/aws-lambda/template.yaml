@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  PdfNetStack sample. Optimizes PDFs uploaded under incoming/ in a new bucket into optimized/,
+  and converts HTML posted to a function URL into PDF. Native AOT on provided.al2023, arm64.
+
+Parameters:
+  OptimizeMemoryMB:
+    Type: Number
+    Default: 2048
+    MinValue: 512
+    MaxValue: 10240
+    Description: Memory of the optimize function. CPU grows with it (one vCPU at 1769 MB).
+  MaxInputMB:
+    Type: Number
+    Default: 600
+    Description: Larger uploads are skipped. /tmp holds about three times the file size while it is optimized.
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures: [arm64]
+    Handler: bootstrap
+    # The output of dotnet publish -r linux-arm64 -o publish (see README.md).
+    CodeUri: ./publish
+
+Resources:
+  # Named after the stack so the function policies can refer to it without a circular
+  # dependency. Stack names must be lower case for this to be a valid bucket name.
+  PdfBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-after-7-days
+            Status: Enabled
+            ExpirationInDays: 7
+
+  OptimizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Optimizes PDFs uploaded under incoming/ into optimized/.
+      MemorySize: !Ref OptimizeMemoryMB
+      Timeout: 300
+      # /tmp holds the input copy, the rewrite and the optimized file before it is uploaded.
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          PDF_FUNCTION: optimize
+          PDF_MAX_INPUT_MB: !Ref MaxInputMB
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub '${AWS::StackName}-${AWS::AccountId}-${AWS::Region}'
+        - S3WritePolicy:
+            BucketName: !Sub '${AWS::StackName}-${AWS::AccountId}-${AWS::Region}'
+      Events:
+        Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref PdfBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/
+                  - Name: suffix
+                    Value: .pdf
+
+  HtmlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Converts HTML posted to its function URL into PDF.
+      MemorySize: 1024
+      Timeout: 30
+      Environment:
+        Variables:
+          PDF_FUNCTION: html
+      # Callers sign requests with SigV4. NONE would make the URL public.
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+
+  OptimizeLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${OptimizeFunction}'
+      RetentionInDays: 14
+
+  HtmlLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${HtmlFunction}'
+      RetentionInDays: 14
+
+Outputs:
+  BucketName:
+    Description: Upload PDFs under incoming/ here.
+    Value: !Ref PdfBucket
+  HtmlFunctionUrl:
+    Description: POST HTML here, signed with SigV4.
+    Value: !GetAtt HtmlFunctionUrl.FunctionUrl

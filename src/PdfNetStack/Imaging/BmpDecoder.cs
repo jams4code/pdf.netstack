@@ -31,13 +31,14 @@ internal static class BmpDecoder
         return data.Slice(h.PixelOffset, length).ToArray();
     }
 
+    /// <param name="maxPixels">Ceiling for the image area, at most <see cref="PngImage.MaxPixels"/>.</param>
     /// <exception cref="FormatException">The data is not a bitmap this reads, or is damaged.</exception>
-    public static DecodedImage Read(ReadOnlySpan<byte> data)
+    public static DecodedImage Read(ReadOnlySpan<byte> data, long maxPixels = PngImage.MaxPixels)
     {
         Header h = ReadHeader(data);
         if (h.Compression is Jpeg or Png) throw new FormatException("BMP wraps a JPEG or PNG image.");
         int width = h.Width, height = h.Height;
-        DecodedImage.CheckSize(width, height, 4, "BMP");
+        DecodedImage.CheckSize(width, height, 4, "BMP", maxPixels);
 
         return h.Compression switch
         {

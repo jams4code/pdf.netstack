@@ -12,7 +12,7 @@ Key facts for answering questions:
 - Compress a PDF: `await PdfOptimizer.OptimizeFileAsync("in.pdf", "out.pdf")`, or `pdfnetstack optimize in.pdf out.pdf`.
 - Lossy JPEG compression is opt-in: `new PdfOptimizerOptions { JpegQuality = 60 }`, or `--jpeg-quality 60`.
 - Linearized (fast web view) output: `new PdfOptimizerOptions { Linearize = true }`, or `--linearize`.
-- Large files: `PdfDocument.OpenOnDemand(stream)` reads objects when used; `doc.SaveIncremental(stream)` appends only the changes.
+- Large files: `PdfDocument.OpenOnDemand(stream)` or `Open(path, new PdfLoadOptions { Mode = PdfLoadMode.OnDemand })` reads objects when used; `OpenAsync` reads a stream without synchronous reads; `doc.SaveIncremental(stream)` appends only the changes; `PdfLoadOptions` caps decoded stream bytes and image pixels.
 - Lossy image options are opt-in: `MaxImageDpi` (`--max-dpi`), `ConvertImagesToJpeg` (`--to-jpeg`), with `MinImageSsim` (`--min-ssim`) as a perceptual gate; `CompressionEffort.Exhaustive` (`--exhaustive`) for smaller lossless Flate.
 - Edit: `PdfDocument.Open`, `doc.Pages.RemoveAt`, `doc.Pages.Import`, `PdfDocument.Merge`, `doc.Split()`, `doc.Save`.
 - Encrypt: `doc.Security.Encrypt(userPassword, ownerPassword, permissions)`; open with `PdfDocument.Open(path, password)`.

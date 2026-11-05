@@ -8,7 +8,7 @@ sidebar:
 
 wkhtmltopdf is a command line tool that renders HTML to PDF with the Qt WebKit engine.
 `PdfNetStack.Html` converts HTML and CSS to PDF with a layout engine written in C#. It is part of
-PdfNetStack 1.1, in the main branch and not yet on NuGet.
+PdfNetStack 1.1, on NuGet.
 
 ## What each does well
 
@@ -55,7 +55,7 @@ Read each license yourself before you decide. This page is not legal advice.
 | Untrusted HTML | No network without a loader, files only under the base folder, bounded parsing and layout | Status page advises against it |
 | HTML to images | No | Yes, wkhtmltoimage |
 | Maintained | Yes | Repository archived on 2023-01-02 |
-| Available | 1.1, not yet on NuGet | Released |
+| Available | 1.1, on NuGet | Released |
 
 Sources for the wkhtmltopdf column: [repository](https://github.com/wkhtmltopdf/wkhtmltopdf),
 [status page](https://wkhtmltopdf.org/status.html), [usage](https://wkhtmltopdf.org/usage/wkhtmltopdf.txt).

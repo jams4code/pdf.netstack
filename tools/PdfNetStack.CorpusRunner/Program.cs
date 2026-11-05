@@ -20,7 +20,7 @@ namespace PdfNetStack.CorpusRunner
     {
         private const string Usage = """
             Usage:
-              PdfNetStack.CorpusRunner optimize <input.pdf> <output.pdf> --profile lossless|lossy
+              PdfNetStack.CorpusRunner optimize <input.pdf> <output.pdf> --profile lossless|lossy|balanced|lossy-palette
               PdfNetStack.CorpusRunner extract <input.pdf>
 
             optimize writes <output.pdf> only when the optimizer kept a rewrite, then checks the
@@ -58,10 +58,11 @@ namespace PdfNetStack.CorpusRunner
         }
 
         /// <summary>
-        /// The two option sets the benchmark measures. Both accept files with incremental updates
-        /// and files that needed repair, and keep any rewrite that is not larger, so the engine
-        /// and its proof run on as many documents as possible. The lossy profile turns on every
-        /// image option behind the perceptual gate.
+        /// The option sets the benchmark measures. All accept files with incremental updates and
+        /// files that needed repair, and keep any rewrite that is not larger, so the engine and its
+        /// proof run on as many documents as possible. The lossy profile turns on the image options
+        /// that change resolution and JPEG behind the perceptual gate; balanced is the preset of
+        /// that name; lossy-palette is lossy with palettes, to measure what they add.
         /// </summary>
         internal static PdfOptimizerOptions? Profile(string name) => name switch
         {
@@ -77,6 +78,8 @@ namespace PdfNetStack.CorpusRunner
                 MinImageSsim = 0.95,
                 ProgressiveJpeg = true,
             },
+            "balanced" => PdfOptimizerOptions.Balanced with { AllowIncrementalUpdates = true, AllowRepairedFiles = true, MinSavingPercent = 0 },
+            "lossy-palette" => Profile("lossy")! with { QuantizeImages = true },
             _ => null,
         };
 

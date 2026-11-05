@@ -93,6 +93,40 @@ public sealed class FontCollectionTests
     }
 
     [TestMethod]
+    public void AddDirectoryStopsAtSixteenLevelsAndSkipsLinks()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "pdfnetstack-fonts-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string shallow = Path.Combine(dir, "a", "b", "c");
+            string deep = Path.Combine([dir, .. Enumerable.Range(0, 18).Select(i => "d" + i)]);
+            Directory.CreateDirectory(shallow);
+            Directory.CreateDirectory(deep);
+            File.Copy(FixturePath("Test-Regular.ttf"), Path.Combine(shallow, "Test-Regular.ttf"));
+            File.Copy(FixturePath("Test-Regular.otf"), Path.Combine(deep, "Test-Regular.otf"));
+            Assert.AreEqual(1, new PdfFontCollection().AddDirectory(dir));
+
+#if NET
+            // A link back to the top would loop forever if it were followed.
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(shallow, "loop"), dir);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return; // Creating links needs a privilege on Windows.
+            }
+
+            Assert.AreEqual(1, new PdfFontCollection().AddDirectory(dir));
+#endif
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void SystemFontsScanWithoutErrors()
     {
         // Contents depend on the machine; scanning and a lookup must simply work.

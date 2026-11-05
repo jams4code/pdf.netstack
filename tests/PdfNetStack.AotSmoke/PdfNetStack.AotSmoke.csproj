@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Exercises the libraries after a Native AOT publish, as serverless hosts run them:
+      dotnet publish tests/PdfNetStack.AotSmoke -c Release -f net10.0 -r linux-x64 -o aot-smoke
+      ./aot-smoke/PdfNetStack.AotSmoke
+    The three libraries are rooted whole, so the trimming and AOT analysis covers all of their
+    code, not just what this app calls; with TreatWarningsAsErrors any warning fails the publish.
+    Also measures cold start (see tools/measure_cold_start.py). Not shipped, not in the solution.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="PdfNetStack" />
+    <TrimmerRootAssembly Include="PdfNetStack.Html" />
+    <TrimmerRootAssembly Include="PdfNetStack.Ocr" />
+  </ItemGroup>
+
+</Project>

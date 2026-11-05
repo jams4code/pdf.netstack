@@ -21,3 +21,10 @@ __pycache__/
 # OCR model files: downloaded by tools/fetch_ocr_models.py, never committed. The models package
 # project packs them from its models folder.
 *.onnx
+
+# Serverless samples: build output, fonts the reader adds (never committed), local secrets.
+samples/serverless/*/publish/
+samples/serverless/*/fonts/*
+!samples/serverless/*/fonts/README.md
+samples/serverless/**/local.settings.json
+samples/serverless/**/.aws-sam/

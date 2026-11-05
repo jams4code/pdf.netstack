@@ -47,8 +47,9 @@ internal sealed class PngImage
 
     public bool HasAlphaChannel => ColorType is 4 or 6;
 
-    /// <exception cref="FormatException">Not a valid PNG.</exception>
-    public static PngImage Read(ReadOnlySpan<byte> d)
+    /// <param name="maxPixels">Ceiling for the image area, at most <see cref="MaxPixels"/>.</param>
+    /// <exception cref="FormatException">Not a valid PNG, or larger than <paramref name="maxPixels"/>.</exception>
+    public static PngImage Read(ReadOnlySpan<byte> d, long maxPixels = MaxPixels)
     {
         ReadOnlySpan<byte> signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         if (d.Length < 8 || !d.Slice(0, 8).SequenceEqual(signature)) throw new FormatException("Not a PNG file.");
@@ -110,7 +111,7 @@ internal sealed class PngImage
             _ => false,
         };
         if (!validDepth) throw new FormatException("PNG color type and bit depth are invalid.");
-        if (png.Width <= 0 || png.Height <= 0 || (long)png.Width * png.Height > MaxPixels) throw new FormatException("PNG size is out of range.");
+        if (png.Width <= 0 || png.Height <= 0 || (long)png.Width * png.Height > maxPixels) throw new FormatException("PNG size is out of range.");
         if (png.ColorType == 3 && (png.Palette is null || png.Palette.Length < 3)) throw new FormatException("PNG palette is missing.");
         png.Data = idat.ToArray();
         if (png.Data.Length < 2) throw new FormatException("PNG has no image data.");

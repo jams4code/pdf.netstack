@@ -1,0 +1,11 @@
+<Project>
+  <!-- The repository's analyzers and warnings as errors apply to the samples too. They are not
+       packages: nothing here is packed, validated against a baseline or license checked. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

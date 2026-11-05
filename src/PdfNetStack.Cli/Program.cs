@@ -48,6 +48,10 @@ namespace PdfNetStack.Cli
               --no-compact              Do not rewrite content streams compactly
               --no-font-merge           Do not merge subsets of one TrueType font
               --linearize               Write a linearized file (fast web view)
+              --streaming               Read the input on demand and write the rewrite
+                                        through a temporary file, proven there: memory
+                                        stays bounded for files larger than memory, and
+                                        inputs of any size are accepted
               --no-recompress           Do not re-encode streams
               --no-group4               Do not re-encode bilevel images as CCITT Group 4
               --no-image-predictors     Do not try PNG prediction on raw images
@@ -57,6 +61,11 @@ namespace PdfNetStack.Cli
               --max-dpi <n>             Downsample images drawn above 1.5 times n dpi to n (lossy)
               --to-jpeg                 Re-encode photographic raw and JPEG 2000 images as
                                         JPEG at --jpeg-quality (lossy)
+              --quantize                Reduce raw RGB images to a palette when that stays
+                                        faithful: drawings and screenshots (lossy)
+              --preset <name>           balanced: palette, JPEG 75, SSIM at least 0.95.
+                                        smallest: palette, JPEG 50, 150 dpi, SSIM at least
+                                        0.90. Both lossy; options after it change it
               --min-ssim <0-1>          Perceptual gate: keep any image whose lossy change
                                         falls below this SSIM; verify: accept downsampled
                                         and converted images that meet it
@@ -165,14 +174,14 @@ namespace PdfNetStack.Cli
                                       $"(unreachable {s.UnreachableRemoved}, merged {s.ObjectsDeduplicated}), " +
                                       $"streams re-encoded {s.StreamsRecompressed} (JPEG {s.JpegImagesRecompressed}, requantized {s.JpegImagesRequantized}, Group 4 {s.ImagesRecodedAsGroup4}), " +
                                       $"objects verified {s.ObjectsVerified}");
-                    if (s.ImagesDownsampled + s.ImagesConvertedToJpeg + s.ImagesKeptByQualityGate > 0)
+                    if (s.ImagesDownsampled + s.ImagesConvertedToJpeg + s.ImagesQuantized + s.ImagesKeptByQualityGate > 0)
                     {
-                        Console.WriteLine($"images downsampled {s.ImagesDownsampled}, converted to JPEG {s.ImagesConvertedToJpeg}, " +
+                        Console.WriteLine($"images downsampled {s.ImagesDownsampled}, converted to JPEG {s.ImagesConvertedToJpeg}, reduced to a palette {s.ImagesQuantized}, " +
                                           $"kept by the quality gate {s.ImagesKeptByQualityGate}");
                     }
 
                     Console.WriteLine($"resources pruned {s.ResourcesPruned}, content streams compacted {s.ContentStreamsCompacted}, " +
-                                      $"font programs merged {s.FontProgramsMerged}{(s.Linearized ? ", linearized" : "")}");
+                                      $"font programs merged {s.FontProgramsMerged}{(s.Linearized ? ", linearized" : "")}{(s.Streamed ? ", streamed" : "")}");
                     PhaseTimings p = s.Phases;
                     Console.WriteLine($"analyze {p.Analyze.TotalMilliseconds:F0} ms, content {p.Content.TotalMilliseconds:F0} ms, recompress {p.Recompress.TotalMilliseconds:F0} ms, " +
                                       $"dedup {p.Deduplicate.TotalMilliseconds:F0} ms, write {p.Write.TotalMilliseconds:F0} ms, verify {p.Verify.TotalMilliseconds:F0} ms");
@@ -545,6 +554,7 @@ namespace PdfNetStack.Cli
                     case "--no-compact": o = o with { CompactContentStreams = false }; break;
                     case "--no-font-merge": o = o with { MergeFontSubsets = false }; break;
                     case "--linearize": o = o with { Linearize = true }; break;
+                    case "--streaming": o = o with { Streaming = true, MaxInputBytes = long.MaxValue }; break;
                     case "--no-recompress": o = o with { RecompressStreams = false }; break;
                     case "--no-group4": o = o with { OptimizeBilevelImages = false }; break;
                     case "--no-image-predictors": o = o with { UseImagePredictors = false }; break;
@@ -552,6 +562,8 @@ namespace PdfNetStack.Cli
                     case "--jpeg-quality": o = o with { JpegQuality = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--max-dpi": o = o with { MaxImageDpi = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--to-jpeg": o = o with { ConvertImagesToJpeg = true }; break;
+                    case "--quantize": o = o with { QuantizeImages = true }; break;
+                    case "--preset": o = Preset(o, Value(args, ref i)); break;
                     case "--min-ssim": o = o with { MinImageSsim = double.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--progressive": o = o with { ProgressiveJpeg = true }; break;
                     case "--no-verify": o = o with { Verify = false }; break;
@@ -585,6 +597,26 @@ namespace PdfNetStack.Cli
 
             a.Options = o;
             return a;
+        }
+
+        /// <summary>The lossy settings of a preset on top of what was parsed so far.</summary>
+        private static PdfOptimizerOptions Preset(PdfOptimizerOptions o, string name)
+        {
+            PdfOptimizerOptions preset = name switch
+            {
+                "balanced" => PdfOptimizerOptions.Balanced,
+                "smallest" => PdfOptimizerOptions.Smallest,
+                _ => throw new ArgumentException($"Unknown preset '{name}': use balanced or smallest."),
+            };
+            return o with
+            {
+                QuantizeImages = preset.QuantizeImages,
+                ConvertImagesToJpeg = preset.ConvertImagesToJpeg,
+                JpegQuality = preset.JpegQuality,
+                ProgressiveJpeg = preset.ProgressiveJpeg,
+                MinImageSsim = preset.MinImageSsim,
+                MaxImageDpi = preset.MaxImageDpi,
+            };
         }
 
         private static string Value(string[] args, ref int i)

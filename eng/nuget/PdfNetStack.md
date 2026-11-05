@@ -1,6 +1,6 @@
 # PdfNetStack
 
-Compress, optimize and edit PDF files in .NET. Pure C#, MIT licensed, no native binaries, no
+Create, edit, compress and sign PDF files in .NET. Pure C#, MIT licensed, no native binaries, no
 Ghostscript. Created and maintained by Jamal Abdelkhalek at [JADEV](https://github.com/jams4code).
 
 PdfNetStack makes PDFs smaller without changing a single rendered pixel, then proves it: the
@@ -33,6 +33,16 @@ Console.WriteLine($"{result.Disposition}: saved {result.SavingPercent:F1}%");
   info; bookmarks. Large files open on demand from a stream and save as incremental updates.
 - **Encryption:** open RC4, AES-128 and AES-256 protected PDFs; write AES-256 or AES-128 with
   user and owner passwords and permissions.
+- **Creating documents:** a drawing canvas on new and existing pages; standard 14, TrueType,
+  OpenType, WOFF and WOFF2 fonts embedded as subsets, variable font instances; text layout with
+  justification, right to left and complex scripts; JPEG, PNG, GIF, BMP, TIFF, WebP and SVG images;
+  pages of other PDFs as watermarks and letterheads.
+- **Text and images out:** page text in reading order, letters and words with bounds and fonts;
+  images per page decoded to pixels, including JPEG 2000, JBIG2 and CCITT scans.
+- **Forms and annotations:** create, read and fill AcroForm fields with generated appearances;
+  links, notes, markup, stamps, ink and shapes; flattening.
+- **Signatures and archiving:** PAdES B-B, B-T, B-LT and B-LTA signing and verification with
+  chain, revocation and policy checks; PDF/A-1b to PDF/A-4 output; Factur-X and ZUGFeRD invoices.
 - **Safe on untrusted files:** bounded parsing and decoding, decompression bomb limits, fuzz
   tested. Signed and encrypted files are never rewritten by the optimizer.
 

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security;
 using PdfNetStack.Fonts.OpenType;
 using static PdfNetStack.Fonts.OpenType.FontData;
 
@@ -25,6 +26,8 @@ namespace PdfNetStack.Fonts;
 /// </example>
 public sealed class PdfFontCollection
 {
+    private const int MaxDepth = 16;
+
     private static readonly string[] Extensions = [".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2"];
     private static readonly Lazy<PdfFontCollection> SystemFonts = new(LoadSystemFonts);
 
@@ -74,26 +77,16 @@ public sealed class PdfFontCollection
 
     /// <summary>
     /// Adds the fonts in a directory with a font extension (.ttf, .otf, .ttc, .otc, .woff, .woff2).
-    /// Files that are not readable fonts are skipped. Returns how many fonts were added.
+    /// Files that are not readable fonts are skipped, and so are directories that are missing or
+    /// cannot be listed. When recursive, directories below are searched to 16 levels, without
+    /// following links to directories. Returns how many fonts were added.
     /// </summary>
     public int AddDirectory(string path, bool recursive = true)
     {
         Compat.ThrowIfNull(path, nameof(path));
-        if (!Directory.Exists(path)) return 0;
         int added = 0;
-        IEnumerable<string> files;
-        try
+        foreach (string file in FontFiles(path, recursive))
         {
-            files = Directory.EnumerateFiles(path, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly).ToList();
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return 0;
-        }
-
-        foreach (string file in files)
-        {
-            if (!Extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
             try
             {
                 added += AddFile(file);
@@ -105,6 +98,57 @@ public sealed class PdfFontCollection
         }
 
         return added;
+    }
+
+    /// <summary>
+    /// The files with a font extension in <paramref name="root"/> and, when recursive, the
+    /// directories below it to <see cref="MaxDepth"/> levels, in ordinal order. A directory that
+    /// cannot be listed is skipped rather than ending the search, and links to directories are not
+    /// followed, so a cycle cannot loop.
+    /// </summary>
+    private static IEnumerable<string> FontFiles(string root, bool recursive)
+    {
+        var pending = new Stack<(string Path, int Depth)>();
+        pending.Push((root, 0));
+        while (pending.Count > 0)
+        {
+            (string directory, int depth) = pending.Pop();
+            string[] files, directories;
+            try
+            {
+                if (!Directory.Exists(directory)) continue;
+                files = Directory.GetFiles(directory);
+                directories = recursive && depth < MaxDepth ? Directory.GetDirectories(directory) : [];
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or SecurityException)
+            {
+                continue;
+            }
+
+            Array.Sort(files, StringComparer.Ordinal);
+            foreach (string file in files)
+            {
+                if (Extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) yield return file;
+            }
+
+            Array.Sort(directories, StringComparer.Ordinal);
+            for (int i = directories.Length - 1; i >= 0; i--)
+            {
+                if (!IsLink(directories[i])) pending.Push((directories[i], depth + 1));
+            }
+        }
+
+        static bool IsLink(string directory)
+        {
+            try
+            {
+                return (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or SecurityException)
+            {
+                return true;
+            }
+        }
     }
 
     /// <summary>
@@ -331,27 +375,39 @@ public sealed class PdfFontCollection
         return collection;
     }
 
+    /// <summary>
+    /// The font directories of the platform. Ones under the home directory are left out when there
+    /// is none (HOME unset, as in some serverless hosts and containers): a relative path would
+    /// otherwise search the current directory.
+    /// </summary>
     private static IEnumerable<string> SystemFontDirectories()
     {
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var directories = new List<string>();
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            yield return Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-            yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "Windows", "Fonts");
+            directories.Add(Environment.GetFolderPath(Environment.SpecialFolder.Fonts));
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (local.Length > 0) directories.Add(Path.Combine(local, "Microsoft", "Windows", "Fonts"));
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            yield return "/System/Library/Fonts";
-            yield return "/Library/Fonts";
-            yield return Path.Combine(home, "Library", "Fonts");
+            directories.Add("/System/Library/Fonts");
+            directories.Add("/Library/Fonts");
+            if (home.Length > 0) directories.Add(Path.Combine(home, "Library", "Fonts"));
         }
         else
         {
-            yield return "/usr/share/fonts";
-            yield return "/usr/local/share/fonts";
-            yield return Path.Combine(home, ".fonts");
-            yield return Path.Combine(home, ".local", "share", "fonts");
+            directories.Add("/usr/share/fonts");
+            directories.Add("/usr/local/share/fonts");
+            if (home.Length > 0)
+            {
+                directories.Add(Path.Combine(home, ".fonts"));
+                directories.Add(Path.Combine(home, ".local", "share", "fonts"));
+            }
         }
+
+        return directories.Where(Path.IsPathRooted);
     }
 
     /// <summary>One font of a file, loaded when a face of it is first found.</summary>

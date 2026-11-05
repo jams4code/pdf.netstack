@@ -176,17 +176,30 @@ public sealed class PdfImage
     /// <param name="page">The page, from 0.</param>
     /// <exception cref="FormatException">The data is not a supported image, or is damaged.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The image has no such page.</exception>
-    public static PdfImage Load(byte[] data, int page)
+    public static PdfImage Load(byte[] data, int page) => Load(data, page, PdfLoadOptions.DefaultMaxImagePixels);
+
+    /// <summary>
+    /// Loads one page of an image file from its bytes, refusing an image with more pixels than
+    /// <paramref name="maxPixels"/> before decoding it. Use it to bound the memory an untrusted
+    /// image can take: a decoded image holds up to four bytes per pixel.
+    /// </summary>
+    /// <param name="data">The image file's bytes, used directly; do not change them afterwards.</param>
+    /// <param name="page">The page, from 0. Only TIFF files have more than page 0.</param>
+    /// <param name="maxPixels">Most pixels the image may have, from 1 to 2^28 (the default of the other overloads).</param>
+    /// <exception cref="FormatException">The data is not a supported image, is damaged, or has more than <paramref name="maxPixels"/> pixels.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The image has no such page, or <paramref name="maxPixels"/> is out of range.</exception>
+    public static PdfImage Load(byte[] data, int page, long maxPixels)
     {
         Compat.ThrowIfNull(data, nameof(data));
+        if (maxPixels is < 1 or > PdfLoadOptions.DefaultMaxImagePixels) throw new ArgumentOutOfRangeException(nameof(maxPixels), maxPixels, "The pixel limit must be from 1 to 2^28.");
         int pages = GetPageCount(data);
         if (page < 0 || page >= pages) throw new ArgumentOutOfRangeException(nameof(page), page, pages == 1 ? "The image has one page." : $"The image has {pages} pages.");
-        if (IsJpeg(data)) return Jpeg(data, PdfImageFormat.Jpeg);
-        if (IsPng(data)) return Png(data, PdfImageFormat.Png);
-        if (GifDecoder.IsGif(data)) return Gif(data);
-        if (BmpDecoder.IsBmp(data)) return Bmp(data);
-        if (TiffDecoder.IsTiff(data)) return Tiff(data, page);
-        return Decoded(PdfImageFormat.WebP, WebPDecoder.Read(data));
+        if (IsJpeg(data)) return Jpeg(data, PdfImageFormat.Jpeg, maxPixels);
+        if (IsPng(data)) return Png(data, PdfImageFormat.Png, maxPixels);
+        if (GifDecoder.IsGif(data)) return Gif(data, maxPixels);
+        if (BmpDecoder.IsBmp(data)) return Bmp(data, maxPixels);
+        if (TiffDecoder.IsTiff(data)) return Tiff(data, page, maxPixels);
+        return Decoded(PdfImageFormat.WebP, WebPDecoder.Read(data, maxPixels));
     }
 
     /// <summary>The number of pages in a TIFF file; 1 for the other formats.</summary>
@@ -241,9 +254,12 @@ public sealed class PdfImage
 
     private static bool IsPng(byte[] data) => data.Length >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G';
 
-    private static PdfImage Jpeg(byte[] data, PdfImageFormat format)
+    private static PdfImage Jpeg(byte[] data, PdfImageFormat format, long maxPixels)
     {
         JpegHeader h = JpegHeader.Read(data);
+
+        // Embedded as is, but a reader decodes it: an image over the limit is refused like any other.
+        if ((long)h.Width * h.Height > maxPixels) throw new FormatException("JPEG image size is too large.");
         return new PdfImage(format, h.Width, h.Height, h.DpiX, h.DpiY, h.Orientation, false, doc =>
         {
             var dict = new PdfDictionary
@@ -264,9 +280,9 @@ public sealed class PdfImage
     }
 
     /// <summary>A GIF's first frame: 8 bit palette indexes under an Indexed color space, transparency as a soft mask.</summary>
-    private static PdfImage Gif(byte[] data)
+    private static PdfImage Gif(byte[] data, long maxPixels)
     {
-        GifImage gif = GifDecoder.Read(data);
+        GifImage gif = GifDecoder.Read(data, maxPixels);
         return new PdfImage(PdfImageFormat.Gif, gif.Width, gif.Height, 0, 0, 1, gif.Alpha is not null, doc =>
         {
             int entries = Math.Max(1, Math.Min(256, gif.Palette.Length / 3));
@@ -297,9 +313,9 @@ public sealed class PdfImage
         });
     }
 
-    private static PdfImage Png(byte[] data, PdfImageFormat format)
+    private static PdfImage Png(byte[] data, PdfImageFormat format, long maxPixels)
     {
-        PngImage png = PngImage.Read(data);
+        PngImage png = PngImage.Read(data, maxPixels);
         byte[]? trns = png.Transparency;
         bool partialPaletteAlpha = png.ColorType == 3 && trns is not null && trns.Any(t => t is not (0 or 255));
         bool transparent = png.HasAlphaChannel || (trns is not null && (png.ColorType != 3 || trns.Any(t => t != 255)));
@@ -361,22 +377,22 @@ public sealed class PdfImage
     }
 
     /// <summary>A bitmap; one wrapping a JPEG or PNG (compression 4 or 5) loads as that image.</summary>
-    private static PdfImage Bmp(byte[] data)
+    private static PdfImage Bmp(byte[] data, long maxPixels)
     {
         if (BmpDecoder.Embedded(data) is byte[] inner)
         {
-            if (IsJpeg(inner)) return Jpeg(inner, PdfImageFormat.Bmp);
-            if (IsPng(inner)) return Png(inner, PdfImageFormat.Bmp);
+            if (IsJpeg(inner)) return Jpeg(inner, PdfImageFormat.Bmp, maxPixels);
+            if (IsPng(inner)) return Png(inner, PdfImageFormat.Bmp, maxPixels);
             throw new FormatException("BMP embedded image is not a JPEG or PNG.");
         }
 
-        return Decoded(PdfImageFormat.Bmp, BmpDecoder.Read(data));
+        return Decoded(PdfImageFormat.Bmp, BmpDecoder.Read(data, maxPixels));
     }
 
     /// <summary>A TIFF page: fax and JPEG strips copied when their parameters map to a PDF filter, else decoded.</summary>
-    private static PdfImage Tiff(byte[] data, int page)
+    private static PdfImage Tiff(byte[] data, int page, long maxPixels)
     {
-        TiffPage tiff = TiffDecoder.ReadPage(data, page);
+        TiffPage tiff = TiffDecoder.ReadPage(data, page, maxPixels);
         if (tiff.PassThrough() is not TiffEncodedImage encoded) return Decoded(PdfImageFormat.Tiff, tiff.Decode());
 
         return new PdfImage(PdfImageFormat.Tiff, encoded.Width, encoded.Height, tiff.DpiX, tiff.DpiY, tiff.Orientation, false, doc =>

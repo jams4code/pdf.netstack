@@ -23,8 +23,8 @@ and 4.7.1, .NET Standard 2.0 and 2.1, and .NET 6, 8 and 9
 
 **PdfNetStack.** It makes existing PDFs smaller without changing a rendered pixel and proves every
 output equivalent to its source before returning it ([compression](/guides/compress-pdf/)). It
-edits, merges, splits and encrypts documents (1.0, on NuGet). Version 1.1, in the main branch and
-not yet on NuGet, adds text extraction (page text in reading order with column detection, words
+edits, merges, splits and encrypts documents (1.0, on NuGet). Version 1.1, also on NuGet,
+adds text extraction (page text in reading order with column detection, words
 and letters with bounds, fonts and sizes), image extraction with decoding to pixels, and the
 creation features: a canvas, embedded fonts, forms, signatures, PDF/A and HTML to PDF.
 

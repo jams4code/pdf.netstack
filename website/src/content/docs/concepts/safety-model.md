@@ -51,7 +51,7 @@ and no object streams, because PDF/A-1 predates both.
 | Unreadable objects | Recorded, never thrown out of the optimizer |
 | JPEG data | Oversubscribed Huffman tables are refused, at most 64 scans per image, frames that claim more blocks than their data can code are refused |
 | Content streams | Operations, nesting of forms and graphics states, and decoded bytes are capped |
-| Images | Pixel counts are capped before any buffer is allocated |
+| Images | Pixel counts are capped before any buffer is allocated: 2^28 by default, lower per document with `PdfLoadOptions.MaxImagePixels` (1.1) and per image file with `PdfImage.Load(data, page, maxPixels)` |
 | Fonts | Damaged font files raise `FontFormatException`; WOFF and WOFF2 output is capped at 128 MB |
 
 Opening a document for editing applies the same bounds. A file that cannot be read raises

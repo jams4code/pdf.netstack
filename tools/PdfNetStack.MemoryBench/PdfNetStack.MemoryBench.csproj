@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Peak memory and time of saving and optimizing a large generated file, in memory and in
+       streaming mode. Not shipped, not packed, not in the solution: run it on demand, as the head
+       of Program.cs shows. It writes its files to the folder it is given and nowhere else. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <AnalysisLevel>latest-minimum</AnalysisLevel>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
+  </ItemGroup>
+
+</Project>

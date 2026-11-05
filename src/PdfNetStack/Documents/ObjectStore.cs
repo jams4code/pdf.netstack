@@ -14,6 +14,7 @@ internal sealed class ObjectStore
     private readonly Dictionary<int, PdfObject> _objects = new();
     private readonly PdfFile? _file;
     private readonly HashSet<int> _removed = new();
+    private bool _closed;
 
     public ObjectStore()
     {
@@ -27,6 +28,9 @@ internal sealed class ObjectStore
 
     public int Count => _objects.Count;
 
+    /// <summary>True for a document read on demand, whose objects are read from its file when first asked for.</summary>
+    public bool ReadsFile => _file is not null;
+
     public IEnumerable<int> Keys => _objects.Keys;
 
     public PdfObject this[int number]
@@ -34,6 +38,7 @@ internal sealed class ObjectStore
         get => TryGetValue(number, out PdfObject? value) ? value : throw new KeyNotFoundException($"Object {number} does not exist.");
         set
         {
+            ThrowIfClosed();
             _objects[number] = value;
             _removed.Remove(number);
         }
@@ -41,6 +46,7 @@ internal sealed class ObjectStore
 
     public bool TryGetValue(int number, out PdfObject value)
     {
+        ThrowIfClosed();
         if (_objects.TryGetValue(number, out PdfObject? held))
         {
             value = held;
@@ -64,9 +70,23 @@ internal sealed class ObjectStore
 
     public bool Remove(int number)
     {
+        ThrowIfClosed();
         bool existed = ContainsKey(number);
         _objects.Remove(number);
         if (_file is not null) _removed.Add(number);
         return existed;
+    }
+
+    /// <summary>Ends the store's use when its document is disposed: every later lookup throws.</summary>
+    public void Close()
+    {
+        _closed = true;
+        _objects.Clear();
+        _removed.Clear();
+    }
+
+    private void ThrowIfClosed()
+    {
+        if (_closed) throw new ObjectDisposedException(nameof(PdfDocument), "The document was disposed; its objects can no longer be read.");
     }
 }

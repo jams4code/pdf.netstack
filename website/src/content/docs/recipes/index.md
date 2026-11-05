@@ -52,5 +52,4 @@ depth.
 | [Extract all images from a PDF](/recipes/extract-images-from-pdf/) | JPEGs as stored, other images as PNG |
 | [Make a scanned PDF searchable](/recipes/make-scanned-pdf-searchable/) | OCR with the `PdfNetStack.Ocr` add-on |
 
-Recipes marked 1.1 use features that are in the main branch and not on NuGet yet. See
-[Getting started](/getting-started/#build-from-source) to build against the source.
+Recipes marked 1.1 need the 1.1 packages or later.

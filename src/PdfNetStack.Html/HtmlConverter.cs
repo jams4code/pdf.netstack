@@ -258,6 +258,60 @@ public static class HtmlConverter
         ConvertToDocument(html, options).Save(output, SaveOptions(options));
     }
 
+    /// <summary>
+    /// Converts an HTML string and writes the PDF to a stream, asynchronously: no thread waits
+    /// while the document is laid out, and <paramref name="output"/> is only written with
+    /// asynchronous calls, as response bodies in ASP.NET Core and Azure Functions require.
+    /// </summary>
+    /// <remarks>
+    /// Layout runs on a thread of its own, as <see cref="ConvertToDocument"/> does, and the PDF is
+    /// then saved with <see cref="PdfDocument.SaveAsync(Stream, PdfSaveOptions?, CancellationToken)"/>,
+    /// with <see cref="HtmlConverterOptions.SaveOptions"/>.
+    /// </remarks>
+    /// <param name="html">The HTML.</param>
+    /// <param name="output">Where the PDF is written, from its current position. It is flushed, not closed.</param>
+    /// <param name="options">Page size, fonts and how resources load; defaults when null.</param>
+    /// <param name="cancellationToken">
+    /// Observed before layout starts and while the PDF is saved; layout itself, bounded by
+    /// <see cref="HtmlConverterOptions.MaxPages"/>, runs to its end. When it fires, the call ends
+    /// with <see cref="OperationCanceledException"/> and what reached the stream is not a complete file.
+    /// </param>
+    /// <exception cref="HtmlConversionException">The document needs more pages than <see cref="HtmlConverterOptions.MaxPages"/>.</exception>
+    public static async Task ConvertToPdfAsync(string html, Stream output, HtmlConverterOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        Compat.ThrowIfNull(html, nameof(html));
+        Compat.ThrowIfNull(output, nameof(output));
+        cancellationToken.ThrowIfCancellationRequested();
+        HtmlConverterOptions effective = options ?? new HtmlConverterOptions();
+        PdfDocument doc = await ConvertOnWorkerAsync(html, effective).ConfigureAwait(false);
+        await doc.SaveAsync(output, SaveOptions(options), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Lays out on a thread with a deep stack, completing the task there, so the caller's thread is free meanwhile.</summary>
+    private static Task<PdfDocument> ConvertOnWorkerAsync(string html, HtmlConverterOptions options)
+    {
+        var done = new TaskCompletionSource<PdfDocument>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var worker = new Thread(
+            () =>
+            {
+                try
+                {
+                    done.SetResult(Convert(html, options));
+                }
+                catch (Exception e)
+                {
+                    done.SetException(e);
+                }
+            },
+            StackSize)
+        {
+            Name = "PdfNetStack.Html",
+            IsBackground = true,
+        };
+        worker.Start();
+        return done.Task;
+    }
+
     // The converter draws every page itself, so the optimizer's rewrite of it needs no proof.
     private static readonly PdfSaveOptions Unverified = new() { VerifyOptimization = false };
 

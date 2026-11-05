@@ -27,10 +27,14 @@ export const PERSON_ID = 'https://www.jadev-corp.com/jamal#person';
  */
 export const RELEASE = {
   /** Feature versions available from NuGet. */
-  published: ['1.0'],
+  published: ['1.0', '1.1'],
   /** Package versions on NuGet, by package id. Packages missing here are not on NuGet. */
   packages: {
-    PdfNetStack: '1.0.0',
-    'PdfNetStack.Tool': '1.0.0',
+    PdfNetStack: '1.1.0',
+    'PdfNetStack.Html': '1.1.0',
+    'PdfNetStack.Ocr': '1.1.0',
+    'PdfNetStack.Ocr.Models': '1.0.0',
+    'PdfNetStack.Ocr.Tool': '1.1.0',
+    'PdfNetStack.Tool': '1.1.0',
   },
 };

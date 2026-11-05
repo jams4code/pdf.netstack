@@ -57,12 +57,13 @@ internal static class TiffDecoder
     /// <exception cref="FormatException">The data is not a TIFF or has no page.</exception>
     public static int CountPages(byte[] data) => Directories(data).Count;
 
-    /// <exception cref="FormatException">The data is not a TIFF, or the page is missing or not readable.</exception>
-    public static TiffPage ReadPage(byte[] data, int index)
+    /// <param name="maxPixels">Ceiling for the page's area, at most <see cref="PngImage.MaxPixels"/>.</param>
+    /// <exception cref="FormatException">The data is not a TIFF, or the page is missing, not readable or too large.</exception>
+    public static TiffPage ReadPage(byte[] data, int index, long maxPixels = PngImage.MaxPixels)
     {
         List<long> directories = Directories(data);
         if (index < 0 || index >= directories.Count) throw new FormatException($"The TIFF has {directories.Count} pages; page {index} does not exist.");
-        return new TiffPage(new TiffReader(data), directories[index]);
+        return new TiffPage(new TiffReader(data), directories[index], maxPixels);
     }
 
     /// <summary>The offsets of the image file directories in chain order, stopping at a loop or a bad link.</summary>
@@ -140,10 +141,12 @@ internal sealed class TiffPage
     private readonly int _planes;
     private readonly int _alphaIndex = -1;
     private readonly bool _associatedAlpha;
+    private readonly long _maxPixels;
 
-    internal TiffPage(TiffReader reader, long directory)
+    internal TiffPage(TiffReader reader, long directory, long maxPixels)
     {
         _r = reader;
+        _maxPixels = maxPixels;
         ReadDirectory(directory);
 
         long width = Int(256, 0), height = Int(257, 0);
@@ -183,7 +186,7 @@ internal sealed class TiffPage
         }
 
         if (Predictor != 1 && (Predictor != 2 || Bits < 8)) throw new FormatException($"TIFF predictor {Predictor} is not supported with {Bits} bit samples.");
-        DecodedImage.CheckSize(width, height, Math.Max(1, Samples * Bits / 8), "TIFF");
+        DecodedImage.CheckSize(width, height, Math.Max(1, Samples * Bits / 8), "TIFF", maxPixels);
         Width = (int)width;
         Height = (int)height;
 
@@ -475,7 +478,7 @@ internal sealed class TiffPage
         Raster raster;
         try
         {
-            raster = JpegDecoder.Decode(WithTables(raw), JpegColorTransform, Math.Min(Compat.MaxArrayLength, PngImage.MaxPixels * 4));
+            raster = JpegDecoder.Decode(WithTables(raw), JpegColorTransform, Math.Min(Compat.MaxArrayLength, PngImage.MaxPixels * 4), _maxPixels);
         }
         catch (JpegFormatException e)
         {

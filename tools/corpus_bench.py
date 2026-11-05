@@ -12,7 +12,8 @@ Usage:
 For every file in eng/corpus/manifest.json, tools/PdfNetStack.CorpusRunner runs in its own
 process to:
   - optimize it under each profile (lossless; lossy: JPEG quality 75, 150 dpi, photographs to
-    JPEG, SSIM gate 0.95, progressive JPEG), measuring size, time and peak memory, and check
+    JPEG, SSIM gate 0.95, progressive JPEG; balanced: the preset, palettes and JPEG quality 75
+    at full resolution behind the same gate), measuring size, time and peak memory, and check
     every kept rewrite again with PdfEquivalence;
   - extract the text of every page and decode every image, from the original and from each
     rewrite, and compare them.
@@ -40,7 +41,7 @@ import fetch_corpus
 ROOT = fetch_corpus.ROOT
 DEFAULT_RUNNER = os.path.join(ROOT, "tools", "PdfNetStack.CorpusRunner", "bin", "Release", "net10.0", "PdfNetStack.CorpusRunner.dll")
 DEFAULT_OUT = os.path.join(ROOT, "artifacts", "corpus", "report")
-PROFILES = ["lossless", "lossy"]
+PROFILES = ["lossless", "lossy", "balanced"]
 # Below this PSNR a lossy page is listed as visibly changed. It is a note, not a failure.
 VISIBLE_PSNR = 30.0
 
@@ -222,8 +223,9 @@ def write_markdown(path, report):
         f".NET SDK {env['dotnet_sdk']}, PDFium {env['pdfium']} (pypdfium2 {env['pypdfium2']}).",
         "",
         "Profiles: **lossless** is the default optimizer; **lossy** adds JPEG quality 75, downsampling to 150 dpi, "
-        "photographs to JPEG and progressive JPEG behind an SSIM gate of 0.95. Both accept files with incremental "
-        "updates or repaired cross-references and keep any rewrite that is not larger. Time is the optimizer call, "
+        "photographs to JPEG and progressive JPEG behind an SSIM gate of 0.95; **balanced** is the preset of that name: "
+        "palettes for drawings and screenshots and JPEG quality 75 at full resolution, behind the same gate. All accept "
+        "files with incremental updates or repaired cross-references and keep any rewrite that is not larger. Time is the optimizer call, "
         "including its own equivalence proof; memory is the peak working set of the process that ran it.",
         "",
         "## Summary",
@@ -319,12 +321,15 @@ def main():
     parser.add_argument("--out", default=DEFAULT_OUT)
     parser.add_argument("--runner", default=DEFAULT_RUNNER, help="the built PdfNetStack.CorpusRunner.dll")
     parser.add_argument("--only", help="comma separated ids")
+    parser.add_argument("--profiles", help="comma separated profiles, instead of " + ",".join(PROFILES))
     parser.add_argument("--dpi", type=int, default=100)
     parser.add_argument("--pages", type=int, default=6, help="pages rendered per document: the first ones and the last")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4, help="parallel render processes")
     parser.add_argument("--timeout", type=int, default=900, help="seconds per runner call")
     args = parser.parse_args()
 
+    if args.profiles:
+        PROFILES[:] = args.profiles.split(",")
     if not os.path.exists(args.runner):
         print("Build the runner first: dotnet build tools/PdfNetStack.CorpusRunner -c Release")
         return 2
@@ -338,7 +343,7 @@ def main():
     docs = []
     for n, entry in enumerate(entries, 1):
         print(f"[{n}/{len(entries)}] {entry['id']}", flush=True)
-        d = {k: entry[k] for k in ("id", "title", "bytes", "license", "exercises")}
+        d = {k: entry[k] for k in ("id", "title", "sha256", "bytes", "license", "exercises")}
         d["failures"], d["warnings"] = [], []
         source = fetch_corpus.cached_path(args.cache, entry)
         if not fetch_corpus.is_valid(source, entry):

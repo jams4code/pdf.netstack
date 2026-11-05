@@ -20,6 +20,14 @@ internal sealed class NameConstraints
     private const string EmailAddress = "1.2.840.113549.1.9.1";
     private const int MaxSubtrees = 256;
 
+    /// <summary>
+    /// False when the runtime has no Unicode data for NFKC normalization and IDNA mapping, as in
+    /// .NET's invariant globalization mode, where both return their input unchanged. Hosts and
+    /// directory strings with characters outside ASCII then cannot be put in canonical form, and
+    /// fail closed instead of slipping past an excluded subtree written in another form.
+    /// </summary>
+    private static readonly bool UnicodeMapping = "\uFF21".Normalize(NormalizationForm.FormKC) == "A";
+
     private const int Rfc822 = 1, Dns = 2, Directory = 4, Uri = 6, Ip = 7;
 
     // One list per constraining certificate: a name must match each list that constrains its form.
@@ -195,6 +203,7 @@ internal sealed class NameConstraints
         string ascii = host;
         if (host.Any(ch => ch > 0x7F))
         {
+            if (!UnicodeMapping) return null;
             try
             {
                 ascii = new IdnMapping().GetAscii(host);
@@ -324,6 +333,7 @@ internal sealed class NameConstraints
         string normalized;
         try
         {
+            if (!UnicodeMapping && mapped.ToString().Any(ch => ch > 0x7F)) return null;
             normalized = mapped.ToString().Normalize(NormalizationForm.FormKC);
         }
         catch (ArgumentException)

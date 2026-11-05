@@ -16,7 +16,11 @@ internal sealed partial class Shaper
     private const long MyanmarConsonants = 1L << (int)IndicCategory.C | 1L << (int)IndicCategory.CS | 1L << (int)IndicCategory.Ra
         | 1L << (int)IndicCategory.V | 1L << (int)IndicCategory.Placeholder | 1L << (int)IndicCategory.DottedCircle;
 
-    private static readonly SyllableGrammar.Machine[] MyanmarMachines = BuildMyanmarMachines();
+    /// <summary>The syllable machines, built when Myanmar text is first shaped rather than with every shaper.</summary>
+    private static class MyanmarGrammar
+    {
+        public static readonly SyllableGrammar.Machine[] Machines = BuildMyanmarMachines();
+    }
 
     private static readonly ShapingFeature[] MyanmarOtherFeatures =
     [
@@ -28,7 +32,7 @@ internal sealed partial class Shaper
     {
         foreach (GlyphInfo g in _buffer) g.IndicCategory = (byte)(ShapingData.Indic(g.CodePoint) & 0xFF);
         ApplyStage(_gsub, _gsubFeatures, [new("rvrn")]);
-        FindSyllables(MyanmarMachines, g => g.IndicCategory, MyanmarOther);
+        FindSyllables(MyanmarGrammar.Machines, g => g.IndicCategory, MyanmarOther);
         ApplyStage(_gsub, _gsubFeatures, [new("locl", PerSyllable: true), new("ccmp", PerSyllable: true)]);
         InsertDottedCircles(MyanmarBrokenCluster, g => g.IndicCategory = (byte)IndicCategory.DottedCircle);
         foreach ((int start, int end) in Syllables())

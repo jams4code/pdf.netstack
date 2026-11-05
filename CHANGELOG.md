@@ -1,7 +1,126 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-11-05)
 
+- `QuantizeImages` (`--quantize`) reduces raw 8 bit RGB images to a palette of at most 256 colors in
+  their own color space, for the drawings and screenshots where JPEG rings around fine labels and
+  barely saves anything. Each image gets the smallest palette, of 256, 64, 16 or 4 colors, that
+  keeps `MinImageSsim`, or 0.97 without a gate, and no more than 8 sample steps of mean change with
+  at most 1% of pixels moved by over 32, which catches a hue drift luminance cannot see. A color
+  holding most of its cluster stays exact, so white stays white. With `ConvertImagesToJpeg` the
+  smaller candidate wins image by image. The proof expands the palette and checks the same bounds,
+  and `PdfEquivalence.FindDifference` accepts such images when given a minimum SSIM. On a technical
+  manual full of screenshots and diagrams, `JpegQuality = 50` alone saved 18.0% and adding
+  `QuantizeImages` saved 47.9%. `QuantizeImages` alone saved 43.7%, with pages rendered by PDFium
+  closer to the source than with `JpegQuality = 50` alone (mean SSIM 0.9999 against 0.9996). The
+  pass costs CPU: about 2.7 times as long on that file, single threaded. On the public corpus it
+  took the lossy profile from 29.5% to 32.1% with no failure: 15 of the 65 rewritten documents got
+  smaller, up to 45%, and none got larger.
+- The corpus benchmark measures a third profile, `balanced`, the preset of that name: 23.4% on the
+  public corpus, at full resolution, with no page below its PSNR warning. `--profiles` picks others.
+- `PdfOptimizerOptions.Balanced` and `PdfOptimizerOptions.Smallest` (`--preset balanced`,
+  `--preset smallest`) are ready sets of lossy options. `Default` stays lossless.
+- The corpus benchmark also runs for every version tag and attaches its report to the GitHub
+  release, with a comparison against the report of the previous release made by
+  `tools/corpus_compare.py`: savings, time and peak memory per profile, and per document any
+  rewrite that grew by more than 1% of the original, took 1.5 times as long, needed 1.3 times the
+  memory, stopped being rewritten or now fails a check. Reports record each document's SHA-256,
+  so only identical files are compared.
+- Opening documents with control over memory, for serverless hosts and large files.
+  `PdfLoadOptions` gathers the password, `MaxDecodedStreamBytes`, a new `MaxImagePixels`, the
+  `Mode` (`PdfLoadMode.InMemory` or `OnDemand`), `SpoolThreshold` and `TempDirectory`, taken by
+  new overloads `PdfDocument.Open(string, PdfLoadOptions)`, `Open(Stream, PdfLoadOptions)` and
+  `Open(ReadOnlyMemory<byte>, PdfLoadOptions)`; the existing overloads keep working and call them.
+  - The input is read once. `Open(Stream)` copied a stream into a growing buffer and then into an
+    array; now a `MemoryStream` whose buffer is exposed is used without copying, a seekable stream
+    is read into an array of its length (4.0 MB allocated for a 4.0 MB file, was 8.0 MB from a
+    `MemoryStream`), and any other stream is read in pieces joined once.
+  - On demand from a path, the document opens the file itself and keeps it until it is disposed.
+    `PdfDocument` is now `IDisposable`: disposing a document read on demand closes what it opened
+    and makes later use throw `ObjectDisposedException`; the caller's stream is never disposed,
+    and disposing a document in memory does nothing.
+  - A stream that cannot seek (an HTTP request body, a storage download) can be read on demand:
+    `OpenOnDemand` and `Open` copy it to memory up to `SpoolThreshold` (16 MiB) and past it to a
+    temporary file in `TempDirectory` (the system's temporary folder by default; /tmp on AWS
+    Lambda), opened with `DeleteOnClose` on Windows and unlinked once open elsewhere, and deleted
+    when the document is disposed or opening fails.
+  - `PdfDocument.OpenAsync(Stream, PdfLoadOptions?, CancellationToken)` reads the stream with
+    asynchronous reads only, for hosts that forbid synchronous I/O, and deletes any partial copy
+    when cancelled.
+  - `MaxImagePixels` (2^28 by default, the previous fixed cap) refuses an image with more pixels
+    before its pixels are allocated, with `PdfFormatException`, for raw samples, JPEG, JPEG 2000,
+    JBIG2 and CCITT images, by the dictionary's size and by the size the data declares.
+    `PdfImage.Load(byte[], int, long maxPixels)` does the same for JPEG, PNG, GIF, BMP, TIFF and
+    WebP files, with `FormatException`.
+  - `PdfDocument.ReleaseUnusedObjects()` frees the objects a document read on demand has parsed
+    and nothing uses any more; they are parsed again when needed. Objects that differ from the
+    file, and objects still referenced anywhere (found by a full garbage collection), are kept,
+    so no edit is lost. Reading 300 pages that each have their own font kept 1,503 parsed objects
+    and 7.8 MB; releasing every 50 pages kept 301 objects and 1.0 MB.
+
+- `PdfDocument.Save(Stream)` writes progressively when `PdfSaveOptions.Optimize` is off: each
+  object, or batch of objects for an object stream, goes to the stream as soon as it is
+  serialized, offsets are counted as bytes go out, and the cross-reference data comes last.
+  Memory beyond the document follows the largest object, not the file; a document opened with
+  `OpenOnDemand` has its stream data copied from the source as it is written. The bytes are the
+  ones `ToArray` returns for the same options. On a generated 278 MB file opened on demand, an
+  unoptimized save peaked at 3 MB of live memory (51 MB working set) instead of 835 MB, and took
+  0.9 to 1.2 s instead of 1.4 to 5.6 s on a busy machine. With the optimizer on, the default,
+  the file is still built in memory, as the proof needs all of it; the XML docs say so.
+- Without the optimizer, encryption is applied in the same single pass; the optimized path still
+  encrypts the proven file as a last step.
+- `PdfDocument.SaveAsync(Stream, PdfSaveOptions?, CancellationToken)` and
+  `SaveAsync(string, ...)`: the same output, written with asynchronous calls only and flushed,
+  for response bodies in ASP.NET Core and Azure Functions isolated, which refuse synchronous IO.
+  Cancellation is observed before each object and by each write; a cancelled or failed save
+  throws, and `SaveAsync(path)` then leaves the file as it was.
+- `HtmlConverter.ConvertToPdfAsync(html, stream, options, cancellationToken)`: layout on its own
+  thread with no caller thread waiting, then `SaveAsync`.
+- Streaming optimizer: `PdfOptimizerOptions.Streaming`. The source is read on demand (as
+  `OpenOnDemand` reads it), streams are recompressed a batch at a time (at most 32 MiB of source
+  data) and written straight away, and the rewrite goes to a temporary file: the destination's
+  own temporary file for `OptimizeFileAsync`, otherwise one in the system temporary folder. The
+  proof is the in-memory proof, run on a reader over that file: every reachable object compared,
+  every stream by decoded content. Duplicates are found from what streams decode to before
+  anything is written, so the output can differ from the in-memory rewrite (JPEG files differing
+  only in metadata stay two); on the test documents and the benchmark file it is the same.
+  `OptimizeAsync` reads a `FileStream` or `MemoryStream` in place and copies any other input to a
+  temporary file first, asynchronously; the caller's output is only written asynchronously.
+  Linearization cannot be combined with it. `OptimizationStatistics.Streamed` reports the mode,
+  and `pdfnetstack optimize --streaming` turns it on, without an input size limit. On a generated
+  278 MB file: 50 MB of live memory (300 to 460 MB working set) against 810 MB (1.4 GB), and no
+  slower (8 to 11 s against 10 to 15 s on a busy machine), measured by
+  `tools/PdfNetStack.MemoryBench`.
+- Serverless and containers. The core, HTML and OCR libraries publish with Native AOT and
+  trimming with no warnings (`PdfNetStack.Ocr` is now marked AOT compatible too), checked in CI
+  on linux-x64 and linux-arm64 for .NET 8 and .NET 10 by `tests/PdfNetStack.AotSmoke`, which roots
+  all three libraries and then creates, opens, optimizes, extracts text and images from, reads
+  predefined CJK CMaps in and converts HTML to PDF. CI also runs the test suite with invariant
+  globalization and under tr-TR (`PDFNETSTACK_TEST_CULTURE` sets the culture of a test run).
+- `PdfFontCollection.AddDirectory` and `PdfFontCollection.System` skip a directory that cannot be
+  listed instead of giving up on the whole tree, search at most 16 levels deep without following
+  links to directories (a link cycle used to recurse until the path was too long), and visit
+  files in ordinal order, so the same fonts win on every machine. With no home directory (HOME
+  unset, as in some serverless hosts) the per user font directories are skipped; they used to
+  resolve against the current directory.
+- Variable font instances are held weakly by their font. A font shared by a long running process,
+  such as one in a `PdfFontCollection` used for every HTML conversion, no longer keeps every
+  location it was ever asked for (each a full font program); an instance stays shared while a
+  document or the application holds it.
+- Name constraints fail closed without ICU. Under invariant globalization .NET performs no NFKC
+  normalization or IDNA mapping, so a directory string or host name with characters outside
+  ASCII cannot be put in canonical form; it now counts as undecided (excluded, and not
+  permitted) instead of being compared as written, which let full width letters pass an
+  excluded subtree.
+- Cold start: the syllable grammars of the Khmer, Myanmar and Universal Shaping Engine shapers
+  are built when such text is first shaped, not with the first shaper. The first line of text in
+  an embedded font allocates 360 KB less and, under the JIT, takes about 10% less time.
+  `tools/measure_cold_start.py` measures the first open and save, optimization, text extraction,
+  HTML conversion and embedded font text in a fresh process.
+- Samples under `samples/serverless`: a Native AOT AWS Lambda function (provided.al2023, arm64)
+  that optimizes PDFs uploaded to S3 and converts HTML to PDF behind a function URL, with a SAM
+  template, and an Azure Functions isolated worker app with an HTTP trigger for HTML and an Event
+  Grid blob trigger for optimization. Both are built in CI.
 - OCR finds pages scanned sideways or upside down. When most of the lines read on a page do not
   run left to right (the detector found them tall, or the line orientation model turned them), a
   copy reduced to 1600 pixels on its long side is read in each of the four orientations and the

@@ -75,7 +75,11 @@ internal sealed partial class Shaper
         | 1L << (int)UseCategory.VAbv | 1L << (int)UseCategory.VBlw | 1L << (int)UseCategory.VPst | 1L << (int)UseCategory.VPre
         | 1L << (int)UseCategory.VMAbv | 1L << (int)UseCategory.VMBlw | 1L << (int)UseCategory.VMPst | 1L << (int)UseCategory.VMPre;
 
-    private static readonly SyllableGrammar.Machine[] UseMachines = BuildUseMachines();
+    /// <summary>The syllable machines, built when USE text is first shaped rather than with every shaper.</summary>
+    private static class UseGrammar
+    {
+        public static readonly SyllableGrammar.Machine[] Machines = BuildUseMachines();
+    }
 
     private static readonly ShapingFeature[] UseOrthographicFeatures =
     [
@@ -202,7 +206,7 @@ internal sealed partial class Shaper
         }
 
         int serial = 1;
-        foreach ((int start, int length, int type) in SyllableGrammar.Split(UseMachines, [.. seen.Select(i => (int)_buffer[i].UseCategory)], UseOther))
+        foreach ((int start, int length, int type) in SyllableGrammar.Split(UseGrammar.Machines, [.. seen.Select(i => (int)_buffer[i].UseCategory)], UseOther))
         {
             int end = start + length < seen.Count ? seen[start + length] : _buffer.Count;
             for (int i = seen[start]; i < end; i++) _buffer[i].Syllable = serial << 4 | type;

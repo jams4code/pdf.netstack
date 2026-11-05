@@ -53,13 +53,14 @@ internal sealed class DecodedImage
     public static long RowBytes(int width, int colors, int bits) => ((long)width * colors * bits + 7) / 8;
 
     /// <summary>
-    /// Checks that a width and height are positive, within <see cref="PngImage.MaxPixels"/>, and
+    /// Checks that a width and height are positive, within <paramref name="maxPixels"/>, and
     /// that their samples fit in one array.
     /// </summary>
+    /// <param name="maxPixels">Ceiling for the image area, at most <see cref="PngImage.MaxPixels"/>.</param>
     /// <exception cref="FormatException">The size is out of range.</exception>
-    public static void CheckSize(long width, long height, int bytesPerPixel, string format)
+    public static void CheckSize(long width, long height, int bytesPerPixel, string format, long maxPixels = PngImage.MaxPixels)
     {
-        if (width <= 0 || height <= 0 || width * height > PngImage.MaxPixels || width * height * bytesPerPixel > Compat.MaxArrayLength)
+        if (width <= 0 || height <= 0 || width * height > maxPixels || width * height * bytesPerPixel > Compat.MaxArrayLength)
         {
             throw new FormatException(format + " image size is invalid or too large.");
         }
