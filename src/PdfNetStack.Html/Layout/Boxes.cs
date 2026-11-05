@@ -81,6 +81,9 @@ internal sealed class TextBox(ComputedStyle style, string text) : Box(style, nul
 {
     public string Text { get; internal set; } = text;
 
+    /// <summary>The words as written, where text-transform: uppercase changed them: hyphenation decides on these. Otherwise null.</summary>
+    public string? BeforeUppercase { get; internal set; }
+
     public override string ToString() => "Text\"" + Text + "\"";
 }
 

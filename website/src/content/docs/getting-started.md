@@ -46,6 +46,7 @@ The same managed code runs on Windows, Linux and macOS. CI runs the test suite o
 | `PdfNetStack` | The library | 1.1.0 |
 | `PdfNetStack.Tool` | The `pdfnetstack` command line tool | 1.1.0 |
 | `PdfNetStack.Html` | HTML and CSS to PDF | 1.1.0 |
+| `PdfNetStack.Hyphenation` | Hyphenation patterns for paragraphs and `hyphens: auto` | Next release |
 | `PdfNetStack.Ocr` | OCR add-on for scanned PDFs | 1.1.0 |
 | `PdfNetStack.Ocr.Models` | The OCR models, versioned on their own | 1.0.0 |
 | `PdfNetStack.Ocr.Tool` | The `pdfnetstack-ocr` command line tool, models included | 1.1.0 |

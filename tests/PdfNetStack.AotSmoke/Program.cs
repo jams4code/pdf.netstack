@@ -5,6 +5,7 @@ using PdfNetStack;
 using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 using PdfNetStack.Html;
+using PdfNetStack.Hyphenation;
 using PdfNetStack.Objects;
 using PdfNetStack.Ocr;
 
@@ -117,6 +118,19 @@ internal static class Smoke
         {
             byte[] pdf = ConvertHtml(Html, useSystemFonts: false);
             Check(ExtractText(pdf).Contains(Heading, StringComparison.Ordinal), "the converted text reads back");
+        });
+
+        Run("hyphenation", () =>
+        {
+            // Embedded deflate resources, read on first use, and the layouts that take them.
+            Check(string.Join("-", PdfHyphenationPatterns.ForLanguage("de-AT")!.InsertSoftHyphens("Silbentrennung").Split((char)0xAD)) == "Sil-ben-tren-nung", "the German patterns load");
+            Check(PdfHyphenationPatterns.ForLanguage("EN-gb") is not null && PdfHyphenationPatterns.ForLanguage("ru") is null, "tags resolve under invariant globalization");
+            var layout = PdfTextLayout.Create(new PdfParagraph { Hyphenator = PdfHyphenationPatterns.ForLanguage("en") }.Add("hyphenation", new PdfTextStyle(PdfStandardFont.Courier, 10)), 50);
+            Check(layout.Lines.Count == 2 && layout.Lines[0].End == 6, "a paragraph breaks at a hyphenation point");
+            byte[] pdf = HtmlConverter.ConvertToPdf(
+                "<html lang=\"fr\"><body style=\"hyphens: auto; width: 60px\">développement</body></html>",
+                new HtmlConverterOptions { UseSystemFonts = false, Hyphenators = PdfHyphenationPatterns.ForLanguage });
+            Check(PdfDocument.Open(pdf).Pages.Count == 1, "hyphens: auto converts");
         });
 
         Run("ocr types", () =>

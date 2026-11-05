@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;
 using PdfNetStack.Html.Css;
 using PdfNetStack.Text;
@@ -44,6 +45,12 @@ internal sealed class InlineLayout
     private readonly List<Item> _items = [];
     private int[] _itemAt = [];
     private List<LineBreak> _breaks = [];
+
+    // Where a line may end with a hyphen no character stands for; null when nothing is hyphenated.
+    private bool[]? _hyphenated;
+
+    // Text boxes that text-transform: uppercase changed, by where they start in the text; null with none.
+    private List<(int Start, TextBox Box)>? _uppercased;
 
     private sealed class Span(InlineBox box, int parent, int start, int depth)
     {
@@ -123,6 +130,9 @@ internal sealed class InlineLayout
         public List<ShapedGlyph> Glyphs { get; set; } = [];
 
         public double Width { get; set; }
+
+        /// <summary>The line ends here with a hyphen from hyphenation, which the text does not hold.</summary>
+        public bool Hyphenated { get; set; }
     }
 
     /// <param name="engine">Lays out atomic inlines and resolves fonts.</param>
@@ -202,6 +212,7 @@ internal sealed class InlineLayout
         _items = source._items;
         _itemAt = source._itemAt;
         _breaks = source._breaks;
+        _hyphenated = source._hyphenated;
     }
 
     public bool IsEmpty => _text.Length == 0;
@@ -231,6 +242,7 @@ internal sealed class InlineLayout
             switch (b)
             {
                 case TextBox t:
+                    if (t.BeforeUppercase is not null) (_uppercased ??= []).Add((_sb.Length, t));
                     Append(t.Text, t.Style, parent);
                     break;
                 case LineBreakBox br:
@@ -530,6 +542,92 @@ internal sealed class InlineLayout
 
         _breaks = breaks;
         if (_breaks.Count == 0 || _breaks[^1].Position != n) _breaks.Add(new LineBreak(n, true));
+        if (_engine.Fonts.Hyphenators is HyphenatorCache hyphenators && AnyStyle(s => s.Keyword("hyphens") == "auto")) AddHyphenation(hyphenators);
+    }
+
+    /// <summary>
+    /// hyphens: auto (CSS Text 3, 5.4): the hyphenation points of each stretch of text in one
+    /// language, so a word split across inline elements still counts as one. Points inside a
+    /// ligature would need reshaping and are skipped, as are those of a font with no hyphen.
+    /// Words are judged as written: text-transform: uppercase does not make them all capitals.
+    /// </summary>
+    private void AddHyphenation(HyphenatorCache hyphenators)
+    {
+        int n = _text.Length;
+        (string words, int[]? toText) = WordsAsWritten();
+        var points = new List<int>();
+        int start = 0;
+        PdfHyphenator? current = null;
+        ComputedStyle? lastStyle = null;
+        PdfHyphenator? hyphenator = null;
+        for (int i = 0; i <= words.Length; i++)
+        {
+            ComputedStyle? style = i < words.Length ? _style[toText is null ? i : toText[i]] : null;
+            if (!ReferenceEquals(style, lastStyle))
+            {
+                lastStyle = style;
+                hyphenator = style is not null && style.Keyword("hyphens") == "auto" && !NoWrap(style) && style.Keyword("word-break") != "break-all"
+                    ? hyphenators.For(style.Language)
+                    : null;
+            }
+
+            if (ReferenceEquals(hyphenator, current)) continue;
+            current?.FindBreaks(words, start, i, points);
+            current = hyphenator;
+            start = i;
+        }
+
+        if (points.Count == 0) return;
+        if (toText is not null)
+        {
+            for (int k = 0; k < points.Count; k++) points[k] = toText[points[k]];
+        }
+
+        var clusters = new bool[n];
+        foreach (Item item in _items)
+        {
+            foreach (ShapedGlyph g in item.Glyphs) clusters[g.Cluster] = true;
+        }
+
+        points.RemoveAll(p => !clusters[p] || !_font[p - 1].HasGlyph('-'));
+        _hyphenated = new bool[n + 1];
+        _breaks = PdfHyphenator.MergeBreaks(_breaks, points, _hyphenated);
+    }
+
+    /// <summary>
+    /// The text with uppercased boxes as they were written, and for each of its characters where
+    /// that character starts in the laid out text, which can be longer: sharp s becomes SS. The
+    /// map is null when nothing was uppercased, and both are then the same text.
+    /// </summary>
+    private (string Words, int[]? ToText) WordsAsWritten()
+    {
+        if (_uppercased is null) return (_text, null);
+        var words = new StringBuilder(_text.Length);
+        var toText = new List<int>(_text.Length);
+        int at = 0;
+        foreach ((int start, TextBox box) in _uppercased)
+        {
+            for (; at < start; at++)
+            {
+                words.Append(_text[at]);
+                toText.Add(at);
+            }
+
+            foreach (char c in box.BeforeUppercase!)
+            {
+                words.Append(c);
+                toText.Add(at);
+                at += BoxBuilder.UppercaseLength(c);
+            }
+        }
+
+        for (; at < _text.Length; at++)
+        {
+            words.Append(_text[at]);
+            toText.Add(at);
+        }
+
+        return (words.ToString(), [.. toText]);
     }
 
     /// <summary>Whether any of the text's styles passes the test, asked once per run of one style.</summary>
@@ -573,8 +671,10 @@ internal sealed class InlineLayout
     private double LineWidth(int start, int end)
     {
         int visible = TrimEnd(start, end);
-        return Width(start, visible) + (visible > start && _text[visible - 1] == SoftHyphen ? HyphenWidth(visible - 1) : 0);
+        return Width(start, visible) + (EndsWithHyphen(start, visible) ? HyphenWidth(visible - 1) : 0);
     }
+
+    private bool EndsWithHyphen(int start, int end) => end > start && (_text[end - 1] == SoftHyphen || _hyphenated?[end] == true);
 
     /// <summary>The min-content and max-content widths (CSS Sizing 3, 5.1).</summary>
     public (double Min, double Max) IntrinsicWidths()
@@ -745,8 +845,8 @@ internal sealed class InlineLayout
             i = e;
         }
 
-        // A soft hyphen at the break shows a hyphen.
-        if (segments.Count > 0 && _text[visibleEnd - 1] == SoftHyphen)
+        // A soft hyphen at the break, or a hyphenation point, shows a hyphen.
+        if (segments.Count > 0 && EndsWithHyphen(start, visibleEnd))
         {
             Segment last = segments[^1];
             List<ShapedGlyph> hyphen = last.Item.Font.ShapeRun("-", 0, 1, false, "latn");
@@ -755,6 +855,7 @@ internal sealed class InlineLayout
                 ShapedGlyph h = hyphen[0] with { Cluster = visibleEnd - 1, Text = "-" };
                 last.Glyphs.Add(h);
                 last.Width += h.Advance * last.Item.Style.FontSize / 1000;
+                last.Hyphenated = _text[visibleEnd - 1] != SoftHyphen;
             }
         }
 
@@ -903,7 +1004,9 @@ internal sealed class InlineLayout
                 int spaces = perSpace > 0 ? seg.Glyphs.Count(g => _text[g.Cluster] is ' ' or (char)0x00A0) : 0;
                 double shift = ShiftOf(_span[seg.Start]);
                 var m = Metrics(seg.Item.Style);
-                var text = new TextFragment(seg.Item.Style, seg.Item.Font, size, seg.Glyphs, _text.Substring(seg.Start, seg.End - seg.Start))
+                string segmentText = _text.Substring(seg.Start, seg.End - seg.Start);
+                if (seg.Hyphenated) segmentText += SoftHyphen;
+                var text = new TextFragment(seg.Item.Style, seg.Item.Font, size, seg.Glyphs, segmentText)
                 {
                     X = cursor,
                     Y = baseline + shift - m.Ascent,

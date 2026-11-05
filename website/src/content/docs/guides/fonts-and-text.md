@@ -146,6 +146,50 @@ Lines break at Unicode line break opportunities (UAX #14). A word wider than the
 between characters. Line feeds start a new line, tabs advance four spaces, and soft hyphens
 (U+00AD) show a hyphen when a word breaks there.
 
+## Hyphenation
+
+Hyphenation is off by default. Give a paragraph a `PdfHyphenator` and words break at the line's end
+where the language allows, with a hyphen. The core library has Liang's algorithm, as TeX defines
+it, and no patterns; the optional `PdfNetStack.Hyphenation` package has them.
+
+```csharp sample="fonts-hyphenation.cs" region="paragraph"
+```
+
+| Tag | Language | Tag | Language |
+|---|---|---|---|
+| `en-us` (also `en`, `en-CA`) | English, American | `en-gb` (also `en-AU`, `en-NZ`, `en-IE`, `en-ZA`, `en-IN`) | English, British |
+| `de` (also `de-AT`, `de-CH`) | German, reformed spelling | `fr` | French |
+| `nl` | Dutch | `es` | Spanish |
+| `it` | Italian | `pt` (also `pt-BR`, `pt-PT`) | Portuguese |
+| `af` | Afrikaans | `be` | Belarusian |
+| `bg` | Bulgarian | `cy` | Welsh |
+| `da` | Danish | `el` (`el-monoton`), `el-polyton` | Greek |
+| `et` | Estonian | `eu` | Basque |
+| `ga` | Irish | `gl` | Galician |
+| `hr` | Croatian | `la` | Latin |
+| `lt` | Lithuanian | `nb` (also `no`), `nn` | Norwegian |
+| `pl` | Polish | `sk` | Slovak |
+| `sl` | Slovene | `sq` | Albanian |
+| `uk` | Ukrainian | | |
+
+Patterns come from TeX's [hyph-utf8](https://github.com/hyphenation/tex-hyphen). Only sets with a
+permissive license ship, so some languages have no patterns: `ca`, `cs`, `eo`, `fi`, `hu`, `hy`, `id`,
+`is`, `lv`, `mk`, `ro`, `ru`, `sr`, `sv`, `th` and `tr`, with German in the 1901 spelling
+(`de-1901`), which has its own breaks. `ForLanguage` returns null for those. If you are licensed to
+use other patterns, `PdfHyphenator.Create` takes them in TeX's format.
+
+Each set brings the minimum letters before and after a hyphen its source gives. `MinWordLength` is 5
+by default. Words the patterns get wrong, or that must never break, go in as exceptions:
+
+```csharp sample="fonts-hyphenation.cs" region="tuning"
+```
+
+Left alone: words with a soft hyphen, whose breaks are the author's; words joined to a digit, or
+holding a capital past the first letter; words of all capitals, unless `HyphenateAllCaps`; web and
+e-mail addresses and paths; words over 64 letters. Results do not depend on the current culture.
+`PdfParagraph.Text` keeps words whole, and extracted text marks a shown hyphen with U+00AD. In HTML,
+see [`hyphens: auto`](/guides/html-to-pdf/css-support/#hyphenation).
+
 ## Right to left and Arabic
 
 Text runs through the Unicode bidirectional algorithm (UAX #9) and an OpenType shaper: Arabic and
@@ -201,8 +245,11 @@ letter.
 
 - `PdfFontCollection` and HTML do not choose variable font instances yet: they draw a variable
   font at its default instance. Use `GetInstance` for other styles.
-- Southeast Asian scripts (the Universal Shaping Engine), Khmer, Myanmar, Thai and Hangul shapers,
-  and dictionary hyphenation are on the [roadmap](/roadmap/). Lines are filled greedily.
+- Southeast Asian scripts (the Universal Shaping Engine), Khmer, Myanmar, Thai and Hangul shapers
+  are on the [roadmap](/roadmap/). Lines are filled greedily.
+- A hyphenation point inside a ligature is skipped, since breaking there would need the word shaped
+  again. Fonts without a hyphen glyph do not hyphenate. One hyphenator serves a whole paragraph;
+  for mixed languages, use `InsertSoftHyphens` span by span.
 - Standard fonts cover Windows-1252 plus up to 37 further characters per font and document.
 
 ## Related

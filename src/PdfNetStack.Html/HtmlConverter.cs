@@ -72,7 +72,10 @@ public static class HtmlConverter
         if (options.StyleSheet is string sheet) resolver.AddStyleSheet(sheet, CssOrigin.Author, resources.LoadText);
         resolver.AddDocument(doc, resources.LoadText);
 
-        var fonts = new FontResolver(options.Fonts, options.UseSystemFonts);
+        var fonts = new FontResolver(options.Fonts, options.UseSystemFonts)
+        {
+            Hyphenators = options.Hyphenators is null ? null : new HyphenatorCache(options.Hyphenators),
+        };
         fonts.AddFontFaces(resolver.FontFaces, resources.Load);
         var builder = new BoxBuilder(resolver, resources.LoadImage);
         BlockBox root = builder.Build(doc);
@@ -343,6 +346,7 @@ public static class HtmlConverter
                 Bookmarks = options.Bookmarks,
                 Tagged = options.Tagged,
                 SaveOptions = options.SaveOptions,
+                Hyphenators = options.Hyphenators,
                 MaxPages = options.MaxPages,
             };
         }

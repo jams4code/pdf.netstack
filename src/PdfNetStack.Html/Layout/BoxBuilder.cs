@@ -15,6 +15,7 @@ namespace PdfNetStack.Html.Layout;
 internal sealed class BoxBuilder
 {
     private const int MaxSpan = 1000;
+    private const char SharpS = (char)0xDF;
 
     private readonly StyleResolver _resolver;
     private readonly Func<string, HtmlImage?>? _loadImage;
@@ -622,7 +623,10 @@ internal sealed class BoxBuilder
             switch (box.Children[i])
             {
                 case TextBox t:
-                    t.Text = CollapseText(t.Text, t.Style, ref previousSpace);
+                    string collapsed = CollapseText(t.Text, t.Style, ref previousSpace);
+                    string transform = t.Style.Keyword("text-transform");
+                    t.Text = Transform(collapsed, transform);
+                    if (transform == "uppercase" && t.Text != collapsed) t.BeforeUppercase = collapsed;
                     if (t.Text.Length == 0) box.Children.RemoveAt(i--);
                     break;
                 case LineBreakBox:
@@ -640,7 +644,6 @@ internal sealed class BoxBuilder
 
     internal static string CollapseText(string text, ComputedStyle style, ref bool previousSpace)
     {
-        text = Transform(text, style.Keyword("text-transform"));
         string ws = style.Keyword("white-space");
         if (ws is "pre" or "pre-wrap" or "break-spaces")
         {
@@ -683,12 +686,16 @@ internal sealed class BoxBuilder
         return sb.ToString();
     }
 
+    /// <summary>How many UTF-16 units a character takes after text-transform: uppercase.</summary>
+    internal static int UppercaseLength(char c) => c == SharpS ? 2 : 1;
+
     private static string Transform(string text, string transform)
     {
         switch (transform)
         {
             case "uppercase":
-                return text.ToUpperInvariant();
+                // Invariant casing maps one unit to one unit; the one full mapping applied is sharp s to SS.
+                return text.ToUpperInvariant().Replace(SharpS.ToString(), "SS");
             case "lowercase":
                 return text.ToLowerInvariant();
             case "capitalize":

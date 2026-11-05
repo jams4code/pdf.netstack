@@ -18,6 +18,7 @@ const generated = join(root, 'src/generated');
 /** Package that ships each namespace. */
 const PACKAGE = {
   'PdfNetStack.Html': 'PdfNetStack.Html',
+  'PdfNetStack.Hyphenation': 'PdfNetStack.Hyphenation',
   'PdfNetStack.Ocr': 'PdfNetStack.Ocr',
 };
 const NAMESPACE_ORDER = [
@@ -27,6 +28,7 @@ const NAMESPACE_ORDER = [
   'PdfNetStack.Signing',
   'PdfNetStack.Objects',
   'PdfNetStack.Html',
+  'PdfNetStack.Hyphenation',
   'PdfNetStack.Ocr',
 ];
 
@@ -218,14 +220,14 @@ for (const page of pages.values()) {
 const overview = [
   '---',
   'title: "API reference"',
-  'description: "Every public type of PdfNetStack, PdfNetStack.Html and PdfNetStack.Ocr, generated from the XML documentation of the current source."',
+  'description: "Every public type of every PdfNetStack package, generated from the XML documentation of the current source."',
   'editUrl: false',
   'lastUpdated: false',
   '---',
   '',
   'Generated from the XML documentation comments of the source this site was built from, so it',
-  'matches the main branch. Types added after 1.0 are part of 1.1, which is not on NuGet yet; the',
-  '[changelog](/changelog/) lists what is new.',
+  'matches the main branch, which can be ahead of the latest release on NuGet. The',
+  '[changelog](/changelog/) lists what each version added.',
   '',
   '| Namespace | Package | Types |',
   '|---|---|---|',

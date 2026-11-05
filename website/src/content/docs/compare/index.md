@@ -36,7 +36,7 @@ other products.
 | PDF/A | 1.1: 2b, 2u, 3b, 3u; Factur-X and ZUGFeRD | Documented | Yes | Yes | Not listed |
 | Encryption | 1.0: AES-256, AES-128 | Yes | Yes | Yes | Opens protected files |
 | Text extraction | 1.1: text, words, letters | Not listed | Not listed | Yes | Yes, with layout analysis |
-| OCR | Add-on, not on NuGet | Not listed | Not listed | pdfOCR add-on | Not listed |
+| OCR | Add-on package | Not listed | Not listed | pdfOCR add-on | Not listed |
 | Render PDF pages to images | No, out of scope | Not listed | Not listed | Not listed | Not listed |
 
 ## Tools and browsers
