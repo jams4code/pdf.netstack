@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-05)
 
 - Hyphenation, off by default, by Liang's algorithm as TeX defines it. `PdfParagraph.Hyphenator` takes
   a `PdfHyphenator`: words then break at the line's end where the language allows, showing a hyphen,

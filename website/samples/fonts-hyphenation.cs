@@ -1,6 +1,6 @@
 #:project ../../src/PdfNetStack.Hyphenation/PdfNetStack.Hyphenation.csproj
 #:project ../../src/PdfNetStack.Html/PdfNetStack.Html.csproj
-// since: unreleased
+// since: 1.2
 using PdfNetStack;
 using PdfNetStack.Drawing;
 using PdfNetStack.Fonts;

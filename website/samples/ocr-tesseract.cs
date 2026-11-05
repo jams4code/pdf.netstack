@@ -1,5 +1,5 @@
 #:project ../../src/PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj
-// since: unreleased
+// since: 1.2
 // run: build-only (needs Tesseract installed)
 using PdfNetStack;
 using PdfNetStack.Ocr;

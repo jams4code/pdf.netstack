@@ -651,8 +651,7 @@ runtime only ever sees float tensors, never PDF bytes. The models come in their 
 hashes when loaded. `IOcrEngine` takes any other engine. From the command line,
 `pdfnetstack-ocr scan.pdf searchable.pdf --languages latin,arabic` does the same; it comes in its
 own package, `PdfNetStack.Ocr.Tool`, with the models and ONNX Runtime, so `PdfNetStack.Tool`
-stays small, and `pdfnetstack ocr` runs it when both are installed. The packages are ready and
-ship to NuGet with the next release.
+stays small, and `pdfnetstack ocr` runs it when both are installed. The packages are on NuGet.
 
 For languages beyond Latin and Arabic script, or platforms ONNX Runtime has no build for,
 `PdfNetStack.Ocr.Tesseract` adds `TesseractOcrEngine`, which runs a `tesseract` you installed, one
@@ -850,12 +849,12 @@ in the [roadmap](docs/ROADMAP.md).
 | Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1 |
 | Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1 |
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA signing and verification with chain, revocation, policy and name constraint checks and qualified status, PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output, Factur-X and ZUGFeRD | 1.1 |
-| Hyphenation | Liang's algorithm in the core, opt in; `PdfNetStack.Hyphenation` with permissively licensed patterns for English (US, UK), German, French, Dutch, Spanish, Italian, Portuguese and 21 more; `hyphens: auto` in HTML | Next |
+| Hyphenation | Liang's algorithm in the core, opt in; `PdfNetStack.Hyphenation` with permissively licensed patterns for English (US, UK), German, French, Dutch, Spanish, Italian, Portuguese and 21 more; `hyphens: auto` in HTML | 1.2 |
 | HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1 |
 | Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1 |
 | Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1 |
 | OCR | `PdfNetStack.Ocr` add-on and `PdfNetStack.Ocr.Models`: searchable scans, Latin and Arabic, scans in one image or several, pages scanned sideways, an application supplied rasterizer; the `pdfnetstack-ocr` tool | 1.1 |
-| OCR with Tesseract | `PdfNetStack.Ocr.Tesseract`: an engine that runs an installed `tesseract`, any language it has data for | Unreleased |
+| OCR with Tesseract | `PdfNetStack.Ocr.Tesseract`: an engine that runs an installed `tesseract`, any language it has data for | 1.2 |
 | Large files and serverless | Documents opened on demand from files and streams that cannot seek, image and decode limits, progressive and asynchronous saving, a streaming optimizer for files larger than memory; Native AOT on linux-x64 and linux-arm64; AWS Lambda and Azure Functions samples | 1.1 |
 
 ### Low level access

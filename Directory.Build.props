@@ -9,7 +9,7 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
 
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>Jamal Abdelkhalek, JADEV</Authors>
     <Company>JADEV</Company>
     <Product>PdfNetStack</Product>

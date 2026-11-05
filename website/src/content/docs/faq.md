@@ -37,7 +37,7 @@ faq:
   - q: Is it safe to run on files from untrusted sources?
     a: That is a design goal. Nesting depth, decoded stream sizes, image sizes and loops in the file structure are bounded, and damaged input raises PdfFormatException instead of crashing or hanging. The HTML converter fetches nothing from the network unless you give it a resource loader.
   - q: Which version should I use today?
-    a: Version 1.1.0, on NuGet. It has every feature on this site, including the optimizer, editing, drawing, fonts, forms, signatures, PDF/A, extraction, HTML to PDF, OCR and the command line tools.
+    a: Version 1.2.0, on NuGet. It has every feature on this site, including the optimizer, editing, drawing, fonts, forms, signatures, PDF/A, extraction, HTML to PDF, OCR and the command line tools.
   - q: Is PdfNetStack related to the PDFNet SDK?
     a: No. PDFNet is a commercial SDK from Apryse. PdfNetStack is an independent open source project by JADEV with no connection to it.
   - q: Who maintains PdfNetStack?
