@@ -320,8 +320,8 @@ the package, has them all. Where a source offers a choice, the license taken is 
 | `hr` | hyph-hr | (C) 1994, 1996, 2011, 2015 Igor Marinović | Data files notice, of LPPL or that notice |
 | `la` | hyph-la | (C) 1999-2016 Claudio Beccari | MIT, of MIT or LPPL |
 | `lt` | hyph-lt | (C) 1992 Sigitas Tolušis, Yannis Haralambous | MIT |
-| `nb` | hyph-nb, hyph-no | (C) 2004-2005 Rune Kleveland, Ole Michael Selberg, 2007 Karl Ove Hufthammer | Copying notice, below |
-| `nn` | hyph-nn, hyph-no | (C) 2007 Karl Ove Hufthammer; (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg | Copying notice, below |
+| `nb` | hyph-nb, hyph-no | (C) 2004-2005 Rune Kleveland, Ole Michael Selberg, 2007 Karl Ove Hufthammer | Norwegian copying notices, below |
+| `nn` | hyph-nn, hyph-no | (C) 2007 Karl Ove Hufthammer; (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg | Norwegian copying notices, below |
 | `pl` | hyph-pl | (C) 1987-1995 Hanna Kołodziejska, Bogusław Jackowski, Marek Ryćko | MIT, of MIT or a public domain statement |
 | `sk` | hyph-sk | (C) 1992 Jana Chlebíková | MIT |
 | `sl` | hyph-sl | (C) 1990 Matjaž Vrečko | MIT, of LPPL or MIT |
@@ -332,7 +332,7 @@ The MIT License text is the one under "Brotli static dictionary" above, with the
 BSD-3-Clause text is in `LICENSE.txt`, with the terms above under "Adobe Glyph List" and the
 University of Campinas and the University of Minho in the no endorsement clause.
 
-The copying notice of `en-us`, `nb` and `nn`:
+The copying notice of `en-us`:
 
 > Copying and distribution of this file, with or without modification, are permitted in any medium
 > without royalty provided the copyright notice and this notice are preserved.
@@ -341,6 +341,14 @@ hyph-en-us keeps Knuth's patterns from Plain TeX's hyphen.tex, whose own notice 
 
 > Unlimited copying and redistribution of this file are permitted as long as this file is not
 > modified. Modifications are permitted, but only if the resulting file is not named hyphen.tex.
+
+The Norwegian copying notices, of hyph-nb and hyph-nn, then of hyph-no, whose patterns they use:
+
+> Copying and distribution of this file, with or without modification, are permitted in any medium
+> without royalty, provided the copyright notice and this notice are preserved.
+
+> Copying and distribution of this file, with or without modification, is permitted in any medium
+> without royalty provided the copyright notice and this notice are preserved.
 
 The Bulgarian notice:
 

@@ -74,8 +74,6 @@ THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --- Copying ---
 
 en-us: Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
-nb: Copyright (C) 2004-2005 Rune Kleveland, Ole Michael Selberg, 2007 Karl Ove Hufthammer
-nn: Copyright (C) 2007 Karl Ove Hufthammer; Copyright (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg
 
 The patterns from Plain TeX's hyphen.tex by Donald E. Knuth carry this notice: "Unlimited copying
 and redistribution of this file are permitted as long as this file is not modified. Modifications
@@ -83,6 +81,16 @@ are permitted, but only if the resulting file is not named hyphen.tex."
 
 Copying and distribution of this file, with or without modification, are permitted in any medium
 without royalty provided the copyright notice and this notice are preserved.
+
+--- Copying, Norwegian ---
+
+nb: Copyright (C) 2004-2005 Rune Kleveland, Ole Michael Selberg, 2007 Karl Ove Hufthammer
+nn: Copyright (C) 2007 Karl Ove Hufthammer; Copyright (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg
+
+hyph-nb and hyph-nn: Copying and distribution of this file, with or without modification, are
+permitted in any medium without royalty, provided the copyright notice and this notice are preserved.
+hyph-no: Copying and distribution of this file, with or without modification, is permitted in any
+medium without royalty provided the copyright notice and this notice are preserved.
 
 --- Bulgarian ---
 

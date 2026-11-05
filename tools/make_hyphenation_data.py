@@ -51,6 +51,7 @@ MIT = "MIT"
 BSD3 = "BSD-3-Clause"
 DATA_FILES = "Data files"  # The notice of the Unicode data files, with a duty to mark changes.
 COPYING = "Copying"  # "Copying and distribution of this file ... permitted", notice preserved.
+COPYING_NO = "Copying, Norwegian"  # The same grant, in the wording of hyph-nb, hyph-nn and hyph-no.
 BG = "Bulgarian"  # The licence of hyph-bg: a short notice much like BSD.
 UNLICENSE = "Unlicense"
 
@@ -78,8 +79,8 @@ LANGUAGES = [
     ("hr", "hr", DATA_FILES, "a copy of this file and any associated documentation"),
     ("la", "la", MIT, "name: MIT"),
     ("lt", "lt", MIT, "name: MIT"),
-    ("nb", "nb", COPYING, "Copying and distribution of this file, with or without modification"),
-    ("nn", "nn", COPYING, "Copying and distribution of this file, with or without modification"),
+    ("nb", "nb", COPYING_NO, "Copying and distribution of this file, with or without modification"),
+    ("nn", "nn", COPYING_NO, "Copying and distribution of this file, with or without modification"),
     ("pl", "pl", MIT, "name: MIT"),
     ("sk", "sk", MIT, "name: MIT"),
     ("sl", "sl", MIT, "name: MIT"),
@@ -154,6 +155,12 @@ authorization of the copyright holder.
     COPYING: """\
 Copying and distribution of this file, with or without modification, are permitted in any medium
 without royalty provided the copyright notice and this notice are preserved.
+""",
+    COPYING_NO: """\
+hyph-nb and hyph-nn: Copying and distribution of this file, with or without modification, are
+permitted in any medium without royalty, provided the copyright notice and this notice are preserved.
+hyph-no: Copying and distribution of this file, with or without modification, is permitted in any
+medium without royalty provided the copyright notice and this notice are preserved.
 """,
     BG: """\
 This software may be used, modified, copied, distributed, and sold, both in source and binary form
@@ -362,7 +369,7 @@ def licence_file(notices):
         "--- MIT License, for the code of this package and for the pattern sets listed ---",
         "",
     ]
-    for licence in [MIT, BSD3, COPYING, BG, DATA_FILES, UNLICENSE]:
+    for licence in [MIT, BSD3, COPYING, COPYING_NO, BG, DATA_FILES, UNLICENSE]:
         if licence != MIT:
             out.extend([f"--- {licence} ---", ""])
         for tag, holder in notices[licence]:
