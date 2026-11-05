@@ -53,20 +53,23 @@ on CCITT pages. With palettes (`QuantizeImages`) the lossy profile saves 32.1%, 
 preset, which keeps every image's resolution, 23.4%. The two Internet Archive books, a JPEG 2000 picture over a JBIG2 soft mask on
 every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minutes per book.
 
+## Unreleased
+
+| Area | Scope |
+|---|---|
+| Searchable scans | `PdfNetStack.Ocr.Tesseract`: a second `IOcrEngine` that runs an installed `tesseract` executable, one process per image, with any language Tesseract has data for. It drives the executable rather than a .NET wrapper: `docs/OCR.md` has the evidence and the reasons |
+
 ## Next
 
 **Text**
 - Dictionary hyphenation, once permissively licensed patterns cover the main languages.
 
-**OCR**
-- A Tesseract engine behind `IOcrEngine`, once a maintained .NET wrapper ships builds for Linux
-  and macOS.
-
 ## Out of scope
 
 - Rendering pages to images.
 - Running JavaScript or embedding a browser engine.
-- Wrappers around external tools. The core packages stay pure managed code; native code is
-  allowed only in optional add-ons, such as the ONNX Runtime behind OCR.
+- Wrappers around external tools in the core packages, which stay pure managed code. Native code
+  and external programs are allowed only in optional add-ons, such as ONNX Runtime and the
+  Tesseract engine behind OCR.
 - Cloud or hosting integrations. PdfNetStack works on bytes and streams; where they come from is
   up to the application. The samples in `samples/serverless` show the wiring for two hosts.

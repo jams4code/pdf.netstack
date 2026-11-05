@@ -107,6 +107,7 @@ dotnet add package PdfNetStack            # library
 dotnet tool install -g PdfNetStack.Tool   # command line: pdfnetstack
 dotnet add package PdfNetStack.Html       # HTML and CSS to PDF
 dotnet tool install -g PdfNetStack.Ocr.Tool   # OCR from the command line: pdfnetstack-ocr
+dotnet add package PdfNetStack.Ocr.Tesseract  # OCR with an installed Tesseract
 ```
 
 The command line tool also comes as a single native executable, with no .NET install needed:
@@ -650,6 +651,12 @@ own package, `PdfNetStack.Ocr.Tool`, with the models and ONNX Runtime, so `PdfNe
 stays small, and `pdfnetstack ocr` runs it when both are installed. The packages are ready and
 ship to NuGet with the next release.
 
+For languages beyond Latin and Arabic script, or platforms ONNX Runtime has no build for,
+`PdfNetStack.Ocr.Tesseract` adds `TesseractOcrEngine`, which runs a `tesseract` you installed, one
+process per image, with no shell and no temporary files. Tesseract and its language data are not
+in the package. It does not detect pages scanned sideways. The
+[OCR guide](https://pdfnetstack.jadev-corp.com/guides/ocr/#choosing-an-engine) compares the two.
+
 ### HTML to PDF
 
 ```csharp
@@ -844,6 +851,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1 |
 | Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1 |
 | OCR | `PdfNetStack.Ocr` add-on and `PdfNetStack.Ocr.Models`: searchable scans, Latin and Arabic, scans in one image or several, pages scanned sideways, an application supplied rasterizer; the `pdfnetstack-ocr` tool | 1.1 |
+| OCR with Tesseract | `PdfNetStack.Ocr.Tesseract`: an engine that runs an installed `tesseract`, any language it has data for | Unreleased |
 | Large files and serverless | Documents opened on demand from files and streams that cannot seek, image and decode limits, progressive and asynchronous saving, a streaming optimizer for files larger than memory; Native AOT on linux-x64 and linux-arm64; AWS Lambda and Azure Functions samples | 1.1 |
 
 ### Low level access

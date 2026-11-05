@@ -33,6 +33,12 @@
     <ProjectReference Include="..\..\src\PdfNetStack\PdfNetStack.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Ocr.Tesseract\PdfNetStack.Ocr.Tesseract.csproj" />
+  </ItemGroup>
+
+  <!-- Stands in for the tesseract executable. Built for one framework and started as a process, not referenced. -->
+  <ItemGroup>
+    <ProjectReference Include="..\PdfNetStack.FakeTesseract\PdfNetStack.FakeTesseract.csproj" ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true" SetTargetFramework="TargetFramework=net8.0" />
   </ItemGroup>
 
   <!-- The command line tools, for the OCR command end to end. They run on .NET only. -->

@@ -1,7 +1,8 @@
 # Fails when a shipping project resolves a package that is not on the license allowlist.
 # The core library must stay dependency free on modern .NET; on .NET Standard 2.0 it may use only
 # Microsoft's span polyfill packages listed under coreNetStandardOnly. Packages under onlyIn may
-# ship with the named projects and no other (ONNX Runtime with the OCR add-on and the OCR tool).
+# ship with the named projects and no other (ONNX Runtime with the OCR add-on and the OCR tool, and
+# its managed part through the Tesseract engine, which leaves out the native libraries).
 # Data files a package carries, the OCR models, must be listed under bundledFiles with their license.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -14,6 +15,7 @@ $projects = @(
     'src/PdfNetStack.Cli/PdfNetStack.Cli.csproj',
     'src/PdfNetStack.Html/PdfNetStack.Html.csproj',
     'src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj',
+    'src/PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj',
     'src/PdfNetStack.Ocr.Models/PdfNetStack.Ocr.Models.csproj',
     'src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj'
 )
