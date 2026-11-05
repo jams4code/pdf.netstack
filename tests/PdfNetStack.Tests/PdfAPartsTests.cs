@@ -242,7 +242,7 @@ public sealed class PdfAPartsTests
     }
 
     [TestMethod]
-    public void PdfA4IsPdf20WithTheRevisionAndOnlyAModificationDate()
+    public void PdfA4IsPdf20WithTheRevisionAndNoInformationDictionary()
     {
         PdfDocument doc = Document();
         doc.Info.Subject = "Records";
@@ -258,15 +258,29 @@ public sealed class PdfAPartsTests
         StringAssert.Contains(xmp, "Archive &amp; &lt;Record&gt;");
         StringAssert.Contains(xmp, "<rdf:li>PdfNetStack</rdf:li>");
 
-        // The information dictionary in the file holds the modification date and nothing else; the document keeps its values.
-        CollectionAssert.AreEqual(new[] { "ModDate" }, back.Info.Keys.ToArray());
-        DateTimeOffset modified = back.Info.ModificationDate!.Value;
-        StringAssert.Contains(xmp, "<xmp:ModifyDate>" + modified.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "Z</xmp:ModifyDate>");
+        // No /PieceInfo, so no /Info in the trailer (ISO 19005-4, 6.1.3); XMP holds the date, and the document keeps its values.
+        Assert.IsNull(PdfNetStack.Parsing.PdfFile.Open(file, 64 << 20).Trailer["Info"]);
+        Assert.IsEmpty(back.Info.Keys.ToArray());
+        StringAssert.Contains(xmp, "<xmp:ModifyDate>");
         Assert.AreEqual("Records", doc.Info.Subject);
         Assert.AreEqual("Archive & <Record>", doc.Info.Title);
 
         // The same document saves as plain PDF afterwards with its full information.
         Assert.AreEqual("Records", PdfDocument.Open(doc.ToArray()).Info.Subject);
+    }
+
+    [TestMethod]
+    public void PdfA4WithPieceInfoKeepsOnlyTheModificationDate()
+    {
+        PdfDocument doc = Document();
+        doc.Info.Subject = "Records";
+        var piece = new PdfDictionary();
+        piece.Set("LastModified", PdfString.FromText("D:20260101000000Z"));
+        doc.Catalog.Set("PieceInfo", piece);
+
+        PdfDocument back = PdfDocument.Open(Save(doc, PdfConformance.PdfA4));
+
+        CollectionAssert.AreEqual(new[] { "ModDate" }, back.Info.Keys.ToArray());
     }
 
     [TestMethod]

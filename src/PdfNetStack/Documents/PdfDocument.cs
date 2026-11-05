@@ -1030,13 +1030,17 @@ public sealed class PdfDocument : IDisposable
         int? archiveInfo = null;
         if (InfoNumber is { } info && Objects.ContainsKey(info))
         {
-            // PDF/A-4 keeps the document information in XMP; the dictionary written holds only the modification date (ISO 19005-4, 6.1.3).
+            // PDF/A-4 keeps the document information in XMP. The trailer has no /Info at all unless the
+            // catalog has /PieceInfo, and then one holding only the modification date (ISO 19005-4, 6.1.3).
             if (archive == 4 && Resolve(new PdfReference(info, 0)) is PdfDictionary full)
             {
-                var dates = new PdfDictionary();
-                if (full["ModDate"] is { } modified) dates.Set("ModDate", modified);
-                archiveInfo = Add(dates);
-                trailer.Set("Info", new PdfReference(archiveInfo.Value, 0));
+                if (Resolve(Catalog["PieceInfo"]) is not (null or PdfNull))
+                {
+                    var dates = new PdfDictionary();
+                    if (full["ModDate"] is { } modified) dates.Set("ModDate", modified);
+                    archiveInfo = Add(dates);
+                    trailer.Set("Info", new PdfReference(archiveInfo.Value, 0));
+                }
             }
             else
             {
