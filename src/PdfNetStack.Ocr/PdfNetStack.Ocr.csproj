@@ -16,7 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PdfNetStack\PdfNetStack.csproj" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.0" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.1" />
   </ItemGroup>
 
   <ItemGroup>
