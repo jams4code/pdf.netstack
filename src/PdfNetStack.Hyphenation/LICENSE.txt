@@ -1,0 +1,127 @@
+PdfNetStack.Hyphenation
+
+The code of this package is under the MIT License, Copyright (c) 2026 Jamal Abdelkhalek and
+PdfNetStack contributors. The hyphenation patterns it embeds come from hyph-utf8
+(https://github.com/hyphenation/tex-hyphen, commit 5684c0f51c0b81133db2efbe60a408b4155a3ff5) and stay under their own terms,
+each listed here with its holders and its text. Where the source offers a choice of licences,
+the one listed is the one taken. Each pattern file also carries its own notice inside it.
+
+Modified from the file in hyph-utf8, commit 5684c0f51c0b81133db2efbe60a408b4155a3ff5: the patterns and exceptions are copied unchanged into one file with the rest of the file left out; the data format is PdfNetStack's.
+
+--- MIT License, for the code of this package and for the pattern sets listed ---
+
+en-gb: Copyright (C) 1992, 1996, 2005, 2016 Dominik Wujastyk, Graham Toal
+de: Copyright (c) 2013-2024 Stephan Hennig, Werner Lemberg, Günter Milde, Sander van Geloven, Georg Pfeiffer, Gisbert W. Selke, Tobias Wendorf, Keno Wehr
+fr: Copyright (C) 1994-2002 Daniel Flipo, Bernard Gaulle, 2016 Arthur Reutenauer
+nl: Copyright (C) 1996 Piet Tutelaers
+es: Copyright (C) 1993, 1997 Javier Bezos, 2001-2019 Javier Bezos, CervanTeX
+it: Copyright (C) 2008-2011 Claudio Beccari
+af: Copyright (C) 2013 Tilla Fick and Chris Swanepoel
+be: Copyright (C) 2016 Maksim Salau
+cy: Copyright (C) 1996 Yannis Haralambous
+da: Copyright (C) 1994 Frank Jensen
+el-monoton: Copyright (C) 2008-2011 Dimitrios Filippou
+el-polyton: Copyright (C) 2008-2011 Dimitrios Filippou
+et: Copyright (C) 2004-2015 Enn Saar
+ga: Copyright (C) 2004-2015 Kevin P. Scannell
+la: Copyright (C) 1999-2016 Claudio Beccari
+lt: Copyright (C) 1992 Sigitas Tolušis, Yannis Haralambous
+pl: Copyright (C) 1987-1995 Hanna Kołodziejska, Bogusław Jackowski, Marek Ryćko
+sk: Copyright (C) 1992 Jana Chlebíková
+sl: Copyright (C) 1990 Matjaž Vrečko
+sq: Copyright (C) 2020 Claudio Beccari, Sabina Koliqi (C) 2025 Arthur Rosendahl
+uk: Copyright (C) 1998-2001 Maksym Polyakov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--- BSD-3-Clause ---
+
+pt: Copyright (C) 1987, 1994, 1996, 2015 Pedro J. de Rezende, 1996, 2015 J. Joao Dias Almeida, 2024 Leonardo Araujo and Aline Benevides
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+* Redistributions of source code must retain the above copyright notice, this list of conditions
+  and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright notice, this list of conditions
+  and the following disclaimer in the documentation and/or other materials provided with the
+  distribution.
+* Neither the name of the University of Campinas, of the University of Minho nor the names of its
+  contributors may be used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL PEDRO J. DE REZENDE OR J.JOAO
+DIAS ALMEIDA BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--- Copying ---
+
+en-us: Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
+nb: Copyright (C) 2004-2005 Rune Kleveland, Ole Michael Selberg, 2007 Karl Ove Hufthammer
+nn: Copyright (C) 2007 Karl Ove Hufthammer; Copyright (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg
+
+The patterns from Plain TeX's hyphen.tex by Donald E. Knuth carry this notice: "Unlimited copying
+and redistribution of this file are permitted as long as this file is not modified. Modifications
+are permitted, but only if the resulting file is not named hyphen.tex."
+
+Copying and distribution of this file, with or without modification, are permitted in any medium
+without royalty provided the copyright notice and this notice are preserved.
+
+--- Bulgarian ---
+
+bg: Copyright (C) 2000, 2004, 2017 Anton Zinoviev
+
+This software may be used, modified, copied, distributed, and sold, both in source and binary form
+provided that the above copyright notice and these terms are retained. The name of the author may
+not be used to endorse or promote products derived from this software without prior permission. THIS
+SOFTWARE IS PROVIDES "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED. IN NO EVENT SHALL
+THE AUTHOR BE LIABLE FOR ANY DAMAGES ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE.
+
+--- Data files ---
+
+eu: Copyright (C) 1997, 2008 Juan M. Aguirregabiria
+hr: Copyright (C) 1994, 1996, 2011, 2015 Igor Marinović
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this file and any
+associated documentation (the "Data Files") to deal in the Data Files without restriction, including
+without limitation the rights to use, copy, modify, merge, publish, distribute, and/or sell copies
+of the Data Files, and to permit persons to whom the Data Files are furnished to do so, provided
+that (a) this copyright and permission notice appear with all copies of the Data Files, (b) this
+copyright and permission notice appear in associated documentation, and (c) there is clear notice
+in each modified Data File as well as in the documentation associated with the Data File(s) that the
+data has been modified.
+
+THE DATA FILES ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN
+THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES.
+
+Except as contained in this notice, the name of a copyright holder shall not be used in advertising
+or otherwise to promote the sale, use or other dealings in these Data Files without prior written
+authorization of the copyright holder.
+
+--- Unlicense ---
+
+gl: Copyright (C) 2006, 2007, 2008, 2010 Javier A. Múgica
+
+Released under the Unlicense, https://unlicense.org/.

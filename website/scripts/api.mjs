@@ -18,6 +18,7 @@ const generated = join(root, 'src/generated');
 /** Package that ships each namespace. */
 const PACKAGE = {
   'PdfNetStack.Html': 'PdfNetStack.Html',
+  'PdfNetStack.Hyphenation': 'PdfNetStack.Hyphenation',
   'PdfNetStack.Ocr': 'PdfNetStack.Ocr',
 };
 const NAMESPACE_ORDER = [
@@ -27,6 +28,7 @@ const NAMESPACE_ORDER = [
   'PdfNetStack.Signing',
   'PdfNetStack.Objects',
   'PdfNetStack.Html',
+  'PdfNetStack.Hyphenation',
   'PdfNetStack.Ocr',
 ];
 
@@ -218,7 +220,7 @@ for (const page of pages.values()) {
 const overview = [
   '---',
   'title: "API reference"',
-  'description: "Every public type of PdfNetStack, PdfNetStack.Html and PdfNetStack.Ocr, generated from the XML documentation of the current source."',
+  'description: "Every public type of PdfNetStack, PdfNetStack.Html, PdfNetStack.Hyphenation and PdfNetStack.Ocr, generated from the XML documentation of the current source."',
   'editUrl: false',
   'lastUpdated: false',
   '---',

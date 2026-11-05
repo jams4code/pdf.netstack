@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Hyphenation, off by default, by Liang's algorithm as TeX defines it. `PdfParagraph.Hyphenator` takes
+  a `PdfHyphenator`: words then break at the line's end where the language allows, showing a hyphen,
+  while `PdfParagraph.Text` keeps them whole and extracted text marks the hyphen with U+00AD.
+  `PdfHyphenator.Create` takes patterns and exceptions in TeX's formats, `WithExceptions` adds words,
+  and `MinWordLength`, `MinLeft`, `MinRight` and `HyphenateAllCaps` set the limits. `FindBreaks` and
+  `InsertSoftHyphens` work on text of your own. Left alone: words with a soft hyphen, words joined
+  to a digit or holding a capital past the first letter, words of all capitals by default, web and
+  e-mail addresses and paths, words over 64 letters. A point inside a ligature is skipped, and fonts
+  without a hyphen glyph do not hyphenate. Results do not depend on the current culture.
+- `PdfNetStack.Hyphenation`, a new optional package with patterns from TeX's hyph-utf8 for `en-us`,
+  `en-gb`, `de` (reformed spelling), `fr`, `nl`, `es`, `it`, `pt`, `af`, `be`, `bg`, `cy`, `da`,
+  `el-monoton`, `el-polyton`, `et`, `eu`, `ga`, `gl`, `hr`, `la`, `lt`, `nb`, `nn`, `pl`, `sk`, `sl`,
+  `sq` and `uk`, all under permissive licenses, loaded one language at a time on first use by
+  `PdfHyphenationPatterns.ForLanguage`. Languages whose only patterns have other licenses (among
+  them `ru`, `sv`, `cs`, `hu`, `tr`, `ca` and `fi`) are left out; `eng/check-licenses.ps1` now
+  checks every set against the allowlist.
+- `hyphens: auto` in `PdfNetStack.Html` hyphenates text in the language of the nearest `lang`
+  attribute when `HtmlConverterOptions.Hyphenators` finds patterns for it, with
+  `PdfHyphenationPatterns.ForLanguage` for instance. Without the option nothing changes, and
+  `auto` behaves like `manual`. Min-content sizes count the points, so narrow table columns can
+  hyphenate instead of overflowing.
+- Fixed: justifying a line that ended at a soft hyphen could widen the hyphen along with the spaces,
+  when the run the hyphen belonged to ended with a space.
+
 ## 1.1.0 (2026-11-05)
 
 - `QuantizeImages` (`--quantize`) reduces raw 8 bit RGB images to a palette of at most 256 colors in

@@ -50,7 +50,7 @@ Standard's zlib has no level 9, so `CompressionEffort.Maximum` compresses a litt
 
 The libraries run in AWS Lambda, Azure Functions and containers without changes:
 
-- **Native AOT and trimming.** `PdfNetStack`, `PdfNetStack.Html` and `PdfNetStack.Ocr` publish
+- **Native AOT and trimming.** `PdfNetStack`, `PdfNetStack.Html`, `PdfNetStack.Hyphenation` and `PdfNetStack.Ocr` publish
   with Native AOT and trimming on linux-x64 and linux-arm64 with no warnings, checked in CI.
 - **Globalization.** Parsing and output do not depend on the culture. The test suite passes
   under invariant globalization (`InvariantGlobalization`) and under tr-TR.
@@ -106,6 +106,7 @@ worth it, the pipeline stages are isolated enough to swap one out.
 dotnet add package PdfNetStack            # library
 dotnet tool install -g PdfNetStack.Tool   # command line: pdfnetstack
 dotnet add package PdfNetStack.Html       # HTML and CSS to PDF
+dotnet add package PdfNetStack.Hyphenation   # hyphenation patterns for 29 language sets
 dotnet tool install -g PdfNetStack.Ocr.Tool   # OCR from the command line: pdfnetstack-ocr
 ```
 
@@ -334,7 +335,9 @@ Lao, Khmer, Myanmar, Hangul, and through the Universal Shaping Engine Sinhala, T
 Javanese, Mongolian and the other complex scripts, and Unicode normalization against the font,
 so decomposed and precomposed text both find their glyphs.
 Lines break greedily at break opportunities, overlong words break between characters, soft
-hyphens show a hyphen when used, and line height follows CSS. `PdfParagraph.Kashida` justifies
+hyphens show a hyphen when used, and line height follows CSS. `PdfParagraph.Hyphenator`, off by
+default, hyphenates by Liang's algorithm with the patterns of `PdfNetStack.Hyphenation`, and
+`hyphens: auto` does the same in HTML. `PdfParagraph.Kashida` justifies
 Arabic lines by elongating letters with tatweel before widening spaces. `PdfTextLayout` measures before drawing and can draw a range
 of lines, for text that continues on the next page.
 
@@ -840,6 +843,7 @@ in the [roadmap](docs/ROADMAP.md).
 | Annotations | Links, notes, text markup, free text, stamps, ink, shapes, lines, polygons, file attachments; flattening | 1.1 |
 | Forms (AcroForm) | Creating, reading, filling with generated and formatted appearances, flattening, fields kept through import and merge | 1.1 |
 | Signatures and PDF/A | PAdES B-B, B-T, B-LT and B-LTA signing and verification with chain, revocation, policy and name constraint checks and qualified status, PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f output, Factur-X and ZUGFeRD | 1.1 |
+| Hyphenation | Liang's algorithm in the core, opt in; `PdfNetStack.Hyphenation` with permissively licensed patterns for English (US, UK), German, French, Dutch, Spanish, Italian, Portuguese and 21 more; `hyphens: auto` in HTML | Next |
 | HTML and CSS | `PdfNetStack.Html`: CSS cascade, block, inline, table, flex and grid layout, floats, positioning, paged media, web fonts | 1.1 |
 | Image extraction | Images per page with placement and resolution; JPEG and raw samples to pixels; PNG export | 1.1 |
 | Text extraction | Page text in reading order; letters and words with bounds, baselines, fonts and sizes | 1.1 |

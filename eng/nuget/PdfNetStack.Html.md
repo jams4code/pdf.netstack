@@ -116,7 +116,8 @@ boxes repeat on every page, for letterheads and watermarks.
   `@font-face`, `@page`; `calc()`, `min()`, `max()`, `clamp()`; colors up to CSS Color 4
   (`oklch()`, `lab()`, `hwb()`).
 - **Layout.** Block flow with margin collapsing, inline layout with Unicode line breaking,
-  justification and soft hyphens, floats and `clear`, relative, absolute and fixed
+  justification, soft hyphens and `hyphens: auto` (with `HtmlConverterOptions.Hyphenators` and the
+  `PdfNetStack.Hyphenation` package), floats and `clear`, relative, absolute and fixed
   positioning, tables (spans, both border models, fixed and automatic widths), flexbox (wrap,
   gap, grow and shrink, alignment, order), grid (fr tracks, `minmax()`, `repeat()` with
   `auto-fill` and `auto-fit`, named areas and lines, auto-placement by rows or columns, dense

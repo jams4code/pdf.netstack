@@ -46,6 +46,7 @@ internal sealed class ComputedStyle
         Parent = parent;
         PseudoElement = pseudoElement;
         Custom = parent?.Custom ?? Empty;
+        Language = parent?.Language;
     }
 
     internal static readonly Dictionary<string, List<CssValue>> Empty = new(StringComparer.Ordinal);
@@ -58,6 +59,9 @@ internal sealed class ComputedStyle
 
     /// <summary>Custom properties, shared with the parent until this element sets its own.</summary>
     internal Dictionary<string, List<CssValue>> Custom { get; set; }
+
+    /// <summary>The nearest lang attribute of the element and its ancestors, as the text says it; null with none.</summary>
+    public string? Language { get; internal set; }
 
     /// <summary>The font size in px.</summary>
     public double FontSize { get; internal set; } = 16;
@@ -313,6 +317,7 @@ internal sealed class StyleResolver
         }
 
         var style = new ComputedStyle(parent, pseudoElement);
+        if (element.GetAttribute("lang") is string language) style.Language = language;
         ResolveCustomProperties(style, parent, winners);
 
         Fill(style, parent, winners);

@@ -53,10 +53,17 @@ on CCITT pages. With palettes (`QuantizeImages`) the lossy profile saves 32.1%, 
 preset, which keeps every image's resolution, 23.4%. The two Internet Archive books, a JPEG 2000 picture over a JBIG2 soft mask on
 every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minutes per book.
 
-## Next
+## Unreleased
 
-**Text**
-- Dictionary hyphenation, once permissively licensed patterns cover the main languages.
+| Area | Scope |
+|---|---|
+| Hyphenation | Liang's algorithm in the core, opt in through `PdfParagraph.Hyphenator`, with exceptions and limits per language; `PdfNetStack.Hyphenation` with patterns from TeX's hyph-utf8 for English (US and UK), German (reformed spelling), French, Dutch, Spanish, Italian and Portuguese and 21 more sets, all under permissive licenses and read per language on first use; `hyphens: auto` with `lang` in `PdfNetStack.Html` |
+
+Languages whose only patterns are under LPPL, GPL, LGPL or MPL (among them Russian, Swedish, Czech,
+Hungarian, Turkish, Catalan) or give no right to modify (Finnish) stay out, as does German in the
+1901 spelling, whose patterns are permissive but not included.
+
+## Next
 
 **OCR**
 - A Tesseract engine behind `IOcrEngine`, once a maintained .NET wrapper ships builds for Linux
