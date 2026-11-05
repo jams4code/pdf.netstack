@@ -1,7 +1,7 @@
 # OCR add-on: design
 
 Status: built. Phases 0, 1 and 2 are done, and of phase 3 the page orientation, the rasterizer
-hook and the command line tool. `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models` and
+hook, the command line tool and the Tesseract engine (section 5). `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models` and
 `PdfNetStack.Ocr.Tool` are ready for NuGet, not published yet (section 4 has the status and the
 publish steps). `PdfNetStack.Ocr` is an optional package that makes scanned PDFs searchable
 with an invisible text layer (render mode 3) and returns text with word boxes. The core stays pure
@@ -48,8 +48,7 @@ pipeline.** It is the only option shipping natives for Windows, Linux and macOS 
 files. We write pre and post processing ourselves (resize, DB boxes, CTC decode, word split,
 Arabic reversal: about 800 lines) rather than take RapidOcrNet, which adds SkiaSharp natives and
 Clipper2 and needs net8.0+; it is the reference to read. Tesseract can come later as a second
-`IOcrEngine`, but its .NET wrappers ship Windows binaries only and need `System.Reflection.Emit`
-(no Native AOT). Safety bonus: ORT only sees float tensors built by managed code, so PDF bytes
+`IOcrEngine` (section 5 has where that went). Safety bonus: ORT only sees float tensors built by managed code, so PDF bytes
 never reach native code.
 
 ## 2. What the core offers today
@@ -291,7 +290,8 @@ memory does not grow with the scan. Buffers come from `ArrayPool`, as in the cor
 
 ### Packaging
 
-Three packages, so users can pin or replace the models, and the core packages stay free of ONNX:
+Three packages, so users can pin or replace the models, and the core packages stay free of ONNX
+(a fourth, `PdfNetStack.Ocr.Tesseract`, is in section 5):
 
 - `PdfNetStack.Ocr` targets netstandard2.0, net8.0 and net10.0 and references
   `Microsoft.ML.OnnxRuntime` (MIT; its native binaries carry `ThirdPartyNotices.txt`, all
@@ -360,8 +360,8 @@ imports its build file, as an application would).
 
 Publishing (owner, later): the release workflow already packs the three packages on a version tag.
 1. Make sure the nuget.org trusted publishing policy (or the `NUGET_API_KEY` secret) belongs to
-   the account that will own the three new IDs, `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models` and
-   `PdfNetStack.Ocr.Tool`.
+   the account that will own the new IDs, `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models`,
+   `PdfNetStack.Ocr.Tool` and `PdfNetStack.Ocr.Tesseract`.
 2. Move the CHANGELOG `Unreleased` section under the new version heading.
 3. Tag and push: `git tag v1.1.0 && git push origin v1.1.0`. The workflow fetches and checks the
    models, packs every package and pushes them; `PdfNetStack.Ocr.Models` 1.0.0 goes up once and
@@ -374,7 +374,7 @@ Publishing (owner, later): the release workflow already packs the three packages
 | 0 Core prerequisites (MIT, no deps) | Content walker and an internal image placement API; raw sample to gray with color spaces and Decode arrays; JPEG pixel decode on top of `JpegReader`; CCITT G3/G4 decoder; `GlyphlessFont` and `DrawInvisibleText`; InternalsVisibleTo | 17 to 24 days |
 | 1 Add-on MVP | `IOcrEngine`, `OnnxOcrEngine` (DB boxes, cls, CTC, word split, Arabic reversal), model package with hashes, `MakeSearchable` for single image pages, Latin and Arabic, report | 8 to 12 days |
 | 2 Coverage | JBIG2 decoder (generic, symbol, text, refinement; halftone last), done; multi-image compositing, done; inline images | 13 to 20 days |
-| 3 Extras | JPX (done in the core instead); page orientation, done; `IPdfPageRasterizer` hook, done; command line tool, done; optional Tesseract adapter | 7 to 10 days |
+| 3 Extras | JPX (done in the core instead); page orientation, done; `IPdfPageRasterizer` hook, done; command line tool, done; Tesseract engine, done (section 5) | 7 to 10 days |
 
 ### Tests
 
@@ -425,3 +425,106 @@ No real customer PDFs.
   of PdfNetStack. Mixed vector and image pages need a user supplied rasterizer.
 - Orientation is decided by the recognizer's own confidence. A page with very little text, or
   text the loaded languages do not cover, may show no clear winner and is then read as it is.
+
+## 5. The Tesseract engine
+
+The roadmap waited for a maintained .NET wrapper with builds for Linux and macOS. One now ships
+them, so the question was looked at again on 2026-11-05, against the NuGet API, the zip directories
+of the packages, the GitHub API and Tesseract's and Leptonica's source.
+
+| Option | License | win-x64 | linux-x64 | linux-arm64 | osx-x64 | osx-arm64 | .NET targets | Last release | Maintenance |
+|---|---|---|---|---|---|---|---|---|---|
+| `Tesseract` 5.2.0 (charlesw) | Apache-2.0 | yes | no | no | no | no | netstandard2.0, net47, net48 | 2022-11-30 | Last commit 2025-04-29. Open: #503, #529, #687 (Linux), #596 (arm64) |
+| `TesseractOCR` 5.5.2 (Sicos1977) | Apache-2.0 | yes | no | no | no | no | netstandard2.0, netstandard2.1 | 2026-03-05 | Last commit 2026-05-13. Linux by system packages or Docker; closed: #46, #47, #66 (no Native AOT) |
+| `Tesseract.CrossPlatform` 5.5.2.200 (jbtule, on `Tesseract.Native`) | Apache-2.0 | yes | yes | yes | no | yes | net8.0, net9.0, net10.0 | 2026-09-10 | Created 2026-09-06, last commit 2026-09-14, one maintainer, 1 star, about 4,100 downloads |
+| An installed `tesseract` executable | Apache-2.0, not redistributed | any install | any install | any install | any install | any install | any | Tesseract 5.5.4, 2026-10-28; Ubuntu 24.04 has 5.3.4, Homebrew 5.5.4 | Upstream project, very active |
+
+`Tesseract.CrossPlatform` meets the letter of the roadmap's condition. It was not chosen:
+
+- Two months old with one maintainer is too early to call maintained, and `PdfNetStack.Ocr`
+  supports .NET Framework, which this wrapper dropped.
+- Its native packages are 10 to 30 MB each, compressed, 57 to 73 MB unpacked on Linux and macOS.
+  They carry libcurl, OpenSSL, libarchive and libxml2 for Tesseract's optional features, which an
+  OCR add-on would then load into the application and depend on one maintainer to patch.
+- Native code would run in the application's process, on pixels from hostile documents. A crash
+  there cannot be caught.
+- Its own documentation says a build without a runtime identifier finds no native library, so
+  applications would have to publish for a specific platform.
+
+Driving the executable costs a process start and a load of the language data per image, and the
+user has to install Tesseract, which the package cannot do for them. In return it adds no
+dependency and no native code to the application, runs wherever Tesseract can be installed
+(Alpine packages it, 5.5.3 on edge, so musl works; Homebrew has no prebuilt bottle for Intel Macs),
+on .NET Framework too, and a crash, a hang or a memory blowup costs one image. `OnnxOcrEngine`
+remains the default: it needs no install and detects sideways pages.
+
+### How it runs
+
+`tesseract stdin stdout [--tessdata-dir D] -l L --psm P [--dpi N] -c tessedit_create_tsv=1`, from
+managed code with no shell, in the executable's own folder: a build with no compiled-in data path
+looks relative to where it runs, which must not be the caller's folder or a temporary folder anyone
+can write to. The sources behind each choice, read at 5.3.4 and on main:
+
+- Input: an 8 bit BMP with a gray palette on standard input, written row by row from the bitmap.
+  `TessBaseAPI::ProcessPagesInternal` reads standard input into memory and `pixReadMem` decodes
+  it. Leptonica's BMP reader works from memory on every platform and is always built; its PNM
+  reader goes through `fopenReadFromMemory`, a temporary file on Windows, and would leave the
+  scan on disk. `ImageThresholder::SetImage` removes the palette.
+- Output: TSV rather than hOCR, as it is one row per word with box and confidence. It is requested
+  by variable: the `tsv` config file is not in every data folder, and `read_config_file` then
+  tries the name relative to the working directory. `GetTSVText` writes each word's symbols with
+  no escaping, so the parser takes the text as the rest of the row and trusts nothing: a row that
+  does not parse is dropped, boxes are clamped to the image, control characters are removed, and a
+  result that does not start with the header is an error. `ResultIterator` gives right to left
+  text in logical order. `LC_ALL=C` keeps a decimal point in the confidence.
+- Arguments: an argument list on .NET, and on .NET Standard a command line quoted by the rules C
+  programs parse, tested through a real process on each framework. Language names can come from
+  a request, so they are checked against a strict form: nothing that could read as an option or
+  climb out of the data folder gets through, then each must be one Tesseract listed at load. Batch
+  files are refused, as Windows runs them through a shell.
+- Finding the executable: only absolute folders of the `PATH`, as Windows otherwise searches the
+  current folder first and an empty entry means it on Unix.
+- Threads: every stream is pumped on its own thread, so the process cannot block on a full pipe.
+  `OMP_THREAD_LIMIT=1`, the setting Tesseract's FAQ gives, as `PdfOcr` already reads pages in
+  parallel. `MaxConcurrentProcesses` bounds the rest. Each call is its own process, so calls
+  share nothing.
+- Bounds: output over `MaxOutputBytes`, `Timeout`, or cancellation kills the process. .NET 8 and later
+  kill its tree; on .NET Framework only the process itself goes, so a wrapper script's child keeps
+  running, which is why `ExecutablePath` should name the program itself. `Dispose` refuses new
+  calls and ends those waiting, but lets a running process finish, so a call keeps its real result.
+  Standard error keeps its last 4 KiB. A process that ends but leaves its output open, through
+  something it started, stops being waited for after 5 seconds.
+
+### Packaging and footprint
+
+`PdfNetStack.Ocr.Tesseract` targets netstandard2.0, net8.0 and net10.0 and holds 36 KB of code. It
+needs `IOcrEngine` and `PdfOcr` from `PdfNetStack.Ocr`, which depends on ONNX Runtime, so its
+dependency excludes native and build assets. Measured with `dotnet publish` of a net10.0 console
+app from packed packages: 3.0 MB with this package alone, with no native files, and 241 MB with
+`PdfNetStack.Ocr` referenced as well, which brings ONNX Runtime's natives back on purpose. The
+pipeline ran in both.
+
+### Limits
+
+- Sideways pages: boxes come back axis aligned, so `PdfOcr`'s check never fires and `Orientation`
+  stays 0. Tesseract read the fixture page turned a quarter (`ReportsWhatHappensToPagesScannedSideways`),
+  but the text layer then does not follow the text's direction. Upside down lines are not turned. Tesseract's own orientation detection (`--psm 1`)
+  needs `osd.traineddata` and still reports axis aligned boxes, which would misplace the text layer.
+- Versions: the engine refuses anything before 4 and has run against 5.3.4 only, in CI. Tesseract
+  4.0.0, 4.1.0 and 4.1.1 write `--version` and `--list-langs` to standard output by their source; the
+  engine also reads standard error when standard output has no answer, tested with the stand-in
+  and not against a real 4.x.
+- Several languages: one request such as `eng+ara`, since `PdfOcr` merges lines only when their
+  boxes match to the pixel, and two Tesseract layouts need not do that.
+- No speed or accuracy comparison is claimed here yet. The CI job `tesseract` runs the engine
+  against the distribution's Tesseract and logs both engines' timings and error rates on the
+  fixture page (`MeasuresAgainstTheBundledEngine`).
+
+### Tests
+
+`tests/PdfNetStack.FakeTesseract` stands in for the executable, so that process handling is tested
+on every framework, .NET Framework included, with nothing installed: arguments as received, the
+bitmap as sent (read back by the core's decoder), failing, hanging, flooding and not reading,
+cancelling, the concurrency limit, and the whole pipeline. The parser takes hostile rows, random
+bytes and mutated rows. `TesseractRealTests` runs against a real Tesseract, skipped when there is
+none unless `PDFNETSTACK_REQUIRE_TESSERACT` is set, as it is in CI.

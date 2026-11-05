@@ -13,8 +13,8 @@
     "System.Runtime.CompilerServices.Unsafe": "MIT"
   },
   "onlyIn": {
-    "Microsoft.ML.OnnxRuntime": ["src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj", "src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj"],
-    "Microsoft.ML.OnnxRuntime.Managed": ["src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj", "src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj"]
+    "Microsoft.ML.OnnxRuntime": ["src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj", "src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj", "src/PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj"],
+    "Microsoft.ML.OnnxRuntime.Managed": ["src/PdfNetStack.Ocr/PdfNetStack.Ocr.csproj", "src/PdfNetStack.Ocr.Tool/PdfNetStack.Ocr.Tool.csproj", "src/PdfNetStack.Ocr.Tesseract/PdfNetStack.Ocr.Tesseract.csproj"]
   },
   "bundledFiles": {
     "ch_PP-OCRv5_det_mobile.onnx": "Apache-2.0. PaddleOCR (Copyright (c) 2016 PaddlePaddle Authors), ONNX conversion by RapidOCR (Copyright (c) 2021 RapidAI). PdfNetStack.Ocr.Models and PdfNetStack.Ocr.Tool only, each with LICENSE.txt and NOTICE.txt.",

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Stands in for the tesseract executable in the tests that must run without it. Not shipped. In the
+    solution, as a solution build drops the configuration of a project outside it and the tests look
+    for it under their own. One target framework, so the tests on every framework, .NET Framework
+    included, start the same executable.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>fake-tesseract</AssemblyName>
+    <RollForward>Major</RollForward>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AnalysisLevel>latest-minimum</AnalysisLevel>
+  </PropertyGroup>
+
+</Project>

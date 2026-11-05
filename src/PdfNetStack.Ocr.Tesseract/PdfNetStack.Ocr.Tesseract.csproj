@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>PdfNetStack.Ocr.Tesseract</RootNamespace>
+    <IsAotCompatible Condition="'$(TargetFramework)' != 'netstandard2.0'">true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1573</NoWarn>
+    <!-- Polyfills shared from the core through InternalsVisibleTo shadow identical framework types. Harmless. -->
+    <NoWarn Condition="'$(TargetFramework)' == 'netstandard2.0'">$(NoWarn);CS1685</NoWarn>
+    <PackageId>PdfNetStack.Ocr.Tesseract</PackageId>
+    <Title>PdfNetStack.Ocr.Tesseract: OCR for PdfNetStack with an installed Tesseract</Title>
+    <Description>An IOcrEngine for PdfNetStack.Ocr that runs an installed tesseract executable, one process per image: any language Tesseract has data for, word boxes and confidence, cancellation and time limits. Tesseract and its language data are installed separately; nothing native ships in this package. MIT licensed. By Jamal Abdelkhalek, JADEV.</Description>
+    <PackageTags>pdf;ocr;searchable-pdf;scanned-pdf;tesseract;jadev</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Only for IOcrEngine and PdfOcr: this engine never loads ONNX Runtime, so its native libraries
+         (about 240 MB for all platforms) stay out. An application that also references PdfNetStack.Ocr
+         gets them through that reference. -->
+    <ProjectReference Include="..\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" ExcludeAssets="native;build;buildTransitive" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PdfNetStack.Tests" />
+  </ItemGroup>
+
+  <!-- Uses core internals (the polyfills) and PdfNetStack.Ocr pins the core, so it ships with exactly what it was built against. -->
+  <Target Name="PinCoreVersion" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)" ProjectVersion="[%(ProjectVersion)]" />
+    </ItemGroup>
+  </Target>
+
+</Project>

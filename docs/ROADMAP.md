@@ -33,6 +33,17 @@ encryption (reads RC4, AES-128 and AES-256; writes AES-128 and AES-256 with perm
 | HTML and CSS | `PdfNetStack.Html`: cascade, block, inline, table, flex and grid layout (named lines, dense packing, column flow, subgrid, auto-fit), floats, positioning, paged media with margin boxes, named pages at any depth, running elements, web fonts, variable fonts (`font-weight`, `font-stretch`, `font-style`, `font-optical-sizing` and `font-variation-settings` choosing the instance), tagged PDF |
 | Evidence | A public benchmark corpus of 77 openly licensed PDFs, listed by URL and SHA-256 in `eng/corpus/manifest.json` and never committed; `tools/corpus_bench.py` measures lossless and lossy optimization (size, time, peak memory), proves every rewrite again, compares extracted text and images and PDFium renders, weekly, on demand and for every version tag in CI, where the report and a comparison with the previous release's report (`tools/corpus_compare.py`: size, time, memory, new and fixed failures) are attached to the GitHub release |
 
+**1.2** (on NuGet):
+
+| Area | Scope |
+|---|---|
+| Hyphenation | Liang's algorithm in the core, opt in through `PdfParagraph.Hyphenator`, with exceptions and limits per language; `PdfNetStack.Hyphenation` with patterns from TeX's hyph-utf8 for English (US and UK), German (reformed spelling), French, Dutch, Spanish, Italian and Portuguese and 21 more sets, all under permissive licenses and read per language on first use; `hyphens: auto` with `lang` in `PdfNetStack.Html` |
+| Searchable scans | `PdfNetStack.Ocr.Tesseract`: a second `IOcrEngine` that runs an installed `tesseract` executable, one process per image, with any language Tesseract has data for. It drives the executable rather than a .NET wrapper: `docs/OCR.md` has the evidence and the reasons |
+
+Languages whose only patterns are under LPPL, GPL, LGPL or MPL (among them Russian, Swedish, Czech,
+Hungarian, Turkish, Catalan) or give no right to modify (Finnish) stay out, as does German in the
+1901 spelling, whose patterns are permissive but not included.
+
 ### Corpus results
 
 The first corpus run (77 documents, 4,045 pages): the lossless profile rewrote 65 and saved
@@ -53,27 +64,25 @@ on CCITT pages. With palettes (`QuantizeImages`) the lossy profile saves 32.1%, 
 preset, which keeps every image's resolution, 23.4%. The two Internet Archive books, a JPEG 2000 picture over a JBIG2 soft mask on
 every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minutes per book.
 
-## Unreleased
-
-| Area | Scope |
-|---|---|
-| Hyphenation | Liang's algorithm in the core, opt in through `PdfParagraph.Hyphenator`, with exceptions and limits per language; `PdfNetStack.Hyphenation` with patterns from TeX's hyph-utf8 for English (US and UK), German (reformed spelling), French, Dutch, Spanish, Italian and Portuguese and 21 more sets, all under permissive licenses and read per language on first use; `hyphens: auto` with `lang` in `PdfNetStack.Html` |
-
-Languages whose only patterns are under LPPL, GPL, LGPL or MPL (among them Russian, Swedish, Czech,
-Hungarian, Turkish, Catalan) or give no right to modify (Finnish) stay out, as does German in the
-1901 spelling, whose patterns are permissive but not included.
-
 ## Next
 
+**Evidence**
+- A comparison against other PDF optimizers that scores bytes at equal rendered quality, not bytes
+  alone.
+
+**Compression**
+- Better JPEG coding. A rounding deadzone gave 0.4% to 3% at equal rendered quality in a test, not
+  enough to loosen the exact requantization proof. Trellis quantization is untried.
+
 **OCR**
-- A Tesseract engine behind `IOcrEngine`, once a maintained .NET wrapper ships builds for Linux
-  and macOS.
+- Running the Tesseract engine against versions other than 5.3.4, and on Windows.
 
 ## Out of scope
 
 - Rendering pages to images.
 - Running JavaScript or embedding a browser engine.
-- Wrappers around external tools. The core packages stay pure managed code; native code is
-  allowed only in optional add-ons, such as the ONNX Runtime behind OCR.
+- Wrappers around external tools in the core packages, which stay pure managed code. Native code
+  and external programs are allowed only in optional add-ons, such as ONNX Runtime and the
+  Tesseract engine behind OCR.
 - Cloud or hosting integrations. PdfNetStack works on bytes and streams; where they come from is
   up to the application. The samples in `samples/serverless` show the wiring for two hosts.
