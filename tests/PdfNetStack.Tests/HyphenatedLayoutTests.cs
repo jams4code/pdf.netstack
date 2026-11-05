@@ -240,6 +240,80 @@ public sealed class HyphenatedLayoutTests
     }
 
     [TestMethod]
+    public void UppercasedTextHyphenatesLikeTheWordsAsWritten()
+    {
+        string[] expected = ["HYPHEN-", "ATION IN-", "FORMATION"];
+        CollectionAssert.AreEqual(expected,
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase">hyphenation information</p>""", 60));
+        CollectionAssert.AreEqual(expected,
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase">Hyphenation Information</p>""", 60), "a capital first letter is still a word");
+
+        // White space collapsed before the transform moves nothing.
+        CollectionAssert.AreEqual(expected,
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase">   hyphenation &#10;&#9;  information   </p>""", 60));
+
+        // One word across inline elements, and through a span that sets the transform itself.
+        CollectionAssert.AreEqual(new[] { "HYPHEN-", "ATION" },
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase"><b>hy</b>phen<i>ation</i></p>"""));
+        CollectionAssert.AreEqual(new[] { "HYPHEN-", "ation" },
+            HtmlLines("""<p lang="en" style="hyphens: auto"><span style="text-transform: uppercase">hyphen</span>ation</p>"""));
+
+        // A narrow column measures the same points it lays out.
+        CollectionAssert.AreEqual(new[] { "HY-", "PHEN-", "ATION" },
+            Lines(Layout("""<table style="width: 1px; border-spacing: 0"><tr><td style="padding: 0; hyphens: auto; text-transform: uppercase" lang="en">hyphenation</td></tr></table>""", 600, PdfHyphenationPatterns.ForLanguage)));
+    }
+
+    [TestMethod]
+    public void TextWrittenInCapitalsStaysWhole()
+    {
+        CollectionAssert.AreEqual(new[] { "HYPHENATION", "INFORMATION" },
+            HtmlLines("""<p lang="en" style="hyphens: auto">HYPHENATION INFORMATION</p>""", 60), "written so, no transform");
+        CollectionAssert.AreEqual(new[] { "HYPHENATION", "INFORMATION" },
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase">HYPHENATION INFORMATION</p>""", 60), "written so, and uppercased too");
+        CollectionAssert.AreEqual(new[] { "INFORMATIONSYSTEM" },
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: uppercase">InformationSystem</p>""", 60), "a capital past the first letter");
+
+        // Without uppercase the text as laid out is the text as written, and lowercase has no capitals left.
+        CollectionAssert.AreEqual(new[] { "hyphen-", "ation" },
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: lowercase">HYPHENATION</p>"""));
+        CollectionAssert.AreEqual(new[] { "Hyphen-", "ation" },
+            HtmlLines("""<p lang="en" style="hyphens: auto; text-transform: capitalize">hyphenation</p>"""));
+    }
+
+    [TestMethod]
+    public void SharpSBecomesSSAndTheBreaksStayInPlace()
+    {
+        CollectionAssert.AreEqual(new[] { "STRASSE" }, Lines(Layout("""<p style="text-transform: uppercase">stra&szlig;e</p>""", 600)), "with or without hyphenation");
+
+        // stra-ßen-bahn: the point before the sharp s, and one after it, which moves by one.
+        CollectionAssert.AreEqual(new[] { "STRA-", "SSEN-", "BAHN" },
+            HtmlLines("""<p lang="de" style="hyphens: auto; text-transform: uppercase">Stra&szlig;enbahn</p>""", 36));
+
+        // Across inline elements, the shift goes with the word.
+        CollectionAssert.AreEqual(new[] { "STRA-", "SSEN-", "BAHN" },
+            HtmlLines("""<p lang="de" style="hyphens: auto; text-transform: uppercase"><b>Stra</b>&szlig;en<i>bahn</i></p>""", 36));
+
+        // Text after the box moves by one too, here not uppercased and so with its own case.
+        CollectionAssert.AreEqual(new[] { "STRASSE", "Silben-", "trennung" },
+            HtmlLines("""<p lang="de" style="hyphens: auto"><span style="text-transform: uppercase">Stra&szlig;e</span> Silbentrennung</p>""", 48));
+
+        // Two sharp s in one word, so the second point moves by two.
+        CollectionAssert.AreEqual(new[] { "GROSS-", "STRA-", "SSE" },
+            HtmlLines("""<p lang="de" style="hyphens: auto; text-transform: uppercase">Gro&szlig;stra&szlig;e</p>""", 36));
+    }
+
+    [TestMethod]
+    public void UppercasedTextConvertsEndToEnd()
+    {
+        var options = new HtmlConverterOptions { UseSystemFonts = false, PageStyle = "size: 200px 200px; margin: 0", Hyphenators = PdfHyphenationPatterns.ForLanguage };
+        PdfDocument doc = PdfDocument.Open(HtmlConverter.ConvertToPdf("""<p lang="en" style="margin: 0; font: 10px Courier; width: 60px; hyphens: auto; text-transform: uppercase">hyphenation information</p>""", options));
+        string text = doc.Pages[0].ExtractText();
+        Assert.DoesNotContain("-", text);
+        Assert.AreEqual("HYPHENATIONINFORMATION", text.Replace(((char)0xAD).ToString(), "").Replace("\r", "").Replace("\n", "").Replace(" ", ""), text);
+        Assert.Contains(((char)0xAD).ToString(), text, "the shown hyphens are marked");
+    }
+
+    [TestMethod]
     public void MinContentCountsHyphenationPoints()
     {
         // A narrow table cell: hy- phen- ation, where phen- and ation are five glyphs, 30 px. The

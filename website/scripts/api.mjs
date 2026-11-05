@@ -220,7 +220,7 @@ for (const page of pages.values()) {
 const overview = [
   '---',
   'title: "API reference"',
-  'description: "Every public type of PdfNetStack, PdfNetStack.Html, PdfNetStack.Hyphenation and PdfNetStack.Ocr, generated from the XML documentation of the current source."',
+  'description: "Every public type of every PdfNetStack package, generated from the XML documentation of the current source."',
   'editUrl: false',
   'lastUpdated: false',
   '---',

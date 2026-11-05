@@ -49,6 +49,9 @@ internal sealed class InlineLayout
     // Where a line may end with a hyphen no character stands for; null when nothing is hyphenated.
     private bool[]? _hyphenated;
 
+    // Text boxes that text-transform: uppercase changed, by where they start in the text; null with none.
+    private List<(int Start, TextBox Box)>? _uppercased;
+
     private sealed class Span(InlineBox box, int parent, int start, int depth)
     {
         public InlineBox Box { get; } = box;
@@ -239,6 +242,7 @@ internal sealed class InlineLayout
             switch (b)
             {
                 case TextBox t:
+                    if (t.BeforeUppercase is not null) (_uppercased ??= []).Add((_sb.Length, t));
                     Append(t.Text, t.Style, parent);
                     break;
                 case LineBreakBox br:
@@ -545,18 +549,20 @@ internal sealed class InlineLayout
     /// hyphens: auto (CSS Text 3, 5.4): the hyphenation points of each stretch of text in one
     /// language, so a word split across inline elements still counts as one. Points inside a
     /// ligature would need reshaping and are skipped, as are those of a font with no hyphen.
+    /// Words are judged as written: text-transform: uppercase does not make them all capitals.
     /// </summary>
     private void AddHyphenation(HyphenatorCache hyphenators)
     {
         int n = _text.Length;
+        (string words, int[]? toText) = WordsAsWritten();
         var points = new List<int>();
         int start = 0;
         PdfHyphenator? current = null;
         ComputedStyle? lastStyle = null;
         PdfHyphenator? hyphenator = null;
-        for (int i = 0; i <= n; i++)
+        for (int i = 0; i <= words.Length; i++)
         {
-            ComputedStyle? style = i < n ? _style[i] : null;
+            ComputedStyle? style = i < words.Length ? _style[toText is null ? i : toText[i]] : null;
             if (!ReferenceEquals(style, lastStyle))
             {
                 lastStyle = style;
@@ -566,12 +572,17 @@ internal sealed class InlineLayout
             }
 
             if (ReferenceEquals(hyphenator, current)) continue;
-            current?.FindBreaks(_text, start, i, points);
+            current?.FindBreaks(words, start, i, points);
             current = hyphenator;
             start = i;
         }
 
         if (points.Count == 0) return;
+        if (toText is not null)
+        {
+            for (int k = 0; k < points.Count; k++) points[k] = toText[points[k]];
+        }
+
         var clusters = new bool[n];
         foreach (Item item in _items)
         {
@@ -581,6 +592,42 @@ internal sealed class InlineLayout
         points.RemoveAll(p => !clusters[p] || !_font[p - 1].HasGlyph('-'));
         _hyphenated = new bool[n + 1];
         _breaks = PdfHyphenator.MergeBreaks(_breaks, points, _hyphenated);
+    }
+
+    /// <summary>
+    /// The text with uppercased boxes as they were written, and for each of its characters where
+    /// that character starts in the laid out text, which can be longer: sharp s becomes SS. The
+    /// map is null when nothing was uppercased, and both are then the same text.
+    /// </summary>
+    private (string Words, int[]? ToText) WordsAsWritten()
+    {
+        if (_uppercased is null) return (_text, null);
+        var words = new StringBuilder(_text.Length);
+        var toText = new List<int>(_text.Length);
+        int at = 0;
+        foreach ((int start, TextBox box) in _uppercased)
+        {
+            for (; at < start; at++)
+            {
+                words.Append(_text[at]);
+                toText.Add(at);
+            }
+
+            foreach (char c in box.BeforeUppercase!)
+            {
+                words.Append(c);
+                toText.Add(at);
+                at += BoxBuilder.UppercaseLength(c);
+            }
+        }
+
+        for (; at < _text.Length; at++)
+        {
+            words.Append(_text[at]);
+            toText.Add(at);
+        }
+
+        return (words.ToString(), [.. toText]);
     }
 
     /// <summary>Whether any of the text's styles passes the test, asked once per run of one style.</summary>

@@ -22,7 +22,12 @@
   attribute when `HtmlConverterOptions.Hyphenators` finds patterns for it, with
   `PdfHyphenationPatterns.ForLanguage` for instance. Without the option nothing changes, and
   `auto` behaves like `manual`. Min-content sizes count the points, so narrow table columns can
-  hyphenate instead of overflowing.
+  hyphenate instead of overflowing. Words are judged as written: text under
+  `text-transform: uppercase` hyphenates like its source words, while text written in capitals
+  stays whole.
+- `text-transform: uppercase` writes the German sharp s as SS, as CSS Text 3 asks, with or without
+  hyphenation: `Straße` now reads `STRASSE`, where it read `STRAßE`. Other characters whose full
+  upper case takes several letters keep their simple mapping.
 - Fixed: justifying a line that ended at a soft hyphen could widen the hyphen along with the spaces,
   when the run the hyphen belonged to ended with a space.
 

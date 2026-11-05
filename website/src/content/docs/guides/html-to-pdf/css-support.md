@@ -101,6 +101,8 @@ modes and no JavaScript.
 `hyphens: none` also turns off soft hyphens. Text under `white-space: nowrap` or
 `word-break: break-all` is not hyphenated, and a word split across inline elements counts as one.
 Min-content sizes count the points, so a narrow table column can hyphenate instead of overflowing.
+Words are judged as written: `text-transform: uppercase` over lower case text hyphenates, and text
+written in capitals does not. That transform writes the German sharp s as SS.
 See [Hyphenation](/guides/fonts-and-text/#hyphenation) for the languages and the words left alone.
 
 ## Generated content and lists
