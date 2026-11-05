@@ -19,10 +19,11 @@ invisible text. The pages look the same as before.
 
 ## Notes
 
-- `PdfNetStack.Ocr` is an add-on that is not on NuGet yet: reference `src/PdfNetStack.Ocr` from a
-  clone of the repository. It runs the PP-OCRv5 mobile models on ONNX Runtime.
-- Get the models with `python tools/fetch_ocr_models.py models`. They are checked against pinned
-  SHA-256 hashes when loaded.
+- `PdfNetStack.Ocr` is a separate package on NuGet. It runs the PP-OCRv5 mobile models on ONNX
+  Runtime.
+- Get the models from the `PdfNetStack.Ocr.Models` package, or with
+  `python tools/fetch_ocr_models.py models`. They are checked against pinned SHA-256 hashes when
+  loaded.
 - A page qualifies when its scan is one image covering at least half the page. Pages that already
   have text are left alone. `Recognize` reports the text without changing the document.
 - ONNX Runtime's official builds send telemetry by default. The engine turns it off before loading

@@ -29,7 +29,7 @@ faq:
   - q: Does it support long term signatures?
     a: Yes, from version 1.1. PdfNetStack signs to PAdES B-B, B-T, B-LT and B-LTA, and validates signatures against the trust anchors you supply. It makes no network calls; your application sends the timestamp requests and supplies the revocation data.
   - q: Can it make scanned PDFs searchable?
-    a: Yes, with the PdfNetStack.Ocr add-on, for Latin and Arabic script. It is in the repository and is not on NuGet yet. The core library also has DrawInvisibleText to lay the words of any OCR engine over a scan.
+    a: Yes, with the PdfNetStack.Ocr add-on, for Latin and Arabic script. It is a separate package on NuGet, with its models in PdfNetStack.Ocr.Models. The core library also has DrawInvisibleText to lay the words of any OCR engine over a scan.
   - q: How much memory does it use?
     a: The optimizer holds the whole document in memory. Plan for about 10 times the file size, more for image heavy files, or lower MaxDegreeOfParallelism to cap memory. From version 1.1, PdfDocument.OpenOnDemand reads and edits a file of any size page by page without loading it, and SaveIncremental appends only the changes.
   - q: Can it write linearized PDFs for fast web view?
