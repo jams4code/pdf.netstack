@@ -3,7 +3,8 @@
 ## Unreleased
 
 - New package `PdfNetStack.Ocr.Tesseract`: `TesseractOcrEngine`, an `IOcrEngine` that runs an
-  installed `tesseract` executable (version 4 or later), so `PdfOcr` can read any language Tesseract
+  installed `tesseract` executable (versions before 4 are refused; CI runs 5.3.4), so `PdfOcr` can
+  read any language Tesseract
   has data for and run where ONNX Runtime has no build. One process per image, started without a
   shell: the pixels go in on standard input as a bitmap, with no temporary files, and word boxes and
   confidence come back as TSV on standard output, parsed as untrusted text. Language names are

@@ -8,7 +8,8 @@ executable, one process per image. Any language Tesseract has data for.
 dotnet add package PdfNetStack.Ocr.Tesseract
 ```
 
-Tesseract 4 or later and its language data are installed separately; neither ships in this package:
+Tesseract and its language data are installed separately; neither ships in this package. Versions
+before 4 are refused, and the one this engine has run against is 5.3.4, in CI:
 
 ```bash
 apt install tesseract-ocr tesseract-ocr-ara    # Debian, Ubuntu
@@ -35,7 +36,7 @@ doc.Save("scan-searchable.pdf");
 
 | `TesseractOcrEngineOptions` | Default | Notes |
 |---|---|---|
-| `ExecutablePath` | null | Null looks in the absolute folders of the `PATH`, never the current folder |
+| `ExecutablePath` | null | Null looks in the absolute folders of the `PATH`, never the current folder. Name the program itself: on .NET Framework, stopping it leaves anything a wrapper script started running |
 | `TessdataPath` | null | The folder of `.traineddata` files; null leaves it to Tesseract |
 | `Languages` | latin | Checked when loading: a missing one fails there, naming where to get it |
 | `LanguageMap` | latin: eng, arabic: ara | Other names go to Tesseract as they are |
@@ -60,6 +61,8 @@ output is parsed as untrusted text, and boxes are clamped to the image.
   `PdfOcrOptions.DetectOrientation` has nothing to go on. Tesseract may still read a page turned a
   quarter, but its boxes stay upright, so the text layer does not follow the text.
 - Each image starts a process and loads the language data again.
+- Disposing the engine does not stop a process already running: its call finishes, within `Timeout`.
+  To stop one sooner, cancel its token.
 - Read a page in two scripts with one request (`eng+ara`). `PdfOcrOptions.Languages` with two entries
   reads the page twice and merges lines only when their boxes match to the pixel, which two
   Tesseract layouts need not do.

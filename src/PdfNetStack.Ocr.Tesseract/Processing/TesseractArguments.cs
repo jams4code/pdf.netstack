@@ -97,13 +97,15 @@ internal static class TesseractArguments
             return FindOnPath(path, windows) ?? throw new FileNotFoundException($"Tesseract was not found on the PATH. {Help}", windows ? "tesseract.exe" : "tesseract");
         }
 
-        string extension = Path.GetExtension(configured);
+        // Checked on the path as it will be used. Windows drops trailing dots and spaces from a name, so
+        // they cannot hide an extension.
+        string full = Path.GetFullPath(configured);
+        string extension = Path.GetExtension(full.TrimEnd('.', ' '));
         if (extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"{configured} is a batch file, which would run through a shell. Name the tesseract executable itself.", nameof(configured));
         }
 
-        string full = Path.GetFullPath(configured);
         return File.Exists(full) ? full : throw new FileNotFoundException($"Tesseract was not found at {full}. {Help}", full);
     }
 

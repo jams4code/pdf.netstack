@@ -19,8 +19,20 @@ internal static class ChildProcess
     /// <summary>What a finished process left.</summary>
     /// <param name="ExitCode">Its exit code.</param>
     /// <param name="Output">Everything from standard output.</param>
-    /// <param name="Error">The end of standard error, without control characters.</param>
-    public sealed record Result(int ExitCode, byte[] Output, string Error);
+    /// <param name="ErrorOutput">The end of standard error.</param>
+    public sealed record Result(int ExitCode, byte[] Output, byte[] ErrorOutput)
+    {
+        /// <summary>The end of standard error for a message: one line, without control characters.</summary>
+        public string Error
+        {
+            get
+            {
+                var text = new StringBuilder(ErrorOutput.Length);
+                foreach (char c in Encoding.UTF8.GetString(ErrorOutput)) text.Append(char.IsControl(c) ? ' ' : c);
+                return text.ToString().Trim();
+            }
+        }
+    }
 
     /// <summary>Runs a process.</summary>
     /// <param name="start">The process; every stream must be redirected.</param>
@@ -110,7 +122,7 @@ internal static class ChildProcess
         // Checked after the pumps are done: the process may have ended with its last output unread.
         if (Volatile.Read(ref overflow)) throw new TesseractOcrException($"Tesseract wrote more than {maxOutput} bytes and was stopped.");
         if (!settled) throw new TesseractOcrException("Tesseract ended but its output stayed open.");
-        return new Result(process.ExitCode, output.ToArray(), error.Text());
+        return new Result(process.ExitCode, output.ToArray(), error.Bytes());
     }
 
     /// <summary>Runs on a thread of its own, as these block on pipes for as long as the process lives. A pipe closing under it ends it quietly.</summary>
@@ -165,16 +177,14 @@ internal static class ChildProcess
             }
         }
 
-        public string Text()
+        public byte[] Bytes()
         {
             lock (_bytes)
             {
                 int length = (int)Math.Min(_total, capacity);
                 byte[] ordered = new byte[length];
                 for (int i = 0; i < length; i++) ordered[i] = _bytes[(_total - length + i) % capacity];
-                var text = new StringBuilder(length);
-                foreach (char c in Encoding.UTF8.GetString(ordered)) text.Append(char.IsControl(c) ? ' ' : c);
-                return text.ToString().Trim();
+                return ordered;
             }
         }
     }

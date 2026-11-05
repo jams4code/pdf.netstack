@@ -62,6 +62,16 @@ public sealed class TesseractOcrTests
 
         public string[] Recorded(string prefix) => Directory.GetFiles(Data, prefix + "-*");
 
+        /// <summary>A copy of the stand-in with settings of its own, for what it answers without a data folder.</summary>
+        public string FakeCopy(string global)
+        {
+            string copy = Path.Combine(Parent, "bin");
+            Directory.CreateDirectory(copy);
+            foreach (string file in Directory.GetFiles(Path.GetDirectoryName(Fake())!)) File.Copy(file, Path.Combine(copy, Path.GetFileName(file)));
+            File.WriteAllText(Path.Combine(copy, "fake-global.txt"), global);
+            return Path.Combine(copy, Path.GetFileName(Fake()));
+        }
+
         public void Dispose()
         {
             // A killed process can hold its files for a moment on Windows; what is left is in the temp folder.
@@ -383,9 +393,12 @@ public sealed class TesseractOcrTests
     [TestMethod]
     public void ReadsTheVersion()
     {
-        Assert.AreEqual("5.5.0", TesseractOutput.Version("tesseract 5.5.0\n leptonica-1.85.0\n", "x"));
-        Assert.AreEqual("5.3.0.20221214", TesseractOutput.Version("tesseract v5.3.0.20221214\n", "x"));
-        Assert.AreEqual("4.1.1", TesseractOutput.Version("\nWarning\ntesseract 4.1.1\n", "x"));
+        Assert.AreEqual("5.5.0", TesseractOutput.Version("tesseract 5.5.0\n leptonica-1.85.0\n", "", "x"));
+        Assert.AreEqual("5.3.0.20221214", TesseractOutput.Version("tesseract v5.3.0.20221214\n", "", "x"));
+        Assert.AreEqual("4.1.1", TesseractOutput.Version("\nWarning\ntesseract 4.1.1\n", "", "x"));
+        Assert.AreEqual("4.0.0", TesseractOutput.Version("", "tesseract 4.0.0\n leptonica-1.76.0\n", "x"), "on standard error");
+        Assert.AreEqual("4.0.0-beta.1", TesseractOutput.Version("", "tesseract 4.0.0-beta.1\n", "x"));
+        Assert.AreEqual("5.5.0", TesseractOutput.Version("tesseract 5.5.0\n", "tesseract 4.0.0\n", "x"), "standard output comes first");
     }
 
     [TestMethod]
@@ -396,21 +409,27 @@ public sealed class TesseractOcrTests
     [DataRow("")]
     public void RefusesAnythingButARecentTesseract(string answer)
     {
-        var e = Assert.Throws<TesseractOcrException>(() => TesseractOutput.Version(answer, "/bin/x"));
+        var e = Assert.Throws<TesseractOcrException>(() => TesseractOutput.Version(answer, "", "/bin/x"));
         StringAssert.Contains(e.Message, "/bin/x");
+        var error = Assert.Throws<TesseractOcrException>(() => TesseractOutput.Version("", answer, "/bin/x"));
+        StringAssert.Contains(error.Message, "/bin/x");
     }
 
     [TestMethod]
     public void ReadsTheLanguageList()
     {
-        (string folder, HashSet<string> languages) = TesseractOutput.Languages("Warning\nList of available languages in \"/usr/share/tessdata/\" (3):\neng\nscript/Latin\nara\r\n../bad\n");
+        (string folder, HashSet<string> languages) = TesseractOutput.Languages("Warning\nList of available languages in \"/usr/share/tessdata/\" (3):\neng\nscript/Latin\nara\r\n../bad\n", "");
         Assert.AreEqual("/usr/share/tessdata/", folder);
         CollectionAssert.AreEquivalent(new[] { "eng", "script/Latin", "ara" }, languages.ToArray());
 
-        (string none, HashSet<string> older) = TesseractOutput.Languages("List of available languages (1):\neng\n");
+        (string none, HashSet<string> older) = TesseractOutput.Languages("List of available languages (1):\neng\n", "");
         Assert.AreEqual("", none);
         CollectionAssert.AreEqual(new[] { "eng" }, older.ToArray());
-        Assert.IsEmpty(TesseractOutput.Languages("Error opening data file\n").Languages);
+        Assert.IsEmpty(TesseractOutput.Languages("Error opening data file\n", "").Languages);
+
+        // Standard error only when standard output has no list: warnings there are not languages, even with none installed.
+        CollectionAssert.AreEqual(new[] { "eng" }, TesseractOutput.Languages("", "List of available languages (1):\neng\n").Languages.ToArray());
+        Assert.IsEmpty(TesseractOutput.Languages("List of available languages (0):\n", "List of available languages (1):\neng\nWarning\n").Languages);
     }
 
     [TestMethod]
@@ -450,8 +469,38 @@ public sealed class TesseractOcrTests
     [TestMethod]
     [DataRow("tesseract.bat")]
     [DataRow("C:\\tools\\tesseract.CMD")]
+    [DataRow("tesseract.cmd.")]
+    [DataRow("tesseract.bat...")]
+    [DataRow("tesseract.CMD  ")]
+    [DataRow("tesseract.bat. .")]
     public void RefusesBatchFiles(string file) =>
         Assert.Throws<ArgumentException>(() => TesseractArguments.ResolveExecutable(file, null, windows: true));
+
+    [TestMethod]
+    public void LoadsATesseractThatAnswersOnTheErrorStream()
+    {
+        using var folder = new Folder();
+        folder.Settings("tsv=" + folder.Tsv(Header + "5\t1\t1\t1\t1\t1\t1\t0\t2\t2\t80\tword\n"));
+        using TesseractOcrEngine engine = TesseractOcrEngine.Load(new TesseractOcrEngineOptions
+        {
+            ExecutablePath = folder.FakeCopy("old-streams=1\nversion=tesseract 4.0.0"),
+            TessdataPath = folder.Data,
+            Languages = ["eng"],
+        });
+
+        Assert.AreEqual("4.0.0", engine.Version);
+        CollectionAssert.AreEqual(new[] { "eng" }, engine.InstalledLanguages.ToArray());
+        Assert.AreEqual("word", engine.Recognize(Small, new OcrRequest { Language = "eng" }, default).Text);
+    }
+
+    [TestMethod]
+    public void RefusesAnOldTesseractOnEitherStream()
+    {
+        using var folder = new Folder();
+        string copy = folder.FakeCopy("old-streams=1\nversion=tesseract 3.05.02");
+        var e = Assert.Throws<TesseractOcrException>(() => TesseractOcrEngine.Load(new TesseractOcrEngineOptions { ExecutablePath = copy, TessdataPath = folder.Data, Languages = ["eng"] }));
+        StringAssert.Contains(e.Message, "3.05.02");
+    }
 
     [TestMethod]
     public void AFileThatCannotRunIsAClearError()
@@ -710,6 +759,110 @@ public sealed class TesseractOcrTests
         engine.Dispose();
         engine.Dispose();
         Assert.Throws<ObjectDisposedException>(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+    }
+
+    [TestMethod]
+    public void ACallInFlightKeepsItsResultThroughDispose()
+    {
+        using var folder = new Folder();
+        folder.Settings("sleep=1000\ntsv=" + folder.Tsv(Header + "5\t1\t1\t1\t1\t1\t1\t0\t2\t2\t80\tword\n"));
+        TesseractOcrEngine engine = folder.Engine();
+        Task<OcrImageResult> call = Task.Run(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+        while (folder.Recorded("pid").Length == 0) Thread.Sleep(20);
+
+        engine.Dispose();
+
+        Assert.AreEqual("word", call.GetAwaiter().GetResult().Text);
+    }
+
+    [TestMethod]
+    public void ACallInFlightKeepsItsFailureThroughDispose()
+    {
+        using var folder = new Folder("sleep=1000\nexit=3\nstderr=broken");
+        TesseractOcrEngine engine = folder.Engine();
+        Task<OcrImageResult> call = Task.Run(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+        while (folder.Recorded("pid").Length == 0) Thread.Sleep(20);
+
+        engine.Dispose();
+
+        var e = Assert.ThrowsExactly<TesseractOcrException>(() => call.GetAwaiter().GetResult());
+        StringAssert.Contains(e.Message, "exit code 3");
+    }
+
+    [TestMethod]
+    public void ACallInFlightCanStillBeCancelledAfterDispose()
+    {
+        using var folder = new Folder("sleep=120000");
+        TesseractOcrEngine engine = folder.Engine();
+        using var cancel = new CancellationTokenSource();
+        Task<OcrImageResult> call = Task.Run(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, cancel.Token));
+        while (folder.Recorded("pid").Length == 0) Thread.Sleep(20);
+
+        engine.Dispose();
+        cancel.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => call.GetAwaiter().GetResult());
+        AssertGone(folder);
+    }
+
+    [TestMethod]
+    public void DisposeEndsACallWaitingForItsTurn()
+    {
+        using var folder = new Folder();
+        folder.Settings("sleep=1500\ntsv=" + folder.Tsv(Header + "5\t1\t1\t1\t1\t1\t1\t0\t2\t2\t80\tword\n"));
+        TesseractOcrEngine engine = folder.Engine(processes: 1);
+        Task<OcrImageResult> running = Task.Run(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+        while (folder.Recorded("pid").Length == 0) Thread.Sleep(20);
+        Task<OcrImageResult> waiting = Task.Run(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+        Thread.Sleep(100);
+
+        engine.Dispose();
+
+        Assert.ThrowsExactly<ObjectDisposedException>(() => waiting.GetAwaiter().GetResult());
+        Assert.AreEqual("word", running.GetAwaiter().GetResult().Text);
+        Assert.HasCount(1, folder.Recorded("pid"), "the waiting call never started a process");
+    }
+
+    [TestMethod]
+    public void ANewCallAfterDisposeSaysDisposedEvenWhenCancelled()
+    {
+        using var folder = new Folder();
+        TesseractOcrEngine engine = folder.Engine();
+        engine.Dispose();
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        Assert.Throws<ObjectDisposedException>(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, cancel.Token));
+        Assert.Throws<ObjectDisposedException>(() => engine.Recognize(Small, new OcrRequest { Language = "eng" }, default));
+    }
+
+    [TestMethod]
+    public void RacingDisposeGivesAResultOrDisposedAndNothingElse()
+    {
+        using var folder = new Folder();
+        folder.Settings("tsv=" + folder.Tsv(Header + "5\t1\t1\t1\t1\t1\t1\t0\t2\t2\t80\tword\n"));
+        var random = new Random(11);
+        for (int round = 0; round < 6; round++)
+        {
+            TesseractOcrEngine engine = folder.Engine(processes: 2);
+            Task<string>[] calls = [.. Enumerable.Range(0, 6).Select(_ => Task.Run(() =>
+            {
+                try
+                {
+                    return engine.Recognize(Small, new OcrRequest { Language = "eng" }, default).Text;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return "disposed";
+                }
+            }))];
+
+            Thread.Sleep(random.Next(0, 300));
+            engine.Dispose();
+
+            // Anything else, such as a disposed gate surfacing from a call that had its result, fails here.
+            string[] outcomes = Task.WhenAll(calls).GetAwaiter().GetResult();
+            Assert.IsTrue(outcomes.All(o => o is "word" or "disposed"), string.Join(", ", outcomes));
+        }
     }
 
     [TestMethod]

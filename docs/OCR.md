@@ -488,8 +488,11 @@ can write to. The sources behind each choice, read at 5.3.4 and on main:
   `OMP_THREAD_LIMIT=1`, the setting Tesseract's FAQ gives, as `PdfOcr` already reads pages in
   parallel. `MaxConcurrentProcesses` bounds the rest. Each call is its own process, so calls
   share nothing.
-- Bounds: output over `MaxOutputBytes`, `Timeout`, or cancellation kills the process (its tree on
-  .NET). Standard error keeps its last 4 KiB. A process that ends but leaves its output open, through
+- Bounds: output over `MaxOutputBytes`, `Timeout`, or cancellation kills the process. .NET 8 and later
+  kill its tree; on .NET Framework only the process itself goes, so a wrapper script's child keeps
+  running, which is why `ExecutablePath` should name the program itself. `Dispose` refuses new
+  calls and ends those waiting, but lets a running process finish, so a call keeps its real result.
+  Standard error keeps its last 4 KiB. A process that ends but leaves its output open, through
   something it started, stops being waited for after 5 seconds.
 
 ### Packaging and footprint
@@ -507,6 +510,10 @@ pipeline ran in both.
   stays 0. Tesseract read the fixture page turned a quarter (`ReportsWhatHappensToPagesScannedSideways`),
   but the text layer then does not follow the text's direction. Upside down lines are not turned. Tesseract's own orientation detection (`--psm 1`)
   needs `osd.traineddata` and still reports axis aligned boxes, which would misplace the text layer.
+- Versions: the engine refuses anything before 4 and has run against 5.3.4 only, in CI. Tesseract
+  4.0.0, 4.1.0 and 4.1.1 write `--version` and `--list-langs` to standard output by their source; the
+  engine also reads standard error when standard output has no answer, tested with the stand-in
+  and not against a real 4.x.
 - Several languages: one request such as `eng+ara`, since `PdfOcr` merges lines only when their
   boxes match to the pixel, and two Tesseract layouts need not do that.
 - No speed or accuracy comparison is claimed here yet. The CI job `tesseract` runs the engine

@@ -9,13 +9,30 @@
 // Each run records what it got in that folder: its arguments, one per line (args-PID.txt), the
 // variables the engine sets (env-PID.txt), what came in on standard input (stdin-PID.bin), its
 // process id before it sleeps (pid-PID.txt) and when it ran (times-PID.txt).
+// A file named fake-global.txt beside the executable, in a copy a test made for itself, covers what
+// runs without a data folder:
+//   version=text     the line --version answers
+//   old-streams=1    answer --version and --list-langs on standard error, in the older format
 using System.Diagnostics;
 using System.Text;
 
 string[] arguments = args;
+var global = new Dictionary<string, string>();
+string globalFile = Path.Combine(AppContext.BaseDirectory, "fake-global.txt");
+if (File.Exists(globalFile))
+{
+    foreach (string line in File.ReadAllLines(globalFile))
+    {
+        int equals = line.IndexOf('=');
+        if (equals > 0) global[line[..equals]] = line[(equals + 1)..];
+    }
+}
+
+bool oldStreams = global.ContainsKey("old-streams");
+TextWriter answers = oldStreams ? Console.Error : Console.Out;
 if (arguments.Contains("--version"))
 {
-    Console.Out.Write("tesseract 5.9.1\n leptonica-1.85.0\n");
+    answers.Write((global.TryGetValue("version", out string? version) ? version : "tesseract 5.9.1") + "\n leptonica-1.85.0\n");
     return 0;
 }
 
@@ -30,7 +47,8 @@ string folder = arguments[folderAt + 1];
 if (arguments.Contains("--list-langs"))
 {
     string[] languages = [.. Directory.GetFiles(folder, "*.traineddata").Select(f => Path.GetFileNameWithoutExtension(f)).Order(StringComparer.Ordinal)];
-    Console.Out.Write($"List of available languages in \"{folder}/\" ({languages.Length}):\n{string.Join("\n", languages)}\n");
+    string title = oldStreams ? $"List of available languages ({languages.Length}):" : $"List of available languages in \"{folder}/\" ({languages.Length}):";
+    answers.Write($"{title}\n{string.Join("\n", languages)}\n");
     return 0;
 }
 

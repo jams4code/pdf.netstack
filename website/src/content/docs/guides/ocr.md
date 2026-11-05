@@ -194,7 +194,7 @@ a `tesseract` executable you have installed.
 | | `OnnxOcrEngine` | `TesseractOcrEngine` |
 |---|---|---|
 | Languages | Latin and Arabic script | Any Tesseract has data for |
-| What you install | Nothing beyond packages | Tesseract 4 or later and its language data |
+| What you install | Nothing beyond packages | Tesseract and its language data |
 | Platforms | win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64 | Wherever you can install Tesseract, Alpine included. Homebrew has no prebuilt bottle for Intel Macs |
 | Size of a published app | 241 MB without a runtime identifier, with every platform's native libraries (17 to 45 MB for one), plus 21 MB of models | 3 MB, plus your Tesseract install |
 | Where recognition runs | In your process, on float tensors built by managed code | In a separate process for each image; a crash or hang costs that image |
@@ -220,7 +220,8 @@ faster) and [tessdata_best](https://github.com/tesseract-ocr/tessdata_best); put
 
 `Load` checks all of it up front. A missing executable or missing language data throws
 `FileNotFoundException`, saying where to get it, and a Tesseract older than version 4 throws
-`TesseractOcrException`.
+`TesseractOcrException`. Older 4.x and 5.x versions are accepted, but the one this engine has run
+against is 5.3.4, from the Ubuntu packages, in CI.
 
 Each image is its own process. The pixels go in on standard input and the results come back on
 standard output, with no shell and no temporary files, so calls from several threads share
@@ -235,9 +236,13 @@ as it is: `fra`, `chi_sim`, `script/Latin`. Read a page in two scripts with one 
 `eng+ara`: `PdfOcr` merges lines from separate requests only when their boxes match to the pixel,
 which two Tesseract layouts need not do.
 
+Disposing the engine refuses new calls and ends those waiting for their turn with
+`ObjectDisposedException`. A process already running is not stopped: its call finishes with its
+real result, within `Timeout`. To stop one sooner, cancel its token.
+
 | `TesseractOcrEngineOptions` | Default | Notes |
 |---|---|---|
-| `ExecutablePath` | null | Null looks on the `PATH` |
+| `ExecutablePath` | null | Null looks on the `PATH`. Name the program itself: on .NET Framework, stopping it leaves anything a wrapper script started running |
 | `TessdataPath` | null | Null leaves it to Tesseract: `TESSDATA_PREFIX`, else where it was installed |
 | `Languages` | latin | Checked when loading |
 | `LanguageMap` | latin: eng, arabic: ara | Other names go to Tesseract as they are |

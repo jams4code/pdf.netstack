@@ -21,9 +21,15 @@ internal static class TesseractOutput
     /// <summary>The output as text; bytes that are not UTF-8 become U+FFFD.</summary>
     public static string Decode(byte[] output) => Encoding.UTF8.GetString(output);
 
-    /// <summary>The version from <c>--version</c>: the first line reads <c>tesseract 5.5.0</c> or <c>tesseract v5.3.0.20221214</c>.</summary>
+    /// <summary>
+    /// The version from <c>--version</c>: the first line reads <c>tesseract 5.5.0</c> or <c>tesseract v5.3.0.20221214</c>.
+    /// Looked for on standard output, then on standard error, in case a build answers there.
+    /// </summary>
     /// <exception cref="TesseractOcrException">This is not Tesseract, or it is older than version 4, whose options differ.</exception>
-    public static string Version(string answer, string executable)
+    public static string Version(string output, string error, string executable) =>
+        FindVersion(output, executable) ?? FindVersion(error, executable) ?? throw new TesseractOcrException($"{executable} does not report a Tesseract version.");
+
+    private static string? FindVersion(string answer, string executable)
     {
         const string Name = "tesseract ";
         foreach (string raw in answer.Split('\n'))
@@ -40,16 +46,18 @@ internal static class TesseractOutput
             }
         }
 
-        throw new TesseractOcrException($"{executable} does not report a Tesseract version.");
+        return null;
     }
 
     /// <summary>
     /// The languages from <c>--list-langs</c>: a line reading <c>List of available languages in "folder/" (2):</c>
-    /// (older versions leave the folder out), then one name per line.
+    /// (older versions leave the folder out), then one name per line. On standard error only when
+    /// standard output has no such line, so that warnings there are never taken for languages.
     /// </summary>
-    public static (string Folder, HashSet<string> Languages) Languages(string answer)
+    public static (string Folder, HashSet<string> Languages) Languages(string output, string error)
     {
         const string Title = "List of available languages";
+        string answer = output.Contains(Title) ? output : error;
         string folder = "";
         var languages = new HashSet<string>(StringComparer.Ordinal);
         bool listing = false;

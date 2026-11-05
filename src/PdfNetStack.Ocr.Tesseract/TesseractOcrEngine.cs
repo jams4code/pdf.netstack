@@ -6,7 +6,12 @@ namespace PdfNetStack.Ocr.Tesseract;
 /// <summary>Settings for <see cref="TesseractOcrEngine"/>.</summary>
 public sealed class TesseractOcrEngineOptions
 {
-    /// <summary>The tesseract executable. Null looks for it in the absolute folders of the PATH, never in the current folder.</summary>
+    /// <summary>
+    /// The tesseract executable. Null looks for it in the absolute folders of the PATH, never in the
+    /// current folder. Name the program itself rather than a script around it: on .NET Framework a
+    /// timeout or cancellation kills only the process started, so anything it started keeps running.
+    /// .NET 8 and later kill the whole tree.
+    /// </summary>
     public string? ExecutablePath { get; init; }
 
     /// <summary>The folder holding the <c>.traineddata</c> files. Null leaves it to Tesseract: <c>TESSDATA_PREFIX</c>, else where it was installed.</summary>
@@ -102,6 +107,7 @@ public sealed class TesseractOcrEngine : IOcrEngine
     private readonly HashSet<string> _installed;
     private readonly string _dataFolder;
     private readonly SemaphoreSlim _gate;
+    private readonly CancellationTokenSource _closing = new();
     private volatile bool _disposed;
 
     private TesseractOcrEngine(string executable, string? tessdata, string version, string dataFolder, HashSet<string> installed, Dictionary<string, string> map, TesseractOcrEngineOptions options)
@@ -149,8 +155,10 @@ public sealed class TesseractOcrEngine : IOcrEngine
         foreach (KeyValuePair<string, string> pair in options.LanguageMap) map[pair.Key] = pair.Value;
 
         string executable = TesseractArguments.ResolveExecutable(options.ExecutablePath, Environment.GetEnvironmentVariable("PATH"), RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
-        string version = TesseractOutput.Version(Query(executable, TesseractArguments.Version()), executable);
-        (string folder, HashSet<string> installed) = TesseractOutput.Languages(Query(executable, TesseractArguments.ListLanguages(tessdata)));
+        (string versionOutput, string versionError) = Query(executable, TesseractArguments.Version());
+        string version = TesseractOutput.Version(versionOutput, versionError, executable);
+        (string languagesOutput, string languagesError) = Query(executable, TesseractArguments.ListLanguages(tessdata));
+        (string folder, HashSet<string> installed) = TesseractOutput.Languages(languagesOutput, languagesError);
         if (folder.Length == 0) folder = tessdata ?? "";
 
         var engine = new TesseractOcrEngine(executable, tessdata, version, folder, installed, map, options);
@@ -179,11 +187,11 @@ public sealed class TesseractOcrEngine : IOcrEngine
     }
 
     /// <summary>Asks the executable something that needs no image.</summary>
-    private static string Query(string executable, IReadOnlyList<string> arguments)
+    private static (string Output, string Error) Query(string executable, IReadOnlyList<string> arguments)
     {
         ChildProcess.Result result = ChildProcess.Run(TesseractArguments.Start(executable, arguments, 0), null, QueryOutputBytes, QueryTimeout, CancellationToken.None);
         if (result.ExitCode != 0) throw new TesseractOcrException($"{executable} failed with exit code {result.ExitCode}: {result.Error}");
-        return TesseractOutput.Decode(result.Output);
+        return (TesseractOutput.Decode(result.Output), TesseractOutput.Decode(result.ErrorOutput));
     }
 
     /// <summary>What Tesseract calls a requested language, checked against what it has.</summary>
@@ -207,6 +215,7 @@ public sealed class TesseractOcrEngine : IOcrEngine
     /// <exception cref="TimeoutException">The process took longer than <see cref="TesseractOcrEngineOptions.Timeout"/> and was killed.</exception>
     /// <exception cref="TesseractOcrException">The process failed, or its output cannot be used.</exception>
     /// <exception cref="OperationCanceledException">Cancelled; the process was killed.</exception>
+    /// <exception cref="ObjectDisposedException">The engine was disposed before this call's process started.</exception>
     public OcrImageResult Recognize(OcrBitmap image, OcrRequest request, CancellationToken cancellationToken)
     {
         Compat.ThrowIfNull(image, nameof(image));
@@ -219,7 +228,7 @@ public sealed class TesseractOcrEngine : IOcrEngine
 
         string language = Check(request.Language, loading: false);
         cancellationToken.ThrowIfCancellationRequested();
-        _gate.Wait(cancellationToken);
+        WaitForTurn(cancellationToken);
         try
         {
             IReadOnlyList<string> arguments = TesseractArguments.Recognize(language, _tessdata, _options.PageSegmentationMode, _options.Dpi);
@@ -238,11 +247,39 @@ public sealed class TesseractOcrEngine : IOcrEngine
         }
     }
 
-    /// <inheritdoc/>
+    /// <summary>Takes a turn among the processes, or fails: cancelled by the caller, or the engine disposed while waiting.</summary>
+    private void WaitForTurn(CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closing.Token);
+        try
+        {
+            _gate.Wait(linked.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Said again with the caller's own token, or as what it was: the engine going away.
+            cancellationToken.ThrowIfCancellationRequested();
+            Compat.ThrowIfDisposed(true, this);
+            throw;
+        }
+
+        if (_disposed)
+        {
+            _gate.Release();
+            Compat.ThrowIfDisposed(true, this);
+        }
+    }
+
+    /// <summary>
+    /// Refuses new calls, and ends those waiting for their turn with <see cref="ObjectDisposedException"/>.
+    /// A process already running is not stopped: its call finishes with its real result or failure,
+    /// within <see cref="TesseractOcrEngineOptions.Timeout"/>. To stop one sooner, cancel its token.
+    /// </summary>
     public void Dispose()
     {
-        if (_disposed) return;
+        // The gate and the token source stay undisposed: calls in flight still use them, and they hold
+        // nothing unmanaged, as no wait handle is ever asked of them.
         _disposed = true;
-        _gate.Dispose();
+        _closing.Cancel();
     }
 }
