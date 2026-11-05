@@ -187,9 +187,10 @@ internal static class Pkix
             byte[]? raw = DerToP1363(signature, (ec.KeySize + 7) / 8);
             return raw is not null && ec.VerifyData(bytes, raw, hash);
         }
-        catch (CryptographicException)
+        catch (Exception e) when (e is CryptographicException or ArgumentException)
         {
-            // A key or signature the platform cannot use does not verify.
+            // A key or signature the platform cannot use does not verify. macOS reports a damaged
+            // key as an ArgumentException from the key's handle.
             return false;
         }
     }

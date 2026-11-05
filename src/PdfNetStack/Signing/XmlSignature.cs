@@ -136,7 +136,7 @@ internal static class XmlSignature
             using ECDsa? ec = certificate.GetECDsaPublicKey();
             return ec is not null && signature.Length == 2 * ((ec.KeySize + 7) / 8) && ec.VerifyData(data, signature, hash);
         }
-        catch (CryptographicException)
+        catch (Exception e) when (e is CryptographicException or ArgumentException)
         {
             return false;
         }
@@ -153,7 +153,7 @@ internal static class XmlSignature
         {
             if (certificate.GetRSAPublicKey() is RSA rsa) return rsa;
         }
-        catch (CryptographicException)
+        catch (Exception e) when (e is CryptographicException or ArgumentException)
         {
             // Read below from the key bits.
         }
