@@ -504,7 +504,8 @@ pipeline ran in both.
 ### Limits
 
 - Sideways pages: boxes come back axis aligned, so `PdfOcr`'s check never fires and `Orientation`
-  stays 0. Upside down lines are not turned either. Tesseract's own orientation detection (`--psm 1`)
+  stays 0. Tesseract read the fixture page turned a quarter (`ReportsWhatHappensToPagesScannedSideways`),
+  but the text layer then does not follow the text's direction. Upside down lines are not turned. Tesseract's own orientation detection (`--psm 1`)
   needs `osd.traineddata` and still reports axis aligned boxes, which would misplace the text layer.
 - Several languages: one request such as `eng+ara`, since `PdfOcr` merges lines only when their
   boxes match to the pixel, and two Tesseract layouts need not do that.

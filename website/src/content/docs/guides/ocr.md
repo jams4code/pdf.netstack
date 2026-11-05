@@ -199,7 +199,7 @@ a `tesseract` executable you have installed.
 | Size of a published app | 241 MB without a runtime identifier, with every platform's native libraries (17 to 45 MB for one), plus 21 MB of models | 3 MB, plus your Tesseract install |
 | Where recognition runs | In your process, on float tensors built by managed code | In a separate process for each image; a crash or hang costs that image |
 | Each image costs | Inference; models stay loaded | A process start and loading the language data, then inference |
-| Pages scanned sideways or upside down | Found and read turned back | Not detected |
+| Pages scanned sideways or upside down | Found and read turned back | Not detected. Tesseract may still read a page turned a quarter, but its boxes stay upright, so the text layer does not follow the text |
 | Several languages | Each line keeps its most confident reading | One request, such as `eng+ara` |
 | Native AOT | Yes, on Linux, checked in CI | Yes, on Linux, checked in CI; Tesseract itself is a separate program |
 

@@ -57,7 +57,8 @@ output is parsed as untrusted text, and boxes are clamped to the image.
 ## Limits
 
 - A page scanned sideways or upside down is not detected. TSV does not say which way text runs, so
-  `PdfOcrOptions.DetectOrientation` has nothing to go on.
+  `PdfOcrOptions.DetectOrientation` has nothing to go on. Tesseract may still read a page turned a
+  quarter, but its boxes stay upright, so the text layer does not follow the text.
 - Each image starts a process and loads the language data again.
 - Read a page in two scripts with one request (`eng+ara`). `PdfOcrOptions.Languages` with two entries
   reads the page twice and merges lines only when their boxes match to the pixel, which two

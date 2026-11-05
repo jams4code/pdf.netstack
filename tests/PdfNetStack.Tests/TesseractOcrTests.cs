@@ -887,9 +887,17 @@ public sealed class TesseractRealTests
         TestContext.WriteLine($"Tesseract {engine.Version}, eng, {page.Width} by {page.Height}: {clock.ElapsedMilliseconds} ms\n{result.Text}");
 
         foreach (string line in Expected) Assert.IsLessThan(0.1, BestLine(result, line), $"'{line}' in:\n{result.Text}");
+        // Read correctly means read with confidence.
+        foreach (string line in Expected)
+        {
+            OcrLine best = result.Lines.OrderBy(l => ErrorRate(line, l.Text)).First();
+            Assert.IsGreaterThan(0.5, best.Confidence, best.Text);
+        }
+
+        // Any word may be 0: Tesseract clips its certainty to 0 to 100, and the page's Arabic line read as English is very uncertain.
         foreach (OcrWord word in result.Lines.SelectMany(l => l.Words))
         {
-            Assert.IsTrue(word.Confidence is > 0 and <= 1, word.Text);
+            Assert.IsTrue(word.Confidence is >= 0 and <= 1, word.Text);
             Assert.IsTrue(word.Quad[0].X >= 0 && word.Quad[2].X <= page.Width && word.Quad[0].Y >= 0 && word.Quad[2].Y <= page.Height, word.Text);
             Assert.IsTrue(word.Quad[2].X > word.Quad[0].X && word.Quad[2].Y > word.Quad[0].Y, word.Text);
         }
@@ -901,6 +909,37 @@ public sealed class TesseractRealTests
         {
             double[] lefts = [.. line.Words.Select(w => w.Quad[0].X)];
             CollectionAssert.AreEqual(lefts.OrderBy(x => x).ToArray(), lefts, line.Text);
+        }
+    }
+
+    [TestMethod]
+    [TestCategory(Category)]
+    public void ParsedWordsMatchTesseractsOwnRows()
+    {
+        // The parser against what the executable wrote, row by row, confidence included.
+        using TesseractOcrEngine engine = Engine("eng");
+        OcrBitmap page = FixturePage();
+        TesseractOcrEngineOptions options = Options(["eng"]);
+        string executable = TesseractArguments.ResolveExecutable(options.ExecutablePath, Environment.GetEnvironmentVariable("PATH"), Environment.OSVersion.Platform == PlatformID.Win32NT);
+        string? tessdata = options.TessdataPath is null ? null : TesseractArguments.NormalizeFolder(options.TessdataPath);
+        ChildProcess.Result result = ChildProcess.Run(
+            TesseractArguments.Start(executable, TesseractArguments.Recognize("eng", tessdata, 3, null), 1),
+            stream => GrayBitmapFile.Write(stream, page, default),
+            64L << 20,
+            TimeSpan.FromMinutes(2),
+            default);
+        Assert.AreEqual(0, result.ExitCode, result.Error);
+
+        string[][] rows = [.. TesseractOutput.Decode(result.Output).Split('\n').Select(r => r.Split('\t')).Where(f => f.Length == 12 && f[0] == "5" && f[11].Trim().Length > 0)];
+        OcrWord[] words = [.. TesseractOutput.Lines(result.Output, page.Width, page.Height).SelectMany(l => l.Words)];
+        Assert.HasCount(rows.Length, words);
+        for (int i = 0; i < words.Length; i++)
+        {
+            double raw = double.Parse(rows[i][10], System.Globalization.CultureInfo.InvariantCulture);
+            TestContext.WriteLine($"{rows[i][10]}\t{rows[i][11]}");
+            Assert.IsTrue(raw is >= 0 and <= 100, string.Join(" ", rows[i]));
+            Assert.AreEqual(rows[i][11].Trim(), words[i].Text);
+            Assert.AreEqual(raw / 100, words[i].Confidence, 1e-6, words[i].Text);
         }
     }
 
@@ -1012,8 +1051,8 @@ public sealed class TesseractRealTests
     [TestCategory(Category)]
     public void ReportsWhatHappensToPagesScannedSideways()
     {
-        // Tesseract's TSV says nothing about which way text runs, so a turned page is not detected.
-        // Recorded rather than asserted, as what it reads from a turned page differs by version.
+        // Tesseract's TSV says nothing about which way text runs, so a turned page is not detected,
+        // though Tesseract may read it. Recorded rather than asserted, as that may differ by version.
         using TesseractOcrEngine engine = Engine("eng");
         OcrBitmap page = FixturePage();
         var turned = new byte[page.Pixels.Length];

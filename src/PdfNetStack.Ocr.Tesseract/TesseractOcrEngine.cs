@@ -26,7 +26,7 @@ public sealed class TesseractOcrEngineOptions
     /// </summary>
     public IReadOnlyDictionary<string, string> LanguageMap { get; init; } = new Dictionary<string, string> { ["latin"] = "eng", ["arabic"] = "ara" };
 
-    /// <summary>Tesseract's <c>--psm</c>: 3 is automatic layout without orientation detection. 0 and 2 give no text and are refused.</summary>
+    /// <summary>Tesseract's page segmentation mode: 3 is automatic layout without orientation detection. 0 and 2 give no text and are refused.</summary>
     public int PageSegmentationMode { get; init; } = 3;
 
     /// <summary>The resolution to tell Tesseract about. Null lets it estimate one from the text, as the images come from pages of any resolution.</summary>
