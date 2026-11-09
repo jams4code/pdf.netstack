@@ -167,6 +167,7 @@ public sealed class CssTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileSelectorsStayBounded()
     {
         // Deep nesting and long compound chains are rejected instead of recursing without limit.

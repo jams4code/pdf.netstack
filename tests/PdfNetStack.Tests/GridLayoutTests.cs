@@ -298,6 +298,7 @@ public sealed class GridLayoutTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void DeepSubgridsStayLinear()
     {
         // Every level shares both axes with its parent: each is measured once and laid out once.
@@ -370,6 +371,7 @@ public sealed class GridLayoutTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void NestedRepeatsAreIgnoredInLinearTime()
     {
         // repeat() is not allowed inside repeat(); deep nesting must not cost time doubling per level.
@@ -381,6 +383,7 @@ public sealed class GridLayoutTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileSpansStayBounded()
     {
         // Large spans on many items, some fixed and some placed automatically, in a narrow grid.

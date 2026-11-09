@@ -313,6 +313,7 @@ public sealed class HtmlConverterTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void BreaksForNamedPagesAtAnyDepth()
     {
         // The named section sits two levels down. The page breaks before and after it, and its

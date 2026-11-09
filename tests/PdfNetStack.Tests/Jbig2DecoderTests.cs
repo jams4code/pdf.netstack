@@ -208,6 +208,7 @@ public sealed class Jbig2DecoderTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void SurvivesTruncationAndDamage()
     {
         var clock = Stopwatch.StartNew();
@@ -247,6 +248,7 @@ public sealed class Jbig2DecoderTests
     private static byte[] RegionInfo(uint width, uint height) => [.. Be((int)width), .. Be((int)height), .. Be(0), .. Be(0), 0];
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void RejectsHostileSizesAndCounts()
     {
         var clock = Stopwatch.StartNew();

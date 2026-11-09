@@ -141,6 +141,7 @@ public sealed class InvoiceTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileMetadataIsReadInLinearTime()
     {
         // An unclosed property followed by a long run of spaces made a backtracking pattern quadratic.

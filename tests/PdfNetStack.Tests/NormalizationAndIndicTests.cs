@@ -93,6 +93,7 @@ public sealed class NormalizationAndIndicTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileRunsShapeInBoundedTime()
     {
         string[] inputs =

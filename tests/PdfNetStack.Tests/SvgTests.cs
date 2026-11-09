@@ -156,6 +156,7 @@ public sealed class SvgTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void ResistsHostileDocuments()
     {
         // Entities are never expanded: a billion laughs doctype is skipped.

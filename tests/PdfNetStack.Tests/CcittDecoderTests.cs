@@ -145,6 +145,7 @@ public sealed class CcittDecoderTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void SurvivesHostileData()
     {
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => CcittDecoder.Decode([0], new CcittParameters { Columns = 0, Rows = 1 }, 1));

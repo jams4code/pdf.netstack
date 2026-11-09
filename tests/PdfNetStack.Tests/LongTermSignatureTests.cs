@@ -413,6 +413,7 @@ public sealed class LongTermSignatureTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void FloodsOfLookalikeCertificatesAreBounded()
     {
         // Certificates that copy the issuing CA's name each cost a signature check; the work stops at a fixed budget.
