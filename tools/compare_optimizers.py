@@ -17,7 +17,9 @@ and signatures always wins on size. So every output is scored three ways against
   - rendering: PDFium renders the first pages and the last page of both, and the lowest SSIM on
     luma is kept, with page count, page geometry and PDFium's text compared too;
   - structure: tagging, form fields, outlines, attachments, signatures and annotations, counted by
-    PDFium before and after. Anything the original had and the output lost is listed.
+    PDFium before and after. Anything the original had and the output lost is listed. A signed
+    original whose output is not its own bytes with more appended has lost its signatures too:
+    the signed byte ranges no longer hold what was signed, so they fail to verify.
 An output "keeps quality" when it opens, has the same pages, the same text, nothing lost and a
 lowest SSIM of at least --min-ssim (0.95, the gate the Balanced preset uses). The head-to-head
 table then compares two tools only on the files where both keep quality, so a tool cannot win the
@@ -26,6 +28,10 @@ total by wrecking one large file.
 SSIM is strict with scan grain and dithering: a scan reduced to 150 dpi can score 0.8 on a page
 that looks the same, because the grain itself changed. Read "Outputs below the bar" with the pages
 open before calling one a defect.
+
+qpdf, MuPDF and Ghostscript merge incremental updates into one revision without being asked;
+PdfNetStack keeps such a file unless told otherwise, so it runs here with --allow-incremental to
+do the same work. It still keeps signed files as they are, which this scoring credits.
 
 Each output is deleted once measured, so the run needs little disk.
 """
@@ -52,9 +58,11 @@ DEFAULT_OUT = os.path.join(ROOT, "artifacts", "compare")
 # name, family, lossy, command. {in} and {out} are replaced by paths; the first word is looked up
 # on the PATH, except "pdfnetstack", which runs the command line tool built from this repository.
 TOOLS = [
-    ("pdfnetstack", "PdfNetStack", False, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0"]),
-    ("pdfnetstack-balanced", "PdfNetStack", True, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0", "--preset", "balanced"]),
-    ("pdfnetstack-smallest", "PdfNetStack", True, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0", "--preset", "smallest"]),
+    ("pdfnetstack", "PdfNetStack", False, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0", "--allow-incremental"]),
+    ("pdfnetstack-balanced", "PdfNetStack", True, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0", "--allow-incremental",
+                                                   "--preset", "balanced"]),
+    ("pdfnetstack-smallest", "PdfNetStack", True, ["pdfnetstack", "optimize", "{in}", "{out}", "--min-saving", "0", "--allow-incremental",
+                                                   "--preset", "smallest"]),
     ("qpdf", "qpdf", False, ["qpdf", "--object-streams=generate", "--compress-streams=y", "--recompress-flate",
                              "--compression-level=9", "--warning-exit-0", "{in}", "{out}"]),
     ("mutool", "MuPDF", False, ["mutool", "clean", "-gggg", "-z", "{in}", "{out}"]),
@@ -167,7 +175,18 @@ def reference(path, dpi, limit):
         doc.close()
 
 
-def score(ref, path, dpi):
+def appends_to(original, path):
+    """Whether the file at path is the original's bytes, unchanged, with anything after them."""
+    with open(original, "rb") as a, open(path, "rb") as b:
+        while True:
+            x = a.read(1 << 20)
+            if not x:
+                return True
+            if b.read(len(x)) != x:
+                return False
+
+
+def score(ref, path, dpi, original):
     """Compares one output with its original's reference."""
     import pypdfium2 as pdfium
 
@@ -201,6 +220,9 @@ def score(ref, path, dpi):
         r["min_ssim"] = min(values) if values else None
         now = features(doc)
         r["lost"] = [f"{k} {ref['features'][k]} -> {now[k]}" for k in FEATURES if now[k] < ref["features"][k]]
+        signed = ref["features"]["signatures"]
+        if signed and now["signatures"] >= signed and not appends_to(original, path):
+            r["lost"].append(f"signatures {signed} no longer verify (signed bytes rewritten)")
         return r
     finally:
         doc.close()
@@ -233,7 +255,7 @@ def run_file(job):
                 t["error"] = f"timed out after {timeout} s"
             if "error" not in t:
                 t["bytes"] = os.path.getsize(out)
-                t.update(score(ref, out, dpi))
+                t.update(score(ref, out, dpi, source))
                 t["keeps_quality"] = (not t["problems"] and not t["lost"] and t["min_ssim"] is not None
                                       and t["min_ssim"] >= min_ssim)
             else:
