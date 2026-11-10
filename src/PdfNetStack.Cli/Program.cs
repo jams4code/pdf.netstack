@@ -59,6 +59,7 @@ namespace PdfNetStack.Cli
               --jpeg-quality <1-100>    Requantize JPEG images to this quality (lossy);
                                         verify: accept images requantized this way
               --max-dpi <n>             Downsample images drawn above 1.5 times n dpi to n (lossy)
+              --max-bilevel-dpi <n>     The same for bilevel images, in place of --max-dpi (lossy)
               --to-jpeg                 Re-encode photographic raw and JPEG 2000 images as
                                         JPEG at --jpeg-quality (lossy)
               --quantize                Reduce raw RGB images to a palette when that stays
@@ -561,6 +562,7 @@ namespace PdfNetStack.Cli
                     case "--no-jpeg": o = o with { OptimizeJpegImages = false }; break;
                     case "--jpeg-quality": o = o with { JpegQuality = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--max-dpi": o = o with { MaxImageDpi = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
+                    case "--max-bilevel-dpi": o = o with { MaxBilevelImageDpi = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture) }; break;
                     case "--to-jpeg": o = o with { ConvertImagesToJpeg = true }; break;
                     case "--quantize": o = o with { QuantizeImages = true }; break;
                     case "--preset": o = Preset(o, Value(args, ref i)); break;
@@ -616,6 +618,7 @@ namespace PdfNetStack.Cli
                 ProgressiveJpeg = preset.ProgressiveJpeg,
                 MinImageSsim = preset.MinImageSsim,
                 MaxImageDpi = preset.MaxImageDpi,
+                MaxBilevelImageDpi = preset.MaxBilevelImageDpi,
             };
         }
 

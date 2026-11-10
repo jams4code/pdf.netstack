@@ -130,7 +130,7 @@ internal static class StreamRecompressor
 
         // Pre-resolve everything a worker may need so that workers never touch the parser.
         HashSet<int> masks = jpeg?.Quality is null && images is null ? [] : SoftMaskTargets(file, streams);
-        Dictionary<int, PlacedSize> placed = images?.MaxDpi is null
+        Dictionary<int, PlacedSize> placed = images is not { Downsamples: true }
             ? []
             : ImagePlacement.Measure(file, graph, [.. numbers.Where((n, i) => streams[i].Dictionary.GetName("Subtype") == "Image")], decodeLimit, ct);
         var plans = new Plan?[streams.Count];

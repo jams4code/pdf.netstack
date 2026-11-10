@@ -320,6 +320,52 @@ public sealed class BilevelOptimizationTests
         Assert.IsNull(PdfEquivalence.FindDifference(input, output, Limit, false, 0.95));
     }
 
+    [TestMethod]
+    public void BilevelImagesTakeTheirOwnResolution()
+    {
+        // The same 600 dpi fax page, with gray images at 150 dpi and bilevel ones at 300.
+        byte[] rows = ScanRows(2400, 3000, seed: 3);
+        byte[] g4 = CcittEncoder.EncodeGroup4(rows, 2400, 3000, false, 1 << 24)!;
+        byte[] input = Page(Bilevel(2400, 3000, "/Filter/CCITTFaxDecode/DecodeParms<</K -1/Columns 2400/Rows 3000>>"), g4, 288, 360);
+
+        (byte[] output, PdfOptimizationResult result) = PdfOptimizer.Optimize(input, NoThreshold with { MaxImageDpi = 150, MaxBilevelImageDpi = 300 });
+
+        Assert.AreEqual(OptimizationDisposition.Optimized, result.Disposition, result.Reason);
+        StringAssert.Contains(result.Reason, "1 image(s) downsampled to 150 dpi, bilevel images to 300 dpi");
+        PdfStream image = Image(output);
+        Assert.AreEqual(1200, Int(image, "Width"));
+        Assert.AreEqual(1500, Int(image, "Height"));
+        Assert.AreEqual(1, Int(image, "BitsPerComponent"));
+        double[] coverage = BilevelResampler.Coverage(rows, 2400, 3000, 1200, 1500);
+        byte[] expected = BilevelResampler.Threshold(coverage, 1200, 1500, onesAreForeground: false);
+        Assert.AreEqual("CCITTFaxDecode", image.Dictionary.GetName("Filter"));
+        CollectionAssert.AreEqual(expected, CcittDecoder.DecodeExact(image.Data.Span, new CcittParameters { K = -1, Columns = 1200, Rows = 1500, BlackIs1 = Parms(image)["BlackIs1"] is PdfBoolean { Value: true } }, 1500));
+        Assert.IsNull(PdfEquivalence.FindDifference(input, output, Limit, false, 0.95));
+
+        // Alone, it reduces bilevel images and nothing else; under 1.5 times it, nothing.
+        (byte[] alone, PdfOptimizationResult aloneResult) = PdfOptimizer.Optimize(input, NoThreshold with { MaxBilevelImageDpi = 300 });
+        StringAssert.Contains(aloneResult.Reason, "1 image(s) downsampled to 300 dpi (bilevel images)");
+        Assert.AreEqual(1200, Int(Image(alone), "Width"));
+        (_, PdfOptimizationResult kept) = PdfOptimizer.Optimize(input, NoThreshold with { MaxImageDpi = 150, MaxBilevelImageDpi = 450 });
+        Assert.AreEqual(0, kept.Statistics.ImagesDownsampled, kept.Reason);
+    }
+
+    [TestMethod]
+    public void SmallestKeepsScannedTextAt300Dpi()
+    {
+        byte[] rows = ScanRows(2400, 3000, seed: 3);
+        byte[] g4 = CcittEncoder.EncodeGroup4(rows, 2400, 3000, false, 1 << 24)!;
+        byte[] input = Page(Bilevel(2400, 3000, "/Filter/CCITTFaxDecode/DecodeParms<</K -1/Columns 2400/Rows 3000>>"), g4, 288, 360);
+
+        Assert.AreEqual(300, PdfOptimizerOptions.Smallest.MaxBilevelImageDpi);
+        Assert.IsNull(PdfOptimizerOptions.Balanced.MaxBilevelImageDpi, "Balanced keeps every image's size");
+        (byte[] output, PdfOptimizationResult result) = PdfOptimizer.Optimize(input, PdfOptimizerOptions.Smallest with { MinSavingPercent = 0 });
+
+        Assert.AreEqual(OptimizationDisposition.Optimized, result.Disposition, result.Reason);
+        Assert.AreEqual(1200, Int(Image(output), "Width"));
+        Assert.AreEqual(1, Int(Image(output), "BitsPerComponent"));
+    }
+
     private static int Bits(byte b)
     {
         int n = 0;
