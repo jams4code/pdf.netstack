@@ -329,6 +329,7 @@ public sealed class ImageExtractionTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void BoundsTheBytesAnImageOrPageCosts()
     {
         // Under the pixel cap, but 32 components of 16 bits: 64 bytes a pixel, refused before allocating.

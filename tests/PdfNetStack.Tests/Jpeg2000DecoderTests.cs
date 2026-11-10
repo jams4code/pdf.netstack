@@ -154,6 +154,7 @@ public sealed class Jpeg2000DecoderTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void RastersScaleToEightBits()
     {
         // 16 bit samples scale to 8 bits, rounded.

@@ -82,6 +82,7 @@ public sealed class AnnotationTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileNameTreesResolveQuickly()
     {
         // Each of 25 levels lists the next 30 times: 30^25 paths without the visited set.

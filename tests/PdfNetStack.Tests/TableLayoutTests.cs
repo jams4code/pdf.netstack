@@ -147,6 +147,7 @@ public sealed class TableLayoutTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileSpansStayBounded()
     {
         string row = "<tr>" + string.Concat(Enumerable.Repeat("<td colspan=1000 rowspan=1000>x</td>", 50)) + "</tr>";

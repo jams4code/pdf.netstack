@@ -211,6 +211,7 @@ public sealed class ComplexScriptShapingTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void HostileComplexRunsShapeInBoundedTime()
     {
         (string Font, string Script, string Text)[] inputs =

@@ -265,6 +265,7 @@ public sealed class AnnotationFlatteningTests
     }
 
     [TestMethod]
+    [DoNotParallelize] // timing: parallel tests would slow the measured code on a small runner
     public void ManyAnnotationsFlattenQuickly()
     {
         PdfDocument doc = PdfDocument.Create();
