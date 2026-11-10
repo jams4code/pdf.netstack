@@ -67,8 +67,9 @@ every page, still gain about 2%, and their JPEG 2000 decoding takes 2 to 4 minut
 ## Next
 
 **Evidence**
-- A comparison against other PDF optimizers that scores bytes at equal rendered quality, not bytes
-  alone.
+- Publish the comparison with qpdf, MuPDF and Ghostscript. `tools/compare_optimizers.py` runs it
+  in the corpus workflow and scores size, rendering (SSIM) and the structure each tool keeps; the
+  numbers go in the docs once a few weekly runs agree.
 
 **Compression**
 - Better JPEG coding. A rounding deadzone gave 0.4% to 3% at equal rendered quality in a test, not
