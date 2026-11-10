@@ -298,7 +298,9 @@ public sealed class StreamingOptimizerTests
         try
         {
             string source = Path.Combine(directory, "in.pdf");
-            File.WriteAllBytes(source, SaveStreamingTests.HeavyFile(pages: 120, imageBytes: 300_000));
+            // Large enough that fixed overhead, such as buffers pooled per core, stays well inside the
+            // bound on every platform: at 120 pages a 3 core macOS runner came within 2% of it.
+            File.WriteAllBytes(source, SaveStreamingTests.HeavyFile(pages: 240, imageBytes: 300_000));
             long size = new FileInfo(source).Length;
             var options = new PdfOptimizerOptions { MinSavingPercent = 0, MaxDegreeOfParallelism = 2 };
 
