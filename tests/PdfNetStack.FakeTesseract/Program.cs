@@ -6,9 +6,11 @@
 //   sleep=60000    wait this many milliseconds before anything else
 //   flood=1        write to standard output for ever
 //   no-stdin=1     exit without reading standard input
-// Each run records what it got in that folder: its arguments, one per line (args-PID.txt), the
-// variables the engine sets (env-PID.txt), what came in on standard input (stdin-PID.bin), its
-// process id before it sleeps (pid-PID.txt) and when it ran (times-PID.txt).
+// Each run records what it got in that folder: its arguments, one per line (args-RUN.txt), the
+// variables the engine sets (env-RUN.txt), what came in on standard input (stdin-RUN.bin), its
+// process id before it sleeps (pid-RUN.txt) and when it ran (times-RUN.txt). RUN is the process id
+// and a unique suffix: Windows hands a finished process's id to the next one, which would overwrite
+// the first run's files.
 // A file named fake-global.txt beside the executable, in a copy a test made for itself, covers what
 // runs without a data folder:
 //   version=text     the line --version answers
@@ -64,16 +66,17 @@ if (File.Exists(settingsFile))
 }
 
 int pid = Environment.ProcessId;
-File.WriteAllText(Path.Combine(folder, $"pid-{pid}.txt"), pid.ToString());
-File.WriteAllLines(Path.Combine(folder, $"args-{pid}.txt"), arguments);
-File.WriteAllLines(Path.Combine(folder, $"env-{pid}.txt"), ["OMP_THREAD_LIMIT=" + Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT"), "LC_ALL=" + Environment.GetEnvironmentVariable("LC_ALL"), "CWD=" + Environment.CurrentDirectory]);
+string run = pid.ToString() + "-" + Guid.NewGuid().ToString("N");
+File.WriteAllText(Path.Combine(folder, $"pid-{run}.txt"), pid.ToString());
+File.WriteAllLines(Path.Combine(folder, $"args-{run}.txt"), arguments);
+File.WriteAllLines(Path.Combine(folder, $"env-{run}.txt"), ["OMP_THREAD_LIMIT=" + Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT"), "LC_ALL=" + Environment.GetEnvironmentVariable("LC_ALL"), "CWD=" + Environment.CurrentDirectory]);
 long begin = Stopwatch.GetTimestamp();
 
 if (settings.TryGetValue("sleep", out string? sleep)) Thread.Sleep(int.Parse(sleep));
 
 if (!settings.ContainsKey("no-stdin"))
 {
-    using FileStream received = File.Create(Path.Combine(folder, $"stdin-{pid}.bin"));
+    using FileStream received = File.Create(Path.Combine(folder, $"stdin-{run}.bin"));
     using Stream input = Console.OpenStandardInput();
     input.CopyTo(received);
 }
@@ -94,5 +97,5 @@ if (settings.TryGetValue("tsv", out string? tsv))
 }
 
 output.Flush();
-File.WriteAllLines(Path.Combine(folder, $"times-{pid}.txt"), [begin.ToString(), Stopwatch.GetTimestamp().ToString()]);
+File.WriteAllLines(Path.Combine(folder, $"times-{run}.txt"), [begin.ToString(), Stopwatch.GetTimestamp().ToString()]);
 return settings.TryGetValue("exit", out string? exit) ? int.Parse(exit) : 0;
