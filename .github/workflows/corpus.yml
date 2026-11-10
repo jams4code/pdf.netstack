@@ -32,7 +32,7 @@ jobs:
       CORPUS_CACHE: ${{ github.workspace }}/artifacts/corpus/files
       CORPUS_REPORT: ${{ github.workspace }}/artifacts/corpus/report
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -106,7 +106,7 @@ jobs:
       CORPUS_CACHE: ${{ github.workspace }}/artifacts/corpus/files
       COMPARE_REPORT: ${{ github.workspace }}/artifacts/compare
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -166,7 +166,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
