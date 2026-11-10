@@ -15,6 +15,8 @@ faq:
     a: They are found from the way their lines run and read turned back, with nothing needed in the PDF. PdfOcrPage.Orientation says how far a page stood turned; DetectOrientation turns this off.
   - q: Does the OCR add-on send data anywhere?
     a: The engine turns ONNX Runtime's telemetry off before the first model loads. On Linux and macOS, ORT_DISABLE_TELEMETRY=1 must also be set before the process starts for the runtime to send nothing at all.
+  - q: Can I use Tesseract for OCR with PdfNetStack?
+    a: Yes, with TesseractOcrEngine from the PdfNetStack.Ocr.Tesseract package, which runs a tesseract executable you installed, for any language it has data for. Tesseract and its language data are not in the package.
 ---
 
 Turn scanned pages into pages that select, copy and search, while they look exactly the same.
@@ -184,6 +186,76 @@ classification.
 | `ThreadsPerModel` | 0 | 0 lets ONNX Runtime decide |
 | `VerifyModels` | true | Check each model file against its pinned SHA-256 |
 
+## Choosing an engine
+
+`OnnxOcrEngine` is the default. `TesseractOcrEngine`, in the `PdfNetStack.Ocr.Tesseract` package, runs
+a `tesseract` executable you have installed.
+
+| | `OnnxOcrEngine` | `TesseractOcrEngine` |
+|---|---|---|
+| Languages | Latin and Arabic script | Any Tesseract has data for |
+| What you install | Nothing beyond packages | Tesseract and its language data |
+| Platforms | win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64 | Wherever you can install Tesseract, Alpine included. Homebrew has no prebuilt bottle for Intel Macs |
+| Size of a published app | 241 MB without a runtime identifier, with every platform's native libraries (17 to 45 MB for one), plus 21 MB of models | 3 MB, plus your Tesseract install |
+| Where recognition runs | In your process, on float tensors built by managed code | In a separate process for each image; a crash or hang costs that image |
+| Each image costs | Inference; models stay loaded | A process start and loading the language data, then inference |
+| Pages scanned sideways or upside down | Found and read turned back | Not detected. Tesseract may still read a page turned a quarter, but its boxes stay upright, so the text layer does not follow the text |
+| Several languages | Each line keeps its most confident reading | One request, such as `eng+ara` |
+| Native AOT | Yes, on Linux, checked in CI | Yes, on Linux, checked in CI; Tesseract itself is a separate program |
+
+Sizes are `dotnet publish` of a net10.0 console app. Speed and accuracy depend on your scans and
+we publish no comparison: try both on a sample of your own.
+
+## Tesseract
+
+```csharp sample="ocr-tesseract.cs" region="tesseract"
+```
+
+Install Tesseract and the languages you need. `apt install tesseract-ocr tesseract-ocr-ara` on Debian
+and Ubuntu, `brew install tesseract tesseract-lang` on macOS, and on Windows one of the
+[installers Tesseract lists](https://tesseract-ocr.github.io/tessdoc/Installation.html). Language
+data is also at [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) (smaller and
+faster) and [tessdata_best](https://github.com/tesseract-ocr/tessdata_best); put the
+`.traineddata` files in a folder and name it with `TessdataPath`. PdfNetStack ships neither.
+
+`Load` checks all of it up front. A missing executable or missing language data throws
+`FileNotFoundException`, saying where to get it, and a Tesseract older than version 4 throws
+`TesseractOcrException`. Older 4.x and 5.x versions are accepted, but the one this engine has run
+against is 5.3.4, from the Ubuntu packages, in CI.
+
+Each image is its own process. The pixels go in on standard input and the results come back on
+standard output, with no shell and no temporary files, so calls from several threads share
+nothing. `TesseractOcrEngine` looks for the executable in the absolute folders of the `PATH`, never
+in the current folder. Language names are checked before they reach a command line, so one taken
+from a request cannot become an option or a path. Cancelling kills the process, as do `Timeout`
+(`TimeoutException`) and `MaxOutputBytes` (`TesseractOcrException`); with `PdfOcr`, a failed image is
+a page with status `Failed`.
+
+Names in `LanguageMap` let `latin` and `arabic` keep working, and any other name goes to Tesseract
+as it is: `fra`, `chi_sim`, `script/Latin`. Read a page in two scripts with one request, such as
+`eng+ara`: `PdfOcr` merges lines from separate requests only when their boxes match to the pixel,
+which two Tesseract layouts need not do.
+
+Disposing the engine refuses new calls and ends those waiting for their turn with
+`ObjectDisposedException`. A process already running is not stopped: its call finishes with its
+real result, within `Timeout`. To stop one sooner, cancel its token.
+
+| `TesseractOcrEngineOptions` | Default | Notes |
+|---|---|---|
+| `ExecutablePath` | null | Null looks on the `PATH`. Name the program itself: on .NET Framework, stopping it leaves anything a wrapper script started running |
+| `TessdataPath` | null | Null leaves it to Tesseract: `TESSDATA_PREFIX`, else where it was installed |
+| `Languages` | latin | Checked when loading |
+| `LanguageMap` | latin: eng, arabic: ara | Other names go to Tesseract as they are |
+| `PageSegmentationMode` | 3 | Tesseract's `--psm`; 0 and 2 give no text and are refused, and 1 and 12 need `osd.traineddata` |
+| `Dpi` | null | Null lets Tesseract estimate it, as scans come at any resolution |
+| `ThreadsPerProcess` | 1 | Through `OMP_THREAD_LIMIT`, as `PdfOcr` already reads pages in parallel; 0 leaves it to Tesseract |
+| `MaxConcurrentProcesses` | CPU count | Further calls wait their turn |
+| `Timeout` | 5 minutes | Per image |
+| `MaxOutputBytes` | 64 MiB | Per image |
+
+An application that uses only this engine leaves ONNX Runtime's native libraries out, without
+doing anything. Referencing `PdfNetStack.Ocr` directly as well brings them back.
+
 ## Another OCR engine
 
 `PdfOcr` takes any `IOcrEngine`. An engine receives an upright 8 bit gray `OcrBitmap` and an
@@ -213,9 +285,10 @@ itself, so its native runtime is copied next to the application.
   supplies; PdfNetStack does not render.
 - Orientation is decided by the recognizer's own confidence: a page with very little text, or
   text in a script that is not loaded, may be read as it is.
-- Latin and Arabic script only.
-- Not on NuGet yet. `PdfNetStack.Ocr`, its models package `PdfNetStack.Ocr.Models` and the
-  `PdfNetStack.Ocr.Tool` command line tool are ready and go up with the next release.
+- `OnnxOcrEngine` reads Latin and Arabic script only; `TesseractOcrEngine` does not detect turned
+  pages.
+- Not on NuGet yet. `PdfNetStack.Ocr`, its models package `PdfNetStack.Ocr.Models`, the
+  `PdfNetStack.Ocr.Tool` command line tool and `PdfNetStack.Ocr.Tesseract` go up with a coming release.
 
 ## Related
 
@@ -223,4 +296,4 @@ itself, so its native runtime is copied next to the application.
 - [Extract images](/guides/extract-images/): the decoders OCR relies on
 - [PDF/A](/guides/pdf-a/): archive the searchable scan
 - [Command line](/cli/#ocr): `pdfnetstack ocr`
-- API: [PdfOcr](/api/pdfnetstack-ocr/pdfocr/), [OnnxOcrEngine](/api/pdfnetstack-ocr/onnxocrengine/), [PdfOcrOptions](/api/pdfnetstack-ocr/pdfocroptions/), [IOcrEngine](/api/pdfnetstack-ocr/iocrengine/), [IPdfPageRasterizer](/api/pdfnetstack-ocr/ipdfpagerasterizer/)
+- API: [PdfOcr](/api/pdfnetstack-ocr/pdfocr/), [OnnxOcrEngine](/api/pdfnetstack-ocr/onnxocrengine/), [TesseractOcrEngine](/api/pdfnetstack-ocr-tesseract/tesseractocrengine/), [PdfOcrOptions](/api/pdfnetstack-ocr/pdfocroptions/), [IOcrEngine](/api/pdfnetstack-ocr/iocrengine/), [IPdfPageRasterizer](/api/pdfnetstack-ocr/ipdfpagerasterizer/)

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-05)
 
 - Hyphenation, off by default, by Liang's algorithm as TeX defines it. `PdfParagraph.Hyphenator` takes
   a `PdfHyphenator`: words then break at the line's end where the language allows, showing a hyphen,
@@ -30,6 +30,18 @@
   upper case takes several letters keep their simple mapping.
 - Fixed: justifying a line that ended at a soft hyphen could widen the hyphen along with the spaces,
   when the run the hyphen belonged to ended with a space.
+- New package `PdfNetStack.Ocr.Tesseract`: `TesseractOcrEngine`, an `IOcrEngine` that runs an
+  installed `tesseract` executable (versions before 4 are refused; CI runs 5.3.4), so `PdfOcr` can
+  read any language Tesseract
+  has data for and run where ONNX Runtime has no build. One process per image, started without a
+  shell: the pixels go in on standard input as a bitmap, with no temporary files, and word boxes and
+  confidence come back as TSV on standard output, parsed as untrusted text. Language names are
+  checked before they reach a command line. A missing executable or missing language data fails at
+  `Load`, saying where to get it. `Timeout`, `MaxOutputBytes` and cancellation kill the process,
+  and `MaxConcurrentProcesses` limits how many run at once. Tesseract and its data are installed
+  separately, and ONNX Runtime's native libraries stay out: an application using only this engine
+  publishes 3 MB of libraries instead of 241 MB. Pages scanned sideways are not detected with this
+  engine. A CI job runs it against Tesseract from the Ubuntu packages on x64 and arm64.
 
 ## 1.1.0 (2026-11-05)
 

@@ -68,7 +68,7 @@ jobs:
           path: artifacts/*
 
   # The libraries as a serverless host runs them: compiled ahead of time, invariant globalization.
-  # The smoke app roots all three libraries, so any trimming or AOT warning anywhere in them fails
+  # The smoke app roots the libraries whole, so any trimming or AOT warning anywhere in them fails
   # the publish, then it creates, opens, optimizes, extracts text from and converts HTML to PDF.
   aot-smoke:
     name: Native AOT smoke test (${{ matrix.rid }}, ${{ matrix.framework }})
@@ -106,6 +106,47 @@ jobs:
 
       - name: Cold start
         run: python3 tools/measure_cold_start.py --app aot-smoke/PdfNetStack.AotSmoke --runs 3
+
+  # The Tesseract engine against the real executable, here from the distribution's packages. The
+  # variable makes a missing Tesseract a failure, where a plain run skips these tests. The log
+  # carries the timings and error rates, the bundled engine's beside them.
+  tesseract:
+    name: Tesseract engine (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      PDFNETSTACK_REQUIRE_TESSERACT: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Install Tesseract
+        run: |
+          sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara
+          tesseract --version
+          tesseract --list-langs
+
+      - name: Fetch the OCR models
+        run: python3 tools/fetch_ocr_models.py src/PdfNetStack.Ocr.Models/models
+
+      - name: Build
+        run: dotnet build tests/PdfNetStack.Tests -c Release
+
+      - name: Test on .NET 10
+        run: dotnet test tests/PdfNetStack.Tests -c Release --no-build -f net10.0 --filter TestCategory=Tesseract --logger "console;verbosity=detailed"
+
+      - name: Test on .NET 8
+        run: dotnet test tests/PdfNetStack.Tests -c Release --no-build -f net8.0 --filter TestCategory=Tesseract --logger "console;verbosity=detailed"
 
   # Serverless and container images often run without ICU, and servers run under any culture.
   globalization:

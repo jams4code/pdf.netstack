@@ -4,7 +4,7 @@
     Exercises the libraries after a Native AOT publish, as serverless hosts run them:
       dotnet publish tests/PdfNetStack.AotSmoke -c Release -f net10.0 -r linux-x64 -o aot-smoke
       ./aot-smoke/PdfNetStack.AotSmoke
-    The four libraries are rooted whole, so the trimming and AOT analysis covers all of their
+    The libraries are rooted whole, so the trimming and AOT analysis covers all of their
     code, not just what this app calls; with TreatWarningsAsErrors any warning fails the publish.
     Also measures cold start (see tools/measure_cold_start.py). Not shipped, not in the solution.
   -->
@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\PdfNetStack.Html\PdfNetStack.Html.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Hyphenation\PdfNetStack.Hyphenation.csproj" />
     <ProjectReference Include="..\..\src\PdfNetStack.Ocr\PdfNetStack.Ocr.csproj" />
+    <ProjectReference Include="..\..\src\PdfNetStack.Ocr.Tesseract\PdfNetStack.Ocr.Tesseract.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +30,7 @@
     <TrimmerRootAssembly Include="PdfNetStack.Html" />
     <TrimmerRootAssembly Include="PdfNetStack.Hyphenation" />
     <TrimmerRootAssembly Include="PdfNetStack.Ocr" />
+    <TrimmerRootAssembly Include="PdfNetStack.Ocr.Tesseract" />
   </ItemGroup>
 
 </Project>

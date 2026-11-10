@@ -375,6 +375,14 @@ The recognition models are not in this package. The pre and post processing in
 `src/PdfNetStack.Ocr/Processing` is written from the published methods (DB text detection, CTC
 decoding); no PaddleOCR or RapidOCR code is copied.
 
+## PdfNetStack.Ocr.Tesseract
+
+Runs a `tesseract` executable the user installed (https://github.com/tesseract-ocr/tesseract,
+Apache License 2.0) as a separate process. Neither Tesseract, nor Leptonica, nor any language
+data is in this package or in this repository, and no Tesseract code is copied. Its command line
+options and output format were read from Tesseract's source. Depends on `PdfNetStack.Ocr` for
+its interfaces and leaves out ONNX Runtime's native libraries.
+
 ## PdfNetStack.Ocr.Models
 
 Redistributes, unmodified, the PP-OCRv5 mobile detection, text line orientation, Latin and Arabic
