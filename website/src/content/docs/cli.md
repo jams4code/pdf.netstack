@@ -238,6 +238,7 @@ Optimizer options apply to `optimize`, `batch` and, where they make sense, to `v
 | `--no-jpeg` | Do not re-encode JPEG images | `OptimizeJpegImages = false` |
 | `--jpeg-quality <1-100>` | Requantize JPEG images, and the quality of new JPEGs (lossy) | `JpegQuality` |
 | `--max-dpi <n>` | 1.1. Downsample images drawn above 1.5 times n dpi to n (lossy) | `MaxImageDpi` |
+| `--max-bilevel-dpi <n>` | 1.2. The same for bilevel images, in place of `--max-dpi` (lossy) | `MaxBilevelImageDpi` |
 | `--to-jpeg` | 1.1. Re-encode photographic raw images as JPEG at `--jpeg-quality` (lossy) | `ConvertImagesToJpeg` |
 | `--quantize` | 1.1. Reduce raw RGB images to a palette when that stays faithful (lossy) | `QuantizeImages` |
 | `--preset <balanced\|smallest>` | 1.1. A ready set of lossy options; options after it change it | `PdfOptimizerOptions.Balanced`, `Smallest` |

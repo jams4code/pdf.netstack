@@ -50,13 +50,15 @@ public sealed record PdfOptimizerOptions
 
     /// <summary>
     /// As small as a document stays useful on screen: <see cref="Balanced"/> with JPEG quality 50,
-    /// images downsampled to 150 dpi, and an SSIM of at least 0.90. Fine texture softens where you
-    /// look for it; check it suits your documents, and do not use it for print. Not lossless.
+    /// images downsampled to 150 dpi (bilevel scans to 300, where text stays legible), and an SSIM
+    /// of at least 0.90. Fine texture softens where you look for it; check it suits your documents,
+    /// and do not use it for print. Not lossless.
     /// </summary>
     public static PdfOptimizerOptions Smallest { get; } = Balanced with
     {
         JpegQuality = 50,
         MaxImageDpi = 150,
+        MaxBilevelImageDpi = 300,
         MinImageSsim = 0.90,
     };
 
@@ -195,6 +197,16 @@ public sealed record PdfOptimizerOptions
     public int? MaxImageDpi { get; init; }
 
     /// <summary>
+    /// The resolution for bilevel images (raw, CCITT or JBIG2), in place of
+    /// <see cref="MaxImageDpi"/>: those drawn above 1.5 times it are reduced to it, as
+    /// <see cref="MaxImageDpi"/> describes. One bit per pixel loses a stroke's shape sooner than
+    /// gray does, so scanned text wants more pixels than a photograph: 300 keeps it clean where 150
+    /// makes it ragged. Null, the default, uses <see cref="MaxImageDpi"/> for them too. Not
+    /// lossless. Requires <see cref="RecompressStreams"/>.
+    /// </summary>
+    public int? MaxBilevelImageDpi { get; init; }
+
+    /// <summary>
     /// Re-encode raw 8 bit gray and RGB images, and gray and RGB JPEG 2000 images, as JPEG at
     /// <see cref="JpegQuality"/> when they look photographic. Bilevel, indexed, line art and screenshot-like images are recognized from
     /// their pixels and left lossless, and a JPEG is kept only when it is at least 10% smaller
@@ -289,8 +301,10 @@ public sealed record PdfOptimizerOptions
         }
 
         if (MaxImageDpi is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(MaxImageDpi));
+        if (MaxBilevelImageDpi is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(MaxBilevelImageDpi));
         if (MinImageSsim is { } ssim && (double.IsNaN(ssim) || ssim is <= 0 or > 1)) throw new ArgumentOutOfRangeException(nameof(MinImageSsim));
         if (MaxImageDpi is not null && !RecompressStreams) throw new ArgumentException("MaxImageDpi needs RecompressStreams enabled.", nameof(MaxImageDpi));
+        if (MaxBilevelImageDpi is not null && !RecompressStreams) throw new ArgumentException("MaxBilevelImageDpi needs RecompressStreams enabled.", nameof(MaxBilevelImageDpi));
         if (QuantizeImages && !RecompressStreams) throw new ArgumentException("QuantizeImages needs RecompressStreams enabled.", nameof(QuantizeImages));
         if (ProgressiveJpeg && !RecompressStreams) throw new ArgumentException("ProgressiveJpeg needs RecompressStreams enabled.", nameof(ProgressiveJpeg));
         if (ConvertImagesToJpeg && (JpegQuality is null || !RecompressStreams))

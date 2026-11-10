@@ -286,8 +286,8 @@ public static partial class PdfOptimizer
             if (options.RecompressStreams || compact.Count > 0)
             {
                 JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality, options.ProgressiveJpeg, options.MinImageSsim) : null;
-                ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg || options.QuantizeImages
-                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg) { Quantize = options.QuantizeImages }
+                ImageSettings? images = options.MaxImageDpi is not null || options.MaxBilevelImageDpi is not null || options.ConvertImagesToJpeg || options.QuantizeImages
+                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg) { Quantize = options.QuantizeImages, MaxBilevelDpi = options.MaxBilevelImageDpi }
                     : null;
                 var scope = new RecompressionScope(options.RecompressStreams, compact, encoded, options.DeduplicateObjects);
                 work = StreamRecompressor.Prepare(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors,

@@ -257,8 +257,8 @@ public static partial class PdfOptimizer
             if (options.RecompressStreams || compact.Count > 0)
             {
                 JpegSettings? jpeg = options.OptimizeJpegImages ? new JpegSettings(options.JpegQuality, options.ProgressiveJpeg, options.MinImageSsim) : null;
-                ImageSettings? images = options.MaxImageDpi is not null || options.ConvertImagesToJpeg || options.QuantizeImages
-                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg) { Quantize = options.QuantizeImages }
+                ImageSettings? images = options.MaxImageDpi is not null || options.MaxBilevelImageDpi is not null || options.ConvertImagesToJpeg || options.QuantizeImages
+                    ? new ImageSettings(options.MaxImageDpi, options.ConvertImagesToJpeg, options.JpegQuality, options.MinImageSsim, options.ProgressiveJpeg) { Quantize = options.QuantizeImages, MaxBilevelDpi = options.MaxBilevelImageDpi }
                     : null;
                 var scope = new RecompressionScope(options.RecompressStreams, compact, encoded, options.DeduplicateObjects);
                 recompressed = StreamRecompressor.Run(file, graph, scope, options.ZlibLevel, options.Compression == CompressionEffort.Exhaustive, options.UseImagePredictors,
@@ -443,12 +443,21 @@ public static partial class PdfOptimizer
         return null;
     }
 
+    /// <summary>The resolutions images were reduced to, as the reason names them.</summary>
+    private static string DownsampledTo(PdfOptimizerOptions options) => (options.MaxImageDpi, options.MaxBilevelImageDpi) switch
+    {
+        ({ } dpi, { } bilevel) when bilevel != dpi => Compat.Format("{0} dpi, bilevel images to {1} dpi", dpi, bilevel),
+        ({ } dpi, _) => Compat.Format("{0} dpi", dpi),
+        (null, { } bilevel) => Compat.Format("{0} dpi (bilevel images)", bilevel),
+        _ => "their limit",
+    };
+
     /// <summary>What was written, naming every lossy image change.</summary>
     private static string Reason(PdfOptimizerOptions options, RecompressionCounts recompressed)
     {
         var lossy = new List<string>();
         if (recompressed.JpegRequantized > 0) lossy.Add(Compat.Format("{0} JPEG image(s) requantized to quality {1}", recompressed.JpegRequantized, options.JpegQuality!.Value));
-        if (recompressed.Downsampled > 0) lossy.Add(Compat.Format("{0} image(s) downsampled to {1} dpi", recompressed.Downsampled, options.MaxImageDpi!.Value));
+        if (recompressed.Downsampled > 0) lossy.Add(Compat.Format("{0} image(s) downsampled to {1}", recompressed.Downsampled, DownsampledTo(options)));
         if (recompressed.ConvertedToJpeg > 0) lossy.Add(Compat.Format("{0} image(s) converted to JPEG at quality {1}", recompressed.ConvertedToJpeg, options.JpegQuality!.Value));
         if (recompressed.Quantized > 0) lossy.Add(Compat.Format("{0} image(s) reduced to a palette", recompressed.Quantized));
         if (lossy.Count == 0)
