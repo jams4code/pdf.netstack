@@ -43,7 +43,7 @@
   <ItemGroup>
     <None Include="../PdfNetStack.Ocr.Models/LICENSE.txt;../PdfNetStack.Ocr.Models/NOTICE.txt" Pack="true" PackagePath="models/" Visible="false" />
     <!-- The same ONNX Runtime version PdfNetStack.Ocr references: its license and the notices for its native libraries. -->
-    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime/1.31.0/LICENSE;$(NuGetPackageRoot)microsoft.ml.onnxruntime/1.31.0/ThirdPartyNotices.txt" Pack="true" PackagePath="onnxruntime/" Visible="false" />
+    <None Include="$(NuGetPackageRoot)microsoft.ml.onnxruntime/$(OnnxRuntimeVersion)/LICENSE;$(NuGetPackageRoot)microsoft.ml.onnxruntime/$(OnnxRuntimeVersion)/ThirdPartyNotices.txt" Pack="true" PackagePath="onnxruntime/" Visible="false" />
   </ItemGroup>
 
   <!-- ONNX Runtime's package also has Android and iOS builds and Windows import libraries, which a desktop tool never loads. -->

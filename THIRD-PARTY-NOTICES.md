@@ -399,7 +399,7 @@ pinned SHA-256. The package's build file is part of PdfNetStack, MIT License.
 The `pdfnetstack-ocr` command line tool. Redistributes, unmodified:
 
 - ONNX Runtime's managed assembly and native libraries for win-x64, win-arm64, linux-x64,
-  linux-arm64 and osx-arm64 (`Microsoft.ML.OnnxRuntime` 1.31.0, Copyright (c) Microsoft
+  linux-arm64 and osx-arm64 (`Microsoft.ML.OnnxRuntime` 1.31.1, Copyright (c) Microsoft
   Corporation, MIT License), with ONNX Runtime's `LICENSE` and `ThirdPartyNotices.txt` under
   `onnxruntime/` in the package. `System.Numerics.Tensors` (MIT) comes with it.
 - The PP-OCRv5 models of `PdfNetStack.Ocr.Models` (above, Apache License 2.0), with their
