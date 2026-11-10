@@ -43,7 +43,7 @@ public sealed record OptimizationStatistics(
     /// <summary>JPEG images among <see cref="JpegImagesRecompressed"/> that were requantized, and so changed lossily.</summary>
     public int JpegImagesRequantized { get; init; }
 
-    /// <summary>Images downsampled to <see cref="PdfOptimizerOptions.MaxImageDpi"/>.</summary>
+    /// <summary>Images downsampled to <see cref="PdfOptimizerOptions.MaxImageDpi"/> or <see cref="PdfOptimizerOptions.MaxBilevelImageDpi"/>.</summary>
     public int ImagesDownsampled { get; init; }
 
     /// <summary>

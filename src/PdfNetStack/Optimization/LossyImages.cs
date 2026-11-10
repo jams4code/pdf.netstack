@@ -5,7 +5,7 @@ using PdfNetStack.Parsing;
 
 namespace PdfNetStack.Optimization;
 
-/// <summary>What the lossy image pass may do. Null <see cref="MaxDpi"/> and false <see cref="ConvertToJpeg"/> turn it off.</summary>
+/// <summary>What the lossy image pass may do. Null <see cref="MaxDpi"/> and <see cref="MaxBilevelDpi"/> and false <see cref="ConvertToJpeg"/> turn it off.</summary>
 /// <param name="MaxDpi">Downsample images drawn above 1.5 times this resolution to it.</param>
 /// <param name="ConvertToJpeg">Re-encode raw and JPEG 2000 continuous tone images as JPEG.</param>
 /// <param name="Quality">JPEG quality for new encodings; null keeps a JPEG source's own.</param>
@@ -15,6 +15,12 @@ internal sealed record ImageSettings(int? MaxDpi, bool ConvertToJpeg, int? Quali
 {
     /// <summary>Raw RGB images may be reduced to a palette.</summary>
     public bool Quantize { get; init; }
+
+    /// <summary>The resolution for bilevel images, or null to use <see cref="MaxDpi"/>.</summary>
+    public int? MaxBilevelDpi { get; init; }
+
+    /// <summary>Whether any image may be downsampled, and so whether placements are measured.</summary>
+    public bool Downsamples => MaxDpi is not null || MaxBilevelDpi is not null;
 }
 
 /// <summary>The lossy image changes that won, for the statistics and the proof. A raw image may be both.</summary>
@@ -156,7 +162,8 @@ internal static class LossyImages
         if (!MayResample(file, d) || Geometry(file, d, filters) is not { } g) return null;
         if (g.Jpeg && !jpegAllowed) return null;
 
-        (int, int)? target = settings.MaxDpi is { } dpi && placed is { } size && !HasMatteSoftMask(file, d) ? Target(g.Width, g.Height, size, dpi) : null;
+        int? maxDpi = g.Bits == 1 ? settings.MaxBilevelDpi ?? settings.MaxDpi : settings.MaxDpi;
+        (int, int)? target = maxDpi is { } dpi && placed is { } size && !HasMatteSoftMask(file, d) ? Target(g.Width, g.Height, size, dpi) : null;
         if (g.Bits == 1)
         {
             if (target is null) return null;

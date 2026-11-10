@@ -92,6 +92,7 @@ Pass a `PdfOptimizerOptions` to change the defaults.
 | `ProgressiveJpeg` | false | 1.1. Also tries progressive coding for every JPEG written, kept when smaller. Lossless |
 | `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy: requantizes JPEG images, and sets the quality of new JPEGs |
 | `MaxImageDpi` | null | 1.1. Downsamples images drawn above 1.5 times this resolution. Lossy |
+| `MaxBilevelImageDpi` | null | 1.2. The same for bilevel images, in place of `MaxImageDpi`; null uses `MaxImageDpi`. Lossy |
 | `ConvertImagesToJpeg` | false | 1.1. Photographic raw images to JPEG at `JpegQuality`. Lossy |
 | `MinImageSsim` | null | 1.1. Quality gate, 0 to 1: any lossy image change below this SSIM is dropped |
 | `Verify` | true | Disable only for inputs you already trust |
@@ -141,7 +142,8 @@ is in 1.0.
 
 All of them are off by default. For most documents a preset is all you need:
 `PdfOptimizerOptions.Balanced` gives much smaller files with no change most readers can see, and
-`PdfOptimizerOptions.Smallest` goes further for reading on screen. To choose for yourself, turn the
+`PdfOptimizerOptions.Smallest` goes further for reading on screen, with images at 150 dpi and
+bilevel scans at 300, where text stays clean. To choose for yourself, turn the
 options on together for the biggest saving on image heavy files:
 
 ```csharp sample="compress-lossy.cs" region="lossy"

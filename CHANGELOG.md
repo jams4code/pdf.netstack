@@ -2,6 +2,10 @@
 
 ## 1.2.0 (2026-11-10)
 
+- `PdfOptimizerOptions.MaxBilevelImageDpi` (`--max-bilevel-dpi`) gives bilevel images (raw, CCITT,
+  JBIG2) their own downsampling resolution, in place of `MaxImageDpi`. Null keeps the old behavior.
+  `Smallest` now sets it to 300: at 150 dpi one bit per pixel made scanned text ragged, which the
+  image quality gate does not judge, since a bilevel reduction is exact by construction.
 - OCR: ONNX Runtime 1.31.1. One build property now sets its version everywhere it is named.
 - Hyphenation, off by default, by Liang's algorithm as TeX defines it. `PdfParagraph.Hyphenator` takes
   a `PdfHyphenator`: words then break at the line's end where the language allows, showing a hyphen,

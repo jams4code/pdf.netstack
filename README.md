@@ -819,6 +819,7 @@ object streams have little left to gain losslessly.
 | `JpegQuality` | null | 1 to 100, libjpeg scale. Lossy, JPEG images only |
 | `QuantizeImages` | false | Raw RGB images to a palette when that stays faithful. Lossy, for drawings and screenshots |
 | `MaxImageDpi` | null | Downsample images drawn above 1.5 times this resolution, bilevel, CCITT, JBIG2 and JPEG 2000 included. Lossy |
+| `MaxBilevelImageDpi` | null | The resolution for bilevel images in place of `MaxImageDpi`; null uses `MaxImageDpi`. Lossy |
 | `ConvertImagesToJpeg` | false | Photographic raw and JPEG 2000 images to JPEG at `JpegQuality`. Lossy |
 | `MinImageSsim` | null | 0 to 1; around 0.95 keeps changes hard to see |
 | `ProgressiveJpeg` | false | Progressive JPEG when smaller. Lossless |

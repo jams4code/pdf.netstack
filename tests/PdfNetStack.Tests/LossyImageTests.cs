@@ -518,11 +518,14 @@ public sealed class LossyImageTests
     {
         byte[] input = Pdf((Raw(SyntheticImages.Photo(20, 20, 1)), Deflate(new byte[400]), "20 0 0 20 0 0"));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MaxImageDpi = 0 }));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MaxBilevelImageDpi = 0 }));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MaxBilevelImageDpi = 100_001 }));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MinImageSsim = 0 }));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MinImageSsim = 1.01 }));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MinImageSsim = double.NaN }));
         Assert.ThrowsExactly<ArgumentException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { ConvertImagesToJpeg = true }));
         Assert.ThrowsExactly<ArgumentException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MaxImageDpi = 150, RecompressStreams = false }));
+        Assert.ThrowsExactly<ArgumentException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { MaxBilevelImageDpi = 300, RecompressStreams = false }));
         Assert.ThrowsExactly<ArgumentException>(() => PdfOptimizer.Optimize(input, new PdfOptimizerOptions { ProgressiveJpeg = true, RecompressStreams = false }));
     }
 }
