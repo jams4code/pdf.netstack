@@ -18,7 +18,7 @@
     <!-- Test-only, MIT licensed: Microsoft's XML signature implementation signs the synthetic
          trusted lists and canonicalizes reference documents, an independent check of the
          library's own XMLDSig verification. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="11.0.0" />
   </ItemGroup>
 
   <!-- .NET Framework has no runtimes folder probing, and the ONNX Runtime package's copy rule is
