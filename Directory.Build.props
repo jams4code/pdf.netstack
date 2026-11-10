@@ -26,6 +26,10 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- One ONNX Runtime version for the OCR package, the tool that ships its notices and the tests
+         that copy its native runtime, so a bump cannot leave a path at the old version. -->
+    <OnnxRuntimeVersion>1.31.1</OnnxRuntimeVersion>
   </PropertyGroup>
 
   <!-- Each package ships its own readme from eng/nuget, written for the NuGet page (absolute links only). -->

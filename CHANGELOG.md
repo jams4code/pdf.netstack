@@ -1,7 +1,8 @@
 # Changelog
 
-## 1.2.0 (2026-11-05)
+## 1.2.0 (2026-11-10)
 
+- OCR: ONNX Runtime 1.31.1. One build property now sets its version everywhere it is named.
 - Hyphenation, off by default, by Liang's algorithm as TeX defines it. `PdfParagraph.Hyphenator` takes
   a `PdfHyphenator`: words then break at the line's end where the language allows, showing a hyphen,
   while `PdfParagraph.Text` keeps them whole and extracted text marks the hyphen with U+00AD.
