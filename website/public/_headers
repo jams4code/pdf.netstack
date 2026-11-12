@@ -1,10 +1,9 @@
-# Cloudflare Pages response headers. Paths assume the site is served from the root of its host
-# (https://pdfnetstack.jadev-corp.com/); with a DOCS_BASE subpath the host in front sets headers.
+# Cloudflare Pages response headers. The files sit at the root of the Pages project, and
+# www.jadev-corp.com proxies /pdfnetstack/* to it (see README.md, Hosting), so these paths have no
+# base. The proxy passes the headers on.
 
-# Only the custom domain is indexed: the pages.dev host and preview deployments are not.
-https://:project.pages.dev/*
-  X-Robots-Tag: noindex
-
+# Preview deployments are never indexed. The production pages.dev host gets no noindex: the proxy
+# would pass it on to jadev-corp.com. Its pages carry canonical URLs on jadev-corp.com instead.
 https://:version.:project.pages.dev/*
   X-Robots-Tag: noindex
 

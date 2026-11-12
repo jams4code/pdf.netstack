@@ -5,7 +5,11 @@ MIT licensed, no native binaries, no dependencies on .NET 8 and later.
 
 [![CI](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml/badge.svg)](https://github.com/jams4code/pdf.netstack/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/PdfNetStack.svg)](https://www.nuget.org/packages/PdfNetStack)
+[![NuGet downloads](https://img.shields.io/nuget/dt/PdfNetStack.svg)](https://www.nuget.org/packages/PdfNetStack)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Documentation, guides and benchmarks: **[jadev-corp.com/pdfnetstack](https://www.jadev-corp.com/pdfnetstack/)**.
+Built and maintained by [JADEV](https://www.jadev-corp.com/en), software engineering.
 
 PdfNetStack makes PDFs smaller without changing a single rendered pixel. It rewrites the file
 with compressed object streams and a compressed cross-reference stream, drops objects nothing
@@ -657,7 +661,7 @@ For languages beyond Latin and Arabic script, or platforms ONNX Runtime has no b
 `PdfNetStack.Ocr.Tesseract` adds `TesseractOcrEngine`, which runs a `tesseract` you installed, one
 process per image, with no shell and no temporary files. Tesseract and its language data are not
 in the package. It does not detect pages scanned sideways. The
-[OCR guide](https://pdfnetstack.jadev-corp.com/guides/ocr/#choosing-an-engine) compares the two.
+[OCR guide](https://www.jadev-corp.com/pdfnetstack/guides/ocr/#choosing-an-engine) compares the two.
 
 ### HTML to PDF
 
@@ -924,7 +928,7 @@ doc.Pages[0].Dictionary.Set("Contents", doc.AddObject(content));  // replace pag
 
 ## Documentation
 
-- [Documentation site](https://pdfnetstack.jadev-corp.com): guides, recipes and the API reference
+- [Documentation site](https://www.jadev-corp.com/pdfnetstack): guides, recipes and the API reference
 - [Architecture](docs/ARCHITECTURE.md)
 - [Fidelity and verification](docs/FIDELITY.md)
 - [Roadmap](docs/ROADMAP.md)

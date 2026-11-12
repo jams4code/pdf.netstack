@@ -1,0 +1,4 @@
+# Serves every file under the base path too, so a preview opened at
+# https://pr-<n>.pdfnetstack.pages.dev/pdfnetstack/ loads its pages and assets. Production traffic
+# arrives without the prefix: www.jadev-corp.com strips it when it proxies (see README.md, Hosting).
+/pdfnetstack/* /:splat 200

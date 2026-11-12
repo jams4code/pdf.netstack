@@ -21,7 +21,7 @@ faq:
   - q: Can PdfNetStack render PDF pages to images?
     a: No. Rendering pages to images is out of scope for the project. It extracts the images a page contains, and the text, but it does not rasterize pages.
   - q: Is the HTML to PDF converter a headless browser?
-    a: No. PdfNetStack.Html is a layout engine written in C# with the CSS cascade, block, inline, table, flex and grid layout and paged media. It does not run JavaScript, so pages must be rendered HTML. It ships with version 1.1 and is not on NuGet yet.
+    a: No. PdfNetStack.Html is a layout engine written in C# with the CSS cascade, block, inline, table, flex and grid layout and paged media. It does not run JavaScript, so pages must be rendered HTML. It ships as the PdfNetStack.Html package on NuGet.
   - q: Does it handle Arabic, Indic and right to left text?
     a: Yes, from version 1.1. Text goes through the Unicode bidirectional algorithm, Unicode normalization and an OpenType shaper, so Arabic letters join and take their contextual forms, the nine major Indic scripts reorder and form their conjuncts, and right to left text copies and searches in logical order. Thai, Khmer, Myanmar and Hangul shaping are on the roadmap.
   - q: Can it create PDF/A files?

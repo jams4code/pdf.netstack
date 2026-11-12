@@ -1,6 +1,6 @@
 # PdfNetStack documentation site
 
-The site at https://pdfnetstack.jadev-corp.com, built with Astro Starlight from this folder. It is
+The site at https://www.jadev-corp.com/pdfnetstack/, built with Astro Starlight from this folder. It is
 static HTML: nothing runs on a server, and the only scripts on a page are Starlight's own, the
 copy buttons, and Pagefind once search opens.
 
@@ -118,31 +118,35 @@ At each release:
    away by themselves.
 2. Check the changelog page and the version numbers on the landing page and in the FAQ.
 
-## Launch
+## Hosting
 
-Before launch the site sends `noindex` on every page and `robots.txt` disallows all crawling. To
-launch:
+The site lives at `https://www.jadev-corp.com/pdfnetstack/`, so every page and every link to the
+docs counts for the company domain:
 
-1. Set `PRELAUNCH` to `false` in `src/site.config.mjs`.
-2. In `lighthouserc.json`, make `categories:seo` an error.
-3. Point the repository `llms.txt` and `PackageProjectUrl` at the site.
+- The build uses the base path `/pdfnetstack` (`src/site.config.mjs`). Links, canonicals, the
+  sitemap, Markdown twins and previews follow it. The files sit at the root of `dist/`.
+- The `Docs` workflow deploys `dist/` to the root of the Cloudflare Pages project `pdfnetstack`.
+- The company site (Next.js on Vercel, repository `jadev-landing`) proxies `/pdfnetstack/*` to
+  `https://pdfnetstack.pages.dev/*` and lets these paths keep their trailing slash.
+- `public/_redirects` also serves every file under `/pdfnetstack/` on Pages itself, so pull
+  request previews work with the base path: open `https://pr-<n>.pdfnetstack.pages.dev/pdfnetstack/`.
+- Canonical URLs point at jadev-corp.com. The production pages.dev host cannot send `noindex`,
+  because the proxy would pass the header on to jadev-corp.com; previews do send it.
+- `robots.txt` and `llms.txt` at the root of jadev-corp.com list the docs sitemap and llms.txt.
 
-The `Docs` workflow deploys to the Cloudflare Pages project `pdfnetstack` once the `docs`
-environment holds `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; pull requests from this
-repository deploy a preview when the `docs-preview` environment holds them too. To set it up:
+The deploy runs once the `docs` environment holds `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`; pull requests from this repository deploy a preview when the
+`docs-preview` environment holds them too. To set it up:
 
-1. In Cloudflare, create the Pages project `pdfnetstack` (direct upload) and attach the custom
-   domain `pdfnetstack.jadev-corp.com`. Cloudflare adds the DNS record itself.
+1. In Cloudflare, create the Pages project `pdfnetstack` (direct upload). No custom domain.
 2. Create an API token with only the Account > Cloudflare Pages > Edit permission, for this
    account. Nothing else.
 3. In the GitHub repository settings, create the `docs` environment, limit it to the `main`
-   branch, and add the two secrets.
+   branch, and add the two secrets. Add them to `docs-preview` for pull request previews.
 
 The deploy action is pinned to a commit; Dependabot proposes updates to it.
 
-## Serving from a subpath
+`DOCS_BASE='' npm run build` builds for the root of a host instead.
 
-`DOCS_SITE=https://www.jadev-corp.com DOCS_BASE=/pdfnetstack npm run build` builds the site for
-`https://www.jadev-corp.com/pdfnetstack/`. Links,
-canonicals, the sitemap, Markdown twins and previews follow the base. `public/_headers` assumes
-the root of a host; behind a proxy, the proxy sets the headers.
+Lighthouse keeps the SEO category as a warning: it runs on localhost, while every canonical URL
+points at jadev-corp.com, which its canonical audit reports as another domain.

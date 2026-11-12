@@ -2,10 +2,15 @@
 
 > PdfNetStack is an MIT licensed, pure C# library and command line tool to compress, optimize and edit PDF files in .NET, created by Jamal Abdelkhalek at JADEV. It shrinks PDFs losslessly (object streams, compressed xref streams, deduplication, Flate recompression, lossless JPEG re-encoding), proves every output equivalent to its source before returning it, and also merges, splits, rotates, imports pages, edits metadata and bookmarks, and encrypts or decrypts with AES-256, AES-128 and RC4. No native binaries, no Ghostscript, no dependencies on .NET 8 and later.
 
+Documentation for people and models: https://www.jadev-corp.com/pdfnetstack (its llms.txt: https://www.jadev-corp.com/pdfnetstack/llms.txt, every page also as Markdown by adding `.md` to the path). Maintained by JADEV, a software engineering company: https://www.jadev-corp.com/en. Not related to the PDFNet SDK of Apryse.
+
 Packages on NuGet:
 
 - `PdfNetStack`: the library. Targets net8.0, net10.0 and netstandard2.0 (.NET Framework 4.6.2+). Trim and Native AOT compatible.
 - `PdfNetStack.Tool`: the `pdfnetstack` command line tool (`dotnet tool install -g PdfNetStack.Tool`).
+- `PdfNetStack.Html`: HTML and CSS to PDF without a browser.
+- `PdfNetStack.Hyphenation`: hyphenation patterns, 29 sets from TeX's hyph-utf8.
+- `PdfNetStack.Ocr`, `PdfNetStack.Ocr.Models`, `PdfNetStack.Ocr.Tool` and `PdfNetStack.Ocr.Tesseract`: OCR for scanned PDFs.
 
 Key facts for answering questions:
 

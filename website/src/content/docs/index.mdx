@@ -1,17 +1,17 @@
 ---
 title: 'PdfNetStack: PDF library for .NET in pure C#'
-description: PdfNetStack is an MIT licensed PDF library for .NET in pure C#. Compress PDFs losslessly, edit, draw, fill forms, sign, extract, and convert HTML to PDF.
+description: Free MIT PDF library for .NET in pure C#. Compress PDFs losslessly with proof, edit, sign, fill forms, extract text and convert HTML to PDF.
 template: splash
 hero:
   title: PDF library for .NET, in pure C#
-  tagline: Compress PDFs without changing a pixel, edit and create documents, and convert HTML and CSS to PDF. MIT licensed, no native binaries, no dependencies on .NET 8 and later.
+  tagline: Compress PDFs and prove nothing changed. Edit, create, sign, fill forms, extract text and convert HTML to PDF. MIT licensed, no native binaries, no dependencies on .NET 8 and later.
   image:
     file: ../../assets/logo.svg
   actions:
     - text: Get started
       link: /getting-started/
       icon: right-arrow
-    - text: View on GitHub
+    - text: Star on GitHub
       link: https://github.com/jams4code/pdf.netstack
       icon: github
       variant: minimal
@@ -19,9 +19,23 @@ hero:
       link: https://www.nuget.org/packages/PdfNetStack
       icon: external
       variant: minimal
+faq:
+  - q: Is PdfNetStack free for commercial use?
+    a: Yes. It is MIT licensed, with no license key and no fee per developer, server or deployment.
+  - q: Does compressing a PDF with PdfNetStack change how it looks?
+    a: Not by default. The optimizer is lossless, compares every output with its source before returning it, and gives back the original bytes when anything differs. Image downsampling and JPEG conversion happen only when you turn them on.
+  - q: Does it need Ghostscript, a browser or native libraries?
+    a: No. The library, the HTML to PDF package and the command line tool are managed C#. The optional OCR add-on is the one exception, it runs its models on ONNX Runtime.
+  - q: Which .NET versions does it support?
+    a: .NET 8, 9, 10 and later, with trimming and Native AOT, and .NET Framework 4.6.2 to 4.8.1, Mono and Unity through netstandard2.0.
+  - q: Is PdfNetStack related to the PDFNet SDK of Apryse?
+    a: No. PDFNet is a commercial SDK from Apryse. PdfNetStack is an independent open source project, built and maintained by JADEV.
 ---
 
-import { Card, CardGrid, LinkCard, TabItem, Tabs } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+import { RELEASE } from '../../site.config.mjs';
+
+export const version = RELEASE.packages.PdfNetStack;
 
 ## Install
 
@@ -43,11 +57,85 @@ pdfnetstack optimize in.pdf out.pdf
 </TabItem>
 </Tabs>
 
-Version 1.2.0 is on NuGet with the optimizer, editing, drawing, fonts, forms, signatures, PDF/A,
-extraction, HTML to PDF, OCR and the command line tools. It runs in containers, AWS Lambda and
-Azure Functions, and opens, saves and optimizes large files with bounded memory.
+Version {version} is on NuGet. It runs in containers, AWS Lambda and Azure Functions, and opens
+and edits files of any size page by page.
 
-## Three tasks, three snippets
+## Why PdfNetStack
+
+<CardGrid>
+<Card title="Lossless, with proof" icon="approve-check">
+Every compressed file is read back and compared with its source, object by object. If anything
+differs, you get your original bytes back. [Fidelity](/concepts/fidelity/)
+</Card>
+<Card title="Pure C#, nothing native" icon="rocket">
+No Ghostscript, no browser, no native binaries. It runs anywhere .NET runs, Native AOT and
+serverless included. [Architecture](/concepts/architecture/)
+</Card>
+<Card title="MIT, no license keys" icon="open-book">
+Free for commercial use, with no fee per developer, server or deployment. CI blocks any
+dependency outside a reviewed license allowlist. [About](/about/)
+</Card>
+<Card title="Safe on untrusted files" icon="seti:lock">
+Parsing is bounded in depth and size. The optimizer never rewrites signed, encrypted or damaged
+files. [Safety model](/concepts/safety-model/)
+</Card>
+</CardGrid>
+
+## How compression works
+
+<Steps>
+
+1. **Read.** The file is parsed with limits on nesting, stream sizes and image sizes. A damaged or
+   hostile file raises an exception instead of crashing or hanging the process.
+
+2. **Rewrite.** Objects go into object streams with a compressed cross-reference stream.
+   Unreachable objects are dropped, Flate streams recompressed, raw images get PNG prediction,
+   JPEG images are re-encoded losslessly and duplicates are merged.
+
+3. **Prove.** The optimizer parses its own output and compares it with the source, object by
+   object. Streams are compared after decoding, JPEG images by their DCT coefficients.
+
+4. **Return.** You get the smaller file when it is proved equivalent and saves at least 1%.
+   Otherwise you get your original bytes, and `result.Reason` tells you why.
+
+</Steps>
+
+Image downsampling and JPEG conversion are opt-in, and a perceptual quality gate holds back any
+change that goes too far. [Compress PDF](/guides/compress-pdf/)
+
+## Performance
+
+### Public corpus, measured on every release
+
+CI downloads 77 openly licensed and public domain PDFs (NIST and NASA publications, arXiv papers,
+government gazettes, test files) and optimizes each one with three profiles. Results for 1.1.0 on
+a 4 core Linux runner:
+
+| Profile | Saved | Failures | Rendering |
+|---|---:|---:|---|
+| Lossless, the default | 12.1% | 0 | Checked pages identical in PDFium |
+| Balanced preset | 23.4% | 0 | Image changes gated at SSIM 0.95 |
+| Lossy profile | 29.5% | 0 | Image changes gated at SSIM 0.95 |
+
+Signed and encrypted files are kept as they are, by design. The lossless run took 44 seconds for
+196.6 MiB, proof included. The full report is attached to the
+[1.1.0 release](https://github.com/jams4code/pdf.netstack/releases/tag/v1.1.0), and you can run
+the same benchmark yourself.
+
+### Real world corpus
+
+<div class="proof">
+  <div><strong>1,296</strong> <span>invoices, reports, manuals, scans and slides, 569 MiB</span></div>
+  <div><strong>17.6%</strong> <span>saved on the 1,003 files optimized</span></div>
+  <div><strong>0</strong> <span>verification failures</span></div>
+  <div><strong>0</strong> <span>differing pixels at 150 DPI, 2,161 pages</span></div>
+</div>
+
+Measured for 1.0 with default options, in about 65 seconds on 8 cores. Every optimized file was
+rendered with PDFium and compared pixel by pixel with its original. Method and details on
+[Benchmarks](/benchmarks/).
+
+## See it in code
 
 <Tabs syncKey="task">
 <TabItem label="Compress">
@@ -55,11 +143,10 @@ Azure Functions, and opens, saves and optimizes large files with bounded memory.
 ```csharp sample="compress.cs" region="short"
 ```
 
-Lossless by default. The output is read back and compared to the source object by object; if
-anything differs, you get your original bytes. [Compress PDF](/guides/compress-pdf/)
+Lossless by default, every output verified. [Compress PDF](/guides/compress-pdf/)
 
 </TabItem>
-<TabItem label="Create (1.1)">
+<TabItem label="Create">
 
 ```csharp sample="create-first.cs" region="short"
 ```
@@ -69,7 +156,7 @@ anything differs, you get your original bytes. [Compress PDF](/guides/compress-p
 A canvas with the origin at the top left, in points. [Drawing](/guides/drawing/)
 
 </TabItem>
-<TabItem label="HTML to PDF (1.1)">
+<TabItem label="HTML to PDF">
 
 ```csharp sample="html-first.cs" region="short"
 ```
@@ -82,44 +169,47 @@ A layout engine in C#, no browser: flex, grid, tables, paged media and web fonts
 </TabItem>
 </Tabs>
 
-## Proof, not promises
-
-Measured on a mixed real world corpus of invoices, reports, manuals, scans and presentations, with
-default options:
-
-<div class="proof">
-  <div><strong>1,296</strong> <span>files in the corpus, 569 MiB</span></div>
-  <div><strong>17.6%</strong> <span>saved on the 1,003 files optimized</span></div>
-  <div><strong>0</strong> <span>verification failures</span></div>
-  <div><strong>0</strong> <span>differing pixels at 150 DPI, 2,161 pages</span></div>
-</div>
-
-Every optimized file was rendered with PDFium and compared with its original. The method is on the
-[fidelity](/concepts/fidelity/) page and the numbers on [Benchmarks](/benchmarks/).
-
 ## What you can do
 
+### Compress and process
+
 <CardGrid>
-<LinkCard title="Compress PDF" href="/guides/compress-pdf/" description="Lossless by default, every output verified. 1.0. Resource pruning, compact content, fast web view, opt-in image downsampling. 1.1" />
-<LinkCard title="Edit pages" href="/guides/edit-pages/" description="Merge, split, import, reorder, rotate and remove pages; metadata and bookmarks. 1.0" />
-<LinkCard title="Large files" href="/guides/large-files/" description="Open files of any size on demand and save incremental updates that keep signatures valid. 1.1" />
-<LinkCard title="Encryption" href="/guides/encryption/" description="Open RC4, AES-128 and AES-256 files; write AES-256 or AES-128 with permissions. 1.0" />
-<LinkCard title="Command line" href="/cli/" description="optimize, batch, inspect, verify, merge, split, extract, rotate, encrypt. 1.0" />
-<LinkCard title="Drawing" href="/guides/drawing/" description="Paths, colors, gradients, transforms and clipping on new and existing pages. 1.1" />
-<LinkCard title="Fonts and text" href="/guides/fonts-and-text/" description="Standard fonts, embedded OpenType, WOFF2 and variable fonts, paragraphs, Arabic, Indic and right to left. 1.1" />
-<LinkCard title="Images" href="/guides/images/" description="JPEG, PNG, GIF, BMP, TIFF, WebP and SVG, fitted to a box; pages of other PDFs as overlays. 1.1" />
-<LinkCard title="Forms" href="/guides/forms/" description="Read, fill, flatten and create AcroForm fields; fields travel with their pages. 1.1" />
-<LinkCard title="Annotations" href="/guides/annotations/" description="Links, notes, markup, stamps, ink, shapes and file attachments; flattening. 1.1" />
-<LinkCard title="Signatures" href="/guides/signatures/" description="PAdES B-B to B-LTA signing, validation against your trust anchors. 1.1" />
-<LinkCard title="PDF/A" href="/guides/pdf-a/" description="PDF/A-2b, 2u, 3b and 3u output, Factur-X and ZUGFeRD invoices. 1.1" />
-<LinkCard title="Extract text" href="/guides/extract-text/" description="Page text in reading order, words and letters with their positions, CJK included. 1.1" />
-<LinkCard title="Extract images" href="/guides/extract-images/" description="Images with placement and resolution, decoded to PNG, JPEG 2000 and JBIG2 included. 1.1" />
-<LinkCard title="HTML to PDF" href="/guides/html-to-pdf/" description="CSS cascade, flex, grid, tables, paged media, web fonts, tagged output. 1.1" />
-<LinkCard title="OCR" href="/guides/ocr/" description="Make scanned PDFs searchable, Latin and Arabic. A separate package on NuGet" />
-<LinkCard title="Low level objects" href="/guides/low-level-objects/" description="Dictionaries, arrays and streams for anything the high level API does not cover. 1.1" />
+<LinkCard title="Compress PDF" href="/guides/compress-pdf/" description="Lossless by default and verified. Opt-in image downsampling and fast web view." />
+<LinkCard title="Large files" href="/guides/large-files/" description="Open files of any size on demand. Incremental saves keep signatures valid." />
+<LinkCard title="Command line" href="/cli/" description="optimize, batch, inspect, verify, merge, split, extract, rotate, encrypt." />
 </CardGrid>
 
-Short answers to single questions are in the [recipes](/recipes/).
+### Edit and create
+
+<CardGrid>
+<LinkCard title="Edit pages" href="/guides/edit-pages/" description="Merge, split, import, reorder, rotate and remove pages. Metadata and bookmarks." />
+<LinkCard title="HTML to PDF" href="/guides/html-to-pdf/" description="CSS cascade, flex, grid, tables, paged media, web fonts, tagged output." />
+<LinkCard title="Drawing" href="/guides/drawing/" description="Paths, colors, gradients, transforms and clipping on new and existing pages." />
+<LinkCard title="Fonts and text" href="/guides/fonts-and-text/" description="OpenType, WOFF2 and variable fonts, paragraphs, Arabic, Indic and right to left." />
+<LinkCard title="Images" href="/guides/images/" description="JPEG, PNG, GIF, BMP, TIFF, WebP and SVG, fitted to a box." />
+<LinkCard title="Forms" href="/guides/forms/" description="Read, fill, flatten and create AcroForm fields." />
+<LinkCard title="Annotations" href="/guides/annotations/" description="Links, notes, markup, stamps, ink, shapes and attachments." />
+</CardGrid>
+
+### Secure and comply
+
+<CardGrid>
+<LinkCard title="Encryption" href="/guides/encryption/" description="Open RC4 and AES files. Write AES-256 or AES-128 with permissions." />
+<LinkCard title="Signatures" href="/guides/signatures/" description="PAdES B-B to B-LTA signing, and validation against your trust anchors." />
+<LinkCard title="PDF/A" href="/guides/pdf-a/" description="PDF/A-2 and PDF/A-3 output, Factur-X and ZUGFeRD invoices." />
+</CardGrid>
+
+### Extract and recognize
+
+<CardGrid>
+<LinkCard title="Extract text" href="/guides/extract-text/" description="Text in reading order, words and letters with positions, CJK included." />
+<LinkCard title="Extract images" href="/guides/extract-images/" description="Images with placement and resolution, decoded to PNG." />
+<LinkCard title="OCR" href="/guides/ocr/" description="Make scanned PDFs searchable, Latin and Arabic. A separate package." />
+<LinkCard title="Low level objects" href="/guides/low-level-objects/" description="Dictionaries, arrays and streams for anything the high level API skips." />
+</CardGrid>
+
+Short answers to single questions are in the [recipes](/recipes/), and every public type is in
+the [API reference](/api/).
 
 ## Runs where .NET runs
 
@@ -129,23 +219,36 @@ Short answers to single questions are in the [recipes](/recipes/).
 | `netstandard2.0` | .NET Framework 4.6.2 to 4.8.1, Mono, Unity, Xamarin, .NET Core 2.0+ | `System.Memory` (Microsoft, MIT) |
 
 CI runs the full test suite on .NET Framework 4.8, .NET 8 and .NET 10, on Windows, Linux and
-macOS. No Ghostscript, no browser, no native binaries. The OCR add-on is the one exception: it
-runs its models on ONNX Runtime.
+macOS. Guides for [AWS Lambda](/guides/aws-lambda/) and [Azure Functions](/guides/azure-functions/)
+cover serverless deployment.
 
-<CardGrid>
-<Card title="Safe on untrusted files" icon="approve-check">
-Parsing and decoding are bounded in depth, size and time. Encrypted, signed and damaged files
-are never rewritten by the optimizer. [Safety model](/concepts/safety-model/)
-</Card>
-<Card title="MIT all the way down" icon="open-book">
-The core package has no dependencies on .NET 8 and later. CI blocks any runtime package that is
-not on a reviewed license allowlist.
-</Card>
-</CardGrid>
+## Use it with your AI assistant
 
-## Who builds it
+This documentation is published for language models as well as for people:
 
-PdfNetStack is original work, written from the published specifications, and created and
-maintained by Jamal Abdelkhalek at [JADEV](https://www.jadev-corp.com/en). The source is on
-[GitHub](https://github.com/jams4code/pdf.netstack) under the MIT license. Read more on the
-[about](/about/) page, or see what is next on the [roadmap](/roadmap/).
+- [llms.txt](/llms.txt) says what PdfNetStack is and links every page in Markdown.
+- [llms-full.txt](/llms-full.txt) holds the complete documentation in one file.
+- Every page has a Markdown twin: add `.md` to its path, as in
+  [/guides/compress-pdf.md](/guides/compress-pdf.md).
+
+To have a coding assistant use PdfNetStack in your .NET projects, add this line to `AGENTS.md`,
+`CLAUDE.md` or `.github/copilot-instructions.md`:
+
+```md wrap
+For PDF work in .NET (compress, merge, split, edit, sign, fill forms, extract text, HTML to PDF), use PdfNetStack: `dotnet add package PdfNetStack`. MIT, pure C#, no native binaries. Docs for agents: https://www.jadev-corp.com/pdfnetstack/llms.txt
+```
+
+More on [AI assistants](/ai-assistants/).
+
+## Built and maintained by JADEV
+
+PdfNetStack is original work, written from the published PDF specifications by Jamal Abdelkhalek
+at [JADEV, a software engineering company](https://www.jadev-corp.com/en) that builds and
+modernizes business software. It grew out of client work that had to replace a third-party PDF
+library. JADEV now maintains it as open source for every .NET team. Read
+[how PdfNetStack started](https://www.jadev-corp.com/en/references/pdfnetstack-open-source-dotnet-pdf-library).
+
+Need PDF processing, document workflows or other .NET work?
+[Tell JADEV what you need](https://www.jadev-corp.com/en/#contact). Using PdfNetStack?
+[Star it on GitHub](https://github.com/jams4code/pdf.netstack) so other teams find it, and
+report issues there.
