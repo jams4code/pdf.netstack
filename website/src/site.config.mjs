@@ -1,19 +1,20 @@
 // Site wide constants. Read by astro.config.mjs, the build scripts and the page components.
 
 /** Production origin. Canonical URLs, the sitemap and JSON-LD use it. DOCS_SITE overrides it. */
-export const SITE = process.env.DOCS_SITE ?? 'https://pdfnetstack.jadev-corp.com';
+export const SITE = process.env.DOCS_SITE ?? 'https://www.jadev-corp.com';
 
 /**
- * Base path. Empty for the subdomain. Set DOCS_BASE=/pdfnetstack to serve the site from a
- * subpath of another host (see the website plan, appendix A).
+ * Base path. The site is served at https://www.jadev-corp.com/pdfnetstack/: Cloudflare Pages hosts
+ * the files at its root, and the company site (Vercel) proxies /pdfnetstack/* to it, so every page
+ * and every link to the docs counts for the company domain. DOCS_BASE='' builds for a host root.
  */
-export const BASE = process.env.DOCS_BASE ?? '';
+export const BASE = process.env.DOCS_BASE ?? '/pdfnetstack';
 
 /**
  * Pre-launch mode: every page carries a noindex robots meta tag and robots.txt disallows all
- * crawling. Set to false in the launch task, once the custom domain is live.
+ * crawling. Off since the launch.
  */
-export const PRELAUNCH = true;
+export const PRELAUNCH = false;
 
 export const REPO = 'https://github.com/jams4code/pdf.netstack';
 export const NUGET = 'https://www.nuget.org/packages/PdfNetStack';

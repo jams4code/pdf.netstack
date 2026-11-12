@@ -1,21 +1,67 @@
 ---
 title: PDF compression benchmarks
-description: How PdfNetStack compression was measured on 1,296 real world PDFs, the results, and how to reproduce the run and the render check on your own files.
+description: PdfNetStack compression measured on a public corpus at every release and on 1,296 real world PDFs, with the method and how to reproduce it.
 sidebar:
   label: Benchmarks
 ---
 
-What the optimizer saved on a real world corpus, how that was measured, and how to run the same
-measurement on your own files.
+What the optimizer saves on a public corpus that CI measures at every release, what it saved on a
+larger private corpus, and how to run the same measurement yourself.
 
 ## Short answer
 
-On a mixed corpus of 1,296 files (569 MiB) with default options, PdfNetStack optimized 1,003 files
+On the public corpus of 77 openly licensed PDFs, release 1.1.0 saved 12.1% losslessly, 23.4%
+with the balanced preset and 29.5% with the lossy profile, with zero failures. On a mixed private
+corpus of 1,296 files (569 MiB) with default options, PdfNetStack optimized 1,003 files
 from 568.9 MiB to 469.0 MiB, 17.6% saved, with zero verification failures. Every optimized file
 rendered identically to its original with PDFium at 150 DPI. The run took about 65 seconds on an
 8 core machine.
 
-## Method
+## Public corpus
+
+CI downloads the documents listed in
+[eng/corpus/manifest.json](https://github.com/jams4code/pdf.netstack/blob/main/eng/corpus/manifest.json):
+public domain and openly licensed PDFs such as NIST and NASA publications, arXiv papers,
+government gazettes and test files from other PDF projects. They are never committed. The run
+happens every week, on demand, and for every version tag, when the report is attached to the
+GitHub release.
+
+Each file runs in its own process under three profiles:
+
+- **Lossless.** The default optimizer.
+- **Balanced.** The preset of that name: palettes for drawings and screenshots, JPEG quality 75 at
+  full resolution, behind an SSIM gate of 0.95.
+- **Lossy.** JPEG quality 75, downsampling to 150 dpi, photographs to JPEG and progressive JPEG,
+  behind the same gate.
+
+Every kept rewrite is checked again with `PdfEquivalence`, the text of every page and every image
+are compared with the original, and PDFium renders the first pages and the last page of both. A
+lossless rewrite must render identically.
+
+Release 1.1.0, 5 November 2026, on a 4 core Linux runner:
+
+| Profile | Documents optimized | Input | Output | Saved | Optimizer time |
+|---|---:|---:|---:|---:|---:|
+| Lossless | 65 of 77 | 196.6 MiB | 172.9 MiB | 12.1% | 44.4 s |
+| Balanced | 65 of 77 | 196.6 MiB | 150.6 MiB | 23.4% | 154.5 s |
+| Lossy | 65 of 77 | 196.6 MiB | 138.6 MiB | 29.5% | 497.4 s |
+
+Zero failures across the 77 documents. The 12 documents kept as they are were signed or encrypted
+files, which the optimizer never rewrites. The report with every document, its time, memory and
+render result is attached to the
+[1.1.0 release](https://github.com/jams4code/pdf.netstack/releases/tag/v1.1.0) as
+`corpus-report.md` and `corpus-report.json`.
+
+To run it yourself:
+
+```bash
+pip install pypdfium2 numpy
+python tools/fetch_corpus.py --cache artifacts/corpus/files
+dotnet build tools/PdfNetStack.CorpusRunner -c Release
+python tools/corpus_bench.py --cache artifacts/corpus/files --out artifacts/corpus/report
+```
+
+## Private corpus
 
 - **Corpus.** 1,296 files, 569 MiB: invoices, reports, manuals, scanned documents, presentations
   and a 631 page spare parts catalogue. The corpus is not public.
@@ -31,12 +77,10 @@ rendered identically to its original with PDFium at 150 DPI. The run took about 
 - **Render check.** Independent of the verifier: both files rendered with PDFium at 150 DPI,
   compared pixel for pixel, with page count, geometry and extracted text per page.
 
-The figures are those published with version 1.0.0, in October 2026. They cover the lossless
-passes only. The lossy image options and `CompressionEffort.Exhaustive` of 1.1 were measured on
-synthetic files made by `tools/make_lossy_corpus.py`, not on this corpus; measuring them on a
-public corpus is on the [roadmap](/roadmap/).
+The figures are those published with version 1.0.0, in October 2026, and cover the lossless
+passes only. The lossy profiles are measured on the public corpus above.
 
-## Results
+### Results
 
 | | |
 |---|---|
@@ -56,7 +100,7 @@ Editing was checked the same way: every document in the corpus was rebuilt by im
 pages into a new document and saving it. 1,152 documents, 2,233 pages, zero differing pixels
 against the originals at 150 DPI.
 
-## Reproduce it on your files
+## Measure your own files
 
 Measure without writing anything, then write the optimized files and a CSV report:
 
@@ -80,8 +124,8 @@ python tools/render_compare.py ./corpus ./out --dpi 150 --pages 6
 
 ## What comes next
 
-A public corpus of redistributable PDFs, with size, time, memory and render checks in CI on every
-release, is on the [roadmap](/roadmap/). This page shows no numbers for other tools.
+Each release report is compared with the previous one, so a change in size, time or memory shows
+next to the release. This page shows no numbers for other tools.
 
 ## Related
 

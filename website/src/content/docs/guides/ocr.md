@@ -6,7 +6,7 @@ sidebar:
   label: OCR
 faq:
   - q: Is PdfNetStack.Ocr on NuGet?
-    a: Not yet. It is built from source with a project reference until the OCR models have a package of their own.
+    a: Yes. PdfNetStack.Ocr, its models in PdfNetStack.Ocr.Models, the PdfNetStack.Ocr.Tool command line tool and PdfNetStack.Ocr.Tesseract are on NuGet.
   - q: Which languages does the OCR add-on read?
     a: Latin script and Arabic script. The Arabic model also reads Persian and Urdu.
   - q: Can I run OCR from the command line?
@@ -287,8 +287,6 @@ itself, so its native runtime is copied next to the application.
   text in a script that is not loaded, may be read as it is.
 - `OnnxOcrEngine` reads Latin and Arabic script only; `TesseractOcrEngine` does not detect turned
   pages.
-- Not on NuGet yet. `PdfNetStack.Ocr`, its models package `PdfNetStack.Ocr.Models`, the
-  `PdfNetStack.Ocr.Tool` command line tool and `PdfNetStack.Ocr.Tesseract` go up with a coming release.
 
 ## Related
 

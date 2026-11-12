@@ -2,7 +2,7 @@
 // noindex. Starlight runs this for every docs page before rendering.
 
 import { defineRouteMiddleware } from '@astrojs/starlight/route-data';
-import { BASE, NUGET, ORG_ID, PERSON_ID, PRELAUNCH, REPO, SITE } from './site.config.mjs';
+import { BASE, CORP, NUGET, ORG_ID, PERSON_ID, PRELAUNCH, RELEASE, REPO, SITE } from './site.config.mjs';
 import { markdownPath, ogImagePath, pageUrl } from './lib/paths.mjs';
 
 const SOFTWARE_ID = `${SITE}/#software`;
@@ -51,14 +51,33 @@ function softwareNodes() {
     },
     {
       '@type': 'SoftwareApplication',
+      '@id': `${SITE}/#application`,
       name: 'PdfNetStack',
+      url: pageUrl(''),
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Windows, Linux, macOS',
+      // The version on NuGet, from the release table, so the structured data follows each release.
+      softwareVersion: RELEASE.packages.PdfNetStack,
+      softwareRequirements: '.NET 8 or later, or .NET Framework 4.6.2 or later through .NET Standard 2.0',
+      featureList: [
+        'Lossless PDF compression with verified output',
+        'Merge, split, reorder and rotate pages',
+        'AES-256 encryption',
+        'AcroForm filling and creation',
+        'PAdES digital signatures',
+        'PDF/A, Factur-X and ZUGFeRD',
+        'Text and image extraction',
+        'HTML and CSS to PDF without a browser',
+        'OCR for scanned PDFs',
+      ],
+      isAccessibleForFree: true,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
       downloadUrl: NUGET,
+      installUrl: NUGET,
       license: 'https://opensource.org/licenses/MIT',
       author: { '@id': PERSON_ID },
       publisher: { '@id': ORG_ID },
+      sameAs: [REPO, NUGET],
     },
     {
       '@type': 'WebSite',
@@ -70,23 +89,32 @@ function softwareNodes() {
   ];
 }
 
-/** JADEV and Jamal Abdelkhalek, by the ids the corporate site defines. */
-function entities(withProfiles = false) {
+/**
+ * JADEV and Jamal Abdelkhalek, by the ids the corporate site defines, so search engines merge both
+ * sites into one organization and one person. The profiles are the ones the corporate site lists.
+ */
+function entities() {
   return [
     {
       '@type': 'Organization',
       '@id': ORG_ID,
       name: 'JADEV',
-      url: 'https://www.jadev-corp.com',
-      ...(withProfiles ? { sameAs: ['https://www.nuget.org/profiles/jadev'] } : {}),
+      url: CORP,
+      description: 'Software engineering company that builds and modernizes business software.',
+      sameAs: [
+        'https://www.linkedin.com/company/jadev-corp/',
+        'https://www.linkedin.com/company/jadev-group/',
+        'https://www.nuget.org/profiles/jadev',
+      ],
     },
     {
       '@type': 'Person',
       '@id': PERSON_ID,
       name: 'Jamal Abdelkhalek',
-      url: 'https://www.jadev-corp.com/jamal',
+      url: `${CORP}/jamal`,
+      jobTitle: 'Founder',
       worksFor: { '@id': ORG_ID },
-      ...(withProfiles ? { sameAs: ['https://github.com/jams4code'] } : {}),
+      sameAs: ['https://github.com/jams4code', 'https://www.linkedin.com/in/jamal-software-engineer/'],
     },
   ];
 }
@@ -155,7 +183,7 @@ export const onRequest = defineRouteMiddleware((context) => {
         author: { '@id': PERSON_ID },
         publisher: { '@id': ORG_ID },
       },
-      ...entities(true),
+      ...entities(),
       breadcrumbs(id, title),
     );
   } else {

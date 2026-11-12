@@ -113,6 +113,7 @@ export default defineConfig({
           : []),
         'benchmarks',
         'faq',
+        'ai-assistants',
         'changelog',
         'roadmap',
         'about',

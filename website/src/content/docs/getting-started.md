@@ -1,6 +1,6 @@
 ---
 title: Get started with PdfNetStack
-description: Install PdfNetStack from NuGet, compress your first PDF, edit and create documents in C#, and build against the source for the 1.1 features.
+description: Install PdfNetStack from NuGet, compress your first PDF, edit and create documents in C#, and build against the source for unreleased features.
 sidebar:
   label: Getting started
 faq:
