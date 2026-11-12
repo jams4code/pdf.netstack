@@ -48,7 +48,8 @@ assistant copies from here works with the version it documents.
 - Package ids: `PdfNetStack` for the library, `PdfNetStack.Tool` for the `pdfnetstack` command
   line tool, plus add-ons such as `PdfNetStack.Html` and `PdfNetStack.Ocr`. See
   [Getting started](/getting-started/) for the full list.
-- License: MIT. No license key, no fee.
+- License: MIT for the library and its add-ons. The OCR models and OCR tool packages are MIT and
+  Apache-2.0. No license key, no fee.
 - Runtime: managed C# only. No Ghostscript, no browser, no native binaries. The optional OCR
   add-on runs its models on ONNX Runtime.
 - Compression is lossless by default and every output is verified. Lossy image options are

@@ -21,7 +21,7 @@ hero:
       variant: minimal
 faq:
   - q: Is PdfNetStack free for commercial use?
-    a: Yes. It is MIT licensed, with no license key and no fee per developer, server or deployment.
+    a: Yes. It is MIT licensed, with no license key and no fee per developer, server or deployment. The OCR models package adds Apache-2.0, which is free for commercial use too.
   - q: Does compressing a PDF with PdfNetStack change how it looks?
     a: Not by default. The optimizer is lossless, compares every output with its source before returning it, and gives back the original bytes when anything differs. Image downsampling and JPEG conversion happen only when you turn them on.
   - q: Does it need Ghostscript, a browser or native libraries?
@@ -196,7 +196,7 @@ A layout engine in C#, no browser: flex, grid, tables, paged media and web fonts
 <CardGrid>
 <LinkCard title="Encryption" href="/guides/encryption/" description="Open RC4 and AES files. Write AES-256 or AES-128 with permissions." />
 <LinkCard title="Signatures" href="/guides/signatures/" description="PAdES B-B to B-LTA signing, and validation against your trust anchors." />
-<LinkCard title="PDF/A" href="/guides/pdf-a/" description="PDF/A-2 and PDF/A-3 output, Factur-X and ZUGFeRD invoices." />
+<LinkCard title="PDF/A" href="/guides/pdf-a/" description="PDF/A-1b to PDF/A-4 output, Factur-X and ZUGFeRD invoices." />
 </CardGrid>
 
 ### Extract and recognize
@@ -209,7 +209,9 @@ A layout engine in C#, no browser: flex, grid, tables, paged media and web fonts
 </CardGrid>
 
 Short answers to single questions are in the [recipes](/recipes/), and every public type is in
-the [API reference](/api/).
+the [API reference](/api/). To weigh it against PDFsharp, QuestPDF, iText, PdfPig, wkhtmltopdf,
+headless Chromium, Ghostscript or qpdf, see [how it compares](/compare/), with a source for every
+fact about the other tools.
 
 ## Runs where .NET runs
 

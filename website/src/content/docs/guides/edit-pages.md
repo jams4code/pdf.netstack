@@ -128,7 +128,7 @@ target atomically.
 | `Optimize` | true | Runs the lossless optimizer, with verification, on the saved file |
 | `Compression` | `Maximum` | Flate effort: `Fast` (zlib level 1), `Balanced` (level 6) or `Maximum` (level 9) |
 | `UseObjectStreams` | true | Packs objects into compressed object streams (PDF 1.5). Off writes a classic xref table |
-| `Conformance` | `None` | Since 1.1: PDF/A-2b, 2u, 3b or 3u, see [PDF/A](/guides/pdf-a/) |
+| `Conformance` | `None` | Since 1.1: PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e or 4f, see [PDF/A](/guides/pdf-a/) |
 
 ## Limits
 

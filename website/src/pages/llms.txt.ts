@@ -30,7 +30,7 @@ export const GET: APIRoute = async () => {
     '- Install: `dotnet add package PdfNetStack`. Command line tool: `dotnet tool install -g PdfNetStack.Tool`.',
     `- On NuGet (${NUGET}): ${published}. A page for a feature newer than these says so at the top.`,
     `- Source and issues: ${REPO}`,
-    '- License: MIT. Runtime: managed C# only, no Ghostscript, browser or native binaries (the optional OCR add-on runs its models on ONNX Runtime).',
+    '- License: MIT (the OCR models and OCR tool packages are MIT and Apache-2.0). Runtime: managed C# only, no Ghostscript, browser or native binaries (the optional OCR add-on runs its models on ONNX Runtime).',
     `- Maintained by JADEV, a software engineering company: ${CORP}/en`,
     '- Not related to the PDFNet SDK of Apryse.',
     '',

@@ -1,18 +1,18 @@
 ---
 title: Create PDF/A files in C# and .NET
-description: Save PDF/A-2b, 2u, 3b and 3u from .NET and make Factur-X and ZUGFeRD e-invoices, with every blocking problem listed at once. Pure C#, MIT.
+description: Save PDF/A-1b to PDF/A-4f from .NET and make Factur-X and ZUGFeRD e-invoices, with every blocking problem listed at once. Pure C#, MIT.
 since: '1.1'
 sidebar:
   label: PDF/A
 faq:
   - q: Which PDF/A levels can PdfNetStack write?
-    a: PDF/A-2b, PDF/A-2u, PDF/A-3b and PDF/A-3u, chosen with PdfSaveOptions.Conformance. PDF/A-1 files are detected and kept PDF/A-1 compatible by the optimizer, but not written from scratch.
+    a: PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e and 4f, chosen with PdfSaveOptions.Conformance. The optimizer also keeps existing PDF/A-1 files PDF/A-1 compatible.
   - q: Does PdfNetStack ship a third party ICC profile?
     a: No. The sRGB output intent uses a profile the library computes from the sRGB definition, so nothing third party ships.
   - q: Can I make Factur-X or ZUGFeRD invoices?
     a: Yes. PdfInvoice.Attach embeds the invoice XML as factur-x.xml with the profile's relationship, and saving as PDF/A-3 writes the Factur-X XMP properties with their extension schema. Profiles MINIMUM to EXTENDED and XRECHNUNG are supported.
   - q: Is the output checked with veraPDF?
-    a: Yes. A CI job validates PDF/A-2b, 2u, 3b and 3u files made by the library with veraPDF, including a Factur-X invoice signed to PAdES B-LTA.
+    a: Yes. A CI job validates files of every part made by the library with veraPDF, 1b to 4f, including a Factur-X invoice signed to PAdES B-LTA.
 ---
 
 Save a document as PDF/A for long term archiving, and make it a Factur-X or ZUGFeRD e-invoice.
@@ -37,6 +37,10 @@ attachments, then writes the file.
 | `PdfA2U` | PDF/A-2u | PDF/A-2b with every character mapped to Unicode, so text extracts reliably |
 | `PdfA3B` | PDF/A-3b (ISO 19005-3) | PDF/A-2b that may embed files of any type, as e-invoices do |
 | `PdfA3U` | PDF/A-3u | PDF/A-3b with Unicode text |
+| `PdfA1B` | PDF/A-1b (ISO 19005-1) | Archives for PDF 1.4 readers: written as PDF 1.4 with a classic cross-reference table; transparency, JPEG 2000, optional content and embedded files are refused |
+| `PdfA4` | PDF/A-4 (ISO 19005-4) | PDF 2.0 archives; embedded files must be PDF/A-1, 2 or 4 files |
+| `PdfA4E` | PDF/A-4e | PDF/A-4 that also allows 3D and RichMedia annotations |
+| `PdfA4F` | PDF/A-4f | PDF/A-4 that embeds at least one file, of any type |
 | `None` | | The default: no particular standard |
 
 ## What is checked
@@ -136,16 +140,15 @@ so the fonts it uses must be embedded.
 
 ## Limits
 
-- PDF/A-2 and PDF/A-3 only. PDF/A-1 is not written; existing PDF/A-1 files keep a classic xref
-  table when the optimizer rewrites them.
+- PDF/A-1b refuses what PDF 1.4 cannot hold, such as transparency and JPEG 2000. Existing PDF/A-1
+  files keep a classic xref table when the optimizer rewrites them.
 - Problems are reported, not repaired: PdfNetStack does not embed missing fonts, convert CMYK or
   remove scripts for you.
-- PDF/A-1b and PDF/A-4 output are on the [roadmap](/roadmap/).
 - Invoice XML is checked for well formedness only, not against the Factur-X schemas or rules.
 
 ## Checked with veraPDF
 
-A CI job validates PDF/A-2b, 2u, 3b and 3u files made by the library with the veraPDF command line
+A CI job validates files of every part made by the library, 1b, 2b, 2u, 3b, 3u, 4, 4e and 4f, with the veraPDF command line
 tool, among them a Factur-X invoice signed to PAdES B-LTA.
 
 ## Related

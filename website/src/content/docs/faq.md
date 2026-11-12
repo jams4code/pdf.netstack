@@ -25,7 +25,7 @@ faq:
   - q: Does it handle Arabic, Indic and right to left text?
     a: Yes, from version 1.1. Text goes through the Unicode bidirectional algorithm, Unicode normalization and an OpenType shaper, so Arabic letters join and take their contextual forms, the nine major Indic scripts reorder and form their conjuncts, and right to left text copies and searches in logical order. Thai, Khmer, Myanmar and Hangul shaping are on the roadmap.
   - q: Can it create PDF/A files?
-    a: Yes, from version 1.1. Saving with PdfSaveOptions.Conformance writes PDF/A-2b, 2u, 3b or 3u, after checking what cannot be repaired and listing every problem at once. PdfInvoice adds Factur-X and ZUGFeRD invoice data to PDF/A-3 files, and CI validates the output with veraPDF.
+    a: Yes, from version 1.1. Saving with PdfSaveOptions.Conformance writes PDF/A-1b, 2b, 2u, 3b, 3u, 4, 4e or 4f, after checking what cannot be repaired and listing every problem at once. PdfInvoice adds Factur-X and ZUGFeRD invoice data to PDF/A-3 files, and CI validates the output with veraPDF.
   - q: Does it support long term signatures?
     a: Yes, from version 1.1. PdfNetStack signs to PAdES B-B, B-T, B-LT and B-LTA, and validates signatures against the trust anchors you supply. It makes no network calls; your application sends the timestamp requests and supplies the revocation data.
   - q: Can it make scanned PDFs searchable?
